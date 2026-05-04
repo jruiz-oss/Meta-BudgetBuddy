@@ -24,9 +24,26 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
 
+# Cross-domain session cookies (frontend on Vercel, backend on Railway).
+# Browsers drop cookies on cross-site responses unless SameSite=None + Secure.
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+
 # Initialize extensions
 db.init_app(app)
-CORS(app, supports_credentials=True)
+
+# CORS: comma-separated origins via env var, defaults to allowing all in dev.
+# In prod, set CORS_ORIGINS=https://your-frontend.vercel.app
+_cors_origins = os.getenv('CORS_ORIGINS', '*')
+if _cors_origins == '*':
+    CORS(app, supports_credentials=True)
+else:
+    CORS(
+        app,
+        supports_credentials=True,
+        origins=[o.strip() for o in _cors_origins.split(',') if o.strip()],
+    )
 
 # Register blueprints
 app.register_blueprint(auth_bp)
