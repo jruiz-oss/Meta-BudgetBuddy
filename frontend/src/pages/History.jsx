@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './History.css';
@@ -15,11 +15,7 @@ function History({ user, onLogout }) {
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchData();
-  }, [accountId, activeTab]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const summaryRes = await axios.get(
@@ -46,7 +42,11 @@ function History({ user, onLogout }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [accountId, activeTab]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleLogout = () => {
     onLogout();

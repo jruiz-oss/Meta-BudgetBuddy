@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './Settings.css';
@@ -15,11 +15,7 @@ function Settings({ user, onLogout }) {
   const [success, setSuccess] = useState('');
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchData();
-  }, [accountId]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const [settingsRes, flightsRes] = await Promise.all([
@@ -33,7 +29,11 @@ function Settings({ user, onLogout }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [accountId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleSettingsChange = (field, value) => {
     setSettings({ ...settings, [field]: value });
