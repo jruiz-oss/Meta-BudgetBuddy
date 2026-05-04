@@ -41,13 +41,7 @@ function Register({ onRegisterSuccess }) {
         navigate('/');
       }
     } catch (err) {
-      // TEMP DEBUG: surface the real error so we can diagnose deploy issues
-      console.error('REGISTER ERROR:', err);
-      console.error('REGISTER ERROR message:', err?.message);
-      console.error('REGISTER ERROR code:', err?.code);
-      console.error('REGISTER ERROR response:', err?.response);
-      console.error('REGISTER ERROR request:', err?.request);
-      setError(err.response?.data?.error || err?.message || 'Registration failed');
+      setError(err.response?.data?.error || 'Registration failed');
     } finally {
       setLoading(false);
     }

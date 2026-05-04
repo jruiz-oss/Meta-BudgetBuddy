@@ -29,11 +29,7 @@ function Login({ onLoginSuccess }) {
         navigate('/');
       }
     } catch (err) {
-      console.error('LOGIN ERROR:', err);
-      console.error('LOGIN ERROR message:', err?.message);
-      console.error('LOGIN ERROR code:', err?.code);
-      console.error('LOGIN ERROR response:', err?.response);
-      setError(err.response?.data?.error || err?.message || 'Login failed');
+      setError(err.response?.data?.error || 'Login failed');
     } finally {
       setLoading(false);
     }
