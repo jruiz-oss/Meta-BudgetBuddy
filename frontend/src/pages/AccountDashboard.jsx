@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './Dashboard.css';
@@ -14,11 +14,7 @@ function AccountDashboard({ user, onLogout }) {
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchData();
-  }, [accountId]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const [accountRes, campaignsRes] = await Promise.all([
@@ -32,7 +28,11 @@ function AccountDashboard({ user, onLogout }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [accountId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleRunPacing = async () => {
     setRunningPacing(true);

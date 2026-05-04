@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { Line } from 'react-chartjs-2';
@@ -34,11 +34,7 @@ function CampaignDetail({ user, onLogout }) {
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchData();
-  }, [campaignId]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const [campaignRes, historyRes] = await Promise.all([
@@ -52,7 +48,11 @@ function CampaignDetail({ user, onLogout }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [campaignId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const chartData = {
     labels: history.map(h => new Date(h.date).toLocaleDateString()),
