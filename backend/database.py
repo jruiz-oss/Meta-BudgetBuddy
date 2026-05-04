@@ -35,6 +35,31 @@ class Account(db.Model):
     pacing_runs = db.relationship('PacingRun', backref='account', lazy=True, cascade='all, delete-orphan')
 
     def to_dict(self):
+        # Aggregate fields the dashboard expects. For now these are computed
+        # from local DB only (no live Meta data); pacing_status counts come
+        # from the latest PacingData row per campaign when available.
+        total_daily_budget = sum((c.daily_budget or 0) for c in self.campaigns)
+
+        on_track = over_pacing = under_pacing = 0
+        for c in self.campaigns:
+            latest = c.pacing_data[-1] if getattr(c, 'pacing_data', None) else None
+            status = getattr(latest, 'status', None)
+            if status == 'ON_PACE':
+                on_track += 1
+            elif status == 'INCREASE':
+                under_pacing += 1
+            elif status == 'DECREASE':
+                over_pacing += 1
+
+        if over_pacing:
+            status_category = 'over_pacing'
+        elif under_pacing:
+            status_category = 'under_pacing'
+        elif on_track:
+            status_category = 'on_track'
+        else:
+            status_category = 'on_track'  # no data yet → neutral/green
+
         return {
             'id': self.id,
             'user_id': self.user_id,
@@ -42,7 +67,14 @@ class Account(db.Model):
             'meta_account_id': self.meta_account_id,
             'created_at': self.created_at.isoformat(),
             'campaign_count': len(self.campaigns),
-            'settings': self.settings.to_dict() if self.settings else None
+            'total_daily_budget': round(total_daily_budget, 2),
+            'status_category': status_category,
+            'pacing_status': {
+                'on_track': on_track,
+                'over_pacing': over_pacing,
+                'under_pacing': under_pacing,
+            },
+            'settings': self.settings.to_dict() if self.settings else None,
         }
 
 class Campaign(db.Model):
