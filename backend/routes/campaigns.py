@@ -87,6 +87,9 @@ def sync_campaigns(account_id):
                 'is_cbo': is_cbo,
                 'budget_mode': budget_mode,
                 'already_tracked': c['id'] in tracked_ids,
+                # Return the saved monthly budget so the import modal can pre-fill it
+                # (especially important for ABO campaigns which have no campaign-level daily budget).
+                'saved_monthly_budget': tracked_by_meta_id[c['id']].monthly_budget if c['id'] in tracked_by_meta_id else None,
                 'adsets': [],
             }
 

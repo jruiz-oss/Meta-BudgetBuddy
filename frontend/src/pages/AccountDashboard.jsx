@@ -157,7 +157,12 @@ function AccountDashboard({ user, onLogout }) {
         });
         seed[c.meta_campaign_id] = {
           selected: !!c.already_tracked,
-          monthly_budget: c.current_daily_budget ? Math.round(c.current_daily_budget * 30) : '',
+          // Prefer the saved monthly budget from the DB (covers ABO campaigns which have
+          // no campaign-level daily budget, so current_daily_budget is null for them).
+          // Fall back to current_daily_budget * 30 for CBO campaigns not yet tracked.
+          monthly_budget: c.saved_monthly_budget != null
+            ? c.saved_monthly_budget
+            : (c.current_daily_budget ? Math.round(c.current_daily_budget * 30) : ''),
           adsets: adsetSeed,
         };
       });
