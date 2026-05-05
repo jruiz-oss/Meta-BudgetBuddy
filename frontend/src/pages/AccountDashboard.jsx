@@ -26,6 +26,8 @@ function AccountDashboard({ user, onLogout }) {
   const [lastRun, setLastRun] = useState(null);
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [pendingAdjustments, setPendingAdjustments] = useState([]);
 
   // Import-from-Meta modal state
   const [showImport, setShowImport] = useState(false);
@@ -72,12 +74,13 @@ function AccountDashboard({ user, onLogout }) {
     }
   };
 
-  const handleApplyAll = async () => {
+  const handleApplyAll = () => {
     if (!lastRun || !lastRun.recommendations) return;
     const adjustments = lastRun.recommendations
       .filter((r) => r.action !== 'ON_PACE')
       .map((r) => ({
         campaign_id: r.campaign_id,
+        campaign_name: r.campaign_name,
         current_daily_budget: r.current_daily_budget,
         recommended_daily_budget: r.recommended_daily_budget,
         change_percent: r.change_percent,
@@ -89,16 +92,23 @@ function AccountDashboard({ user, onLogout }) {
       return;
     }
 
+    setPendingAdjustments(adjustments);
+    setShowConfirm(true);
+  };
+
+  const handleConfirmApply = async () => {
+    setShowConfirm(false);
     setApplying(true);
     setError('');
     try {
-      const response = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments });
+      const response = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: pendingAdjustments });
       setApplyResult(response.data);
       fetchAll();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to apply recommendations');
     } finally {
       setApplying(false);
+      setPendingAdjustments([]);
     }
   };
 
@@ -443,6 +453,60 @@ function AccountDashboard({ user, onLogout }) {
             </table>
           )}
         </div>
+
+        {/* ── Apply confirmation modal ── */}
+        {showConfirm && (
+          <div className="bb-modal-backdrop" onClick={() => setShowConfirm(false)}>
+            <div className="bb-modal" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+              <div className="bb-modal-head">
+                <div className="bb-modal-title">Confirm budget changes in Meta</div>
+                <button className="bb-icon-btn" onClick={() => setShowConfirm(false)}>×</button>
+              </div>
+
+              <div className="bb-modal-body">
+                <div className="bb-alert bb-alert-warn" style={{ marginBottom: 16 }}>
+                  This will push <strong>{pendingAdjustments.length} budget change{pendingAdjustments.length !== 1 ? 's' : ''}</strong> directly
+                  to Meta via the API. This action cannot be undone automatically — you would need to revert manually in Ads Manager.
+                </div>
+
+                <table className="bb-table">
+                  <thead>
+                    <tr>
+                      <th>Campaign</th>
+                      <th>Current Daily</th>
+                      <th>New Daily</th>
+                      <th>Change</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingAdjustments.map((adj) => {
+                      const up = adj.change_percent > 0;
+                      return (
+                        <tr key={adj.campaign_id}>
+                          <td style={{ fontWeight: 600 }}>{adj.campaign_name}</td>
+                          <td className="num">${(adj.current_daily_budget || 0).toFixed(2)}</td>
+                          <td className="num">${(adj.recommended_daily_budget || 0).toFixed(2)}</td>
+                          <td>
+                            <span className={`bb-change ${up ? 'bb-change-up' : 'bb-change-down'}`}>
+                              {up ? '↗ +' : '↘ '}{(adj.change_percent || 0).toFixed(1)}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bb-modal-foot">
+                <button className="bb-btn" onClick={() => setShowConfirm(false)}>Cancel</button>
+                <button className="bb-btn bb-btn-primary" onClick={handleConfirmApply}>
+                  Yes, push to Meta
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Import-from-Meta modal */}
         {showImport && (
