@@ -114,8 +114,9 @@ class MetaClient:
             "status",
             "effective_status",
             "objective",
-            "daily_budget",      # cents; only set if campaign uses CBO
-            "lifetime_budget",   # cents
+            "daily_budget",                  # cents; only set if campaign uses CBO
+            "lifetime_budget",               # cents
+            "is_campaign_budget_optimized",  # True → CBO, False/absent → ABO
             "start_time",
             "stop_time",
         ]

@@ -63,7 +63,18 @@ def sync_campaigns(account_id):
         for c in campaigns:
             daily_cents = c.get('daily_budget')
             lifetime_cents = c.get('lifetime_budget')
-            is_cbo = bool(daily_cents)
+            # Use the canonical CBO flag from Meta when available.
+            # Fall back to checking daily_budget as a number > 0 (Meta returns "0"
+            # as a string for ABO campaigns, so bool(daily_cents) was incorrectly
+            # True for ABO — that was the bug).
+            cbo_flag = c.get('is_campaign_budget_optimized')
+            if cbo_flag is not None:
+                is_cbo = bool(cbo_flag)
+            else:
+                try:
+                    is_cbo = int(daily_cents or 0) > 0
+                except (TypeError, ValueError):
+                    is_cbo = False
             budget_mode = 'CBO' if is_cbo else 'ABO'
             entry = {
                 'meta_campaign_id': c['id'],
@@ -71,8 +82,8 @@ def sync_campaigns(account_id):
                 'status': c.get('status'),
                 'effective_status': c.get('effective_status'),
                 'objective': c.get('objective'),
-                'current_daily_budget': float(daily_cents) / 100 if daily_cents else None,
-                'current_lifetime_budget': float(lifetime_cents) / 100 if lifetime_cents else None,
+                'current_daily_budget': float(daily_cents) / 100 if daily_cents and int(daily_cents) > 0 else None,
+                'current_lifetime_budget': float(lifetime_cents) / 100 if lifetime_cents and int(lifetime_cents) > 0 else None,
                 'is_cbo': is_cbo,
                 'budget_mode': budget_mode,
                 'already_tracked': c['id'] in tracked_ids,
