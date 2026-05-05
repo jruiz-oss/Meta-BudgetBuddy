@@ -153,6 +153,13 @@ a {
 }
 .bb-btn-primary:hover { background: var(--bb-primary-hover); border-color: var(--bb-primary-hover); }
 
+.bb-btn-secondary {
+  background: #fff;
+  color: var(--bb-text);
+  border-color: var(--bb-border);
+}
+.bb-btn-secondary:hover { background: #f3f4f6; border-color: #d1d5db; }
+
 .bb-btn-ghost {
   background: transparent;
   border-color: transparent;

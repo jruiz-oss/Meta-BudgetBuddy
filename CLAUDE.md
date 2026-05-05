@@ -29,6 +29,7 @@ Full-stack budget pacing tool for Meta (Facebook) Ads. Monitors campaign spend v
 | Frontend | React 18, React Router, Axios, Chart.js |
 | Backend deploy | Railway |
 | Frontend deploy | Vercel |
+| Sheets | gspread + google-auth (service account) |
 
 ---
 
@@ -37,7 +38,7 @@ Full-stack budget pacing tool for Meta (Facebook) Ads. Monitors campaign spend v
 ```
 Meta BudgetBuddy/
 ├── backend/
-│   ├── app.py              # Flask app entry point, DB init
+│   ├── app.py              # Flask app entry point, DB init, blueprint registration
 │   ├── database.py         # SQLAlchemy models
 │   ├── meta_client.py      # Meta API calls (spend data, budget updates)
 │   └── routes/
@@ -46,9 +47,11 @@ Meta BudgetBuddy/
 │       ├── campaigns.py    # CRUD + /sync endpoint (pulls from Meta API)
 │       ├── pacing.py       # /run (dry run) and /apply (live budget changes)
 │       ├── settings.py     # Pacing params, flight config (ALWAYS_ON vs LIMITED)
-│       └── history.py      # Audit log: pacing runs + budget adjustments
+│       ├── history.py      # Audit log: pacing runs + budget adjustments
+│       └── sheets.py       # Google Sheets integration (config, preview, sync, write)
 ├── frontend/
 │   ├── src/
+│   │   ├── index.css       # Global design system (all bb-* classes live here)
 │   │   ├── App.jsx
 │   │   ├── components/
 │   │   │   └── Sidebar.jsx
@@ -57,10 +60,9 @@ Meta BudgetBuddy/
 │   │       ├── AccountDashboard.jsx
 │   │       ├── CampaignDetail.jsx
 │   │       ├── History.jsx
-│   │       ├── Settings.jsx
+│   │       ├── Settings.jsx  # 3 tabs: Pacing, Flights, Google Sheets
 │   │       ├── Login.jsx
 │   │       └── Register.jsx
-├── meta-budgetbuddy/       # Older version of the app (archived, do not edit)
 ├── README.md
 └── RUN_LOCAL.md            # How to run locally + curl smoke tests
 ```
@@ -93,9 +95,36 @@ Meta BudgetBuddy/
 - `GET/PUT /api/settings/:id/flights/:campaign_id` — flight config
 - `PUT /api/settings/:id/flights/batch` — bulk flight updates
 
+### Google Sheets
+- `GET/PUT /api/sheets/:id/config` — get/save the sheet URL for this account
+- `GET /api/sheets/:id/preview` — preview row-to-campaign matches (current month tab)
+- `POST /api/sheets/:id/sync-budgets` — read col B budgets → update DB campaigns
+- `POST /api/sheets/:id/write-spend` — write MTD spend to col C, date to col G
+
 ### History
 - `GET /api/history/:id/pacing-runs`
 - `GET /api/history/:id/adjustments`
+
+---
+
+## Google Sheets Integration
+
+### How it works
+- Sheet is called "Social Budget Pacing" with tabs per month (e.g., "May 2026")
+- Only the **Meta section** is read/written — stops at LinkedIn or TikTok headers
+- Column layout: A=campaign name, B=monthly budget, C=MTD spend, G=last paced date
+- Matching: exact → case-insensitive → partial substring (both directions)
+- Uses a Google **service account** (not OAuth) — JSON key stored in Railway as `GOOGLE_CREDENTIALS_JSON`
+
+### Setup requirements
+- `GOOGLE_CREDENTIALS_JSON` env var set on Railway (full contents of service account JSON key)
+- Service account email must be added as **Editor** on the Google Sheet
+- Neon DB needs `google_sheet_id` column on `account_settings` (see migration below)
+
+### DB migration needed (one-time, run in Neon SQL Editor)
+```sql
+ALTER TABLE account_settings ADD COLUMN google_sheet_id VARCHAR(500);
+```
 
 ---
 
@@ -107,15 +136,21 @@ Meta BudgetBuddy/
 
 ---
 
-## Environment Variables (backend/.env)
+## Environment Variables
 
+**Backend (Railway):**
 ```
 DATABASE_URL=postgresql://...@neon.../meta_budgetbuddy?sslmode=require
 SECRET_KEY=<random>
-FLASK_ENV=development
+FLASK_ENV=production
+CORS_ORIGINS=https://your-frontend.vercel.app
+GOOGLE_CREDENTIALS_JSON=<full contents of service account JSON key>
 ```
 
-Frontend uses `REACT_APP_API_URL` pointing to the deployed backend URL (set in Vercel).
+**Frontend (Vercel):**
+```
+REACT_APP_API_URL=https://your-backend.railway.app
+```
 
 ---
 
@@ -133,78 +168,43 @@ cd frontend && npm start
 
 ---
 
+## Design System
+
+All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Key classes:
+- Layout: `bb-app`, `bb-main`, `bb-card`, `bb-section`, `bb-grid`, `bb-row`, `bb-row-between`
+- Buttons: `bb-btn`, `bb-btn-primary`, `bb-btn-secondary`, `bb-btn-ghost`, `bb-btn-danger`
+- Typography: `bb-page-title`, `bb-section-title`, `bb-section-meta`, `bb-muted`
+- Forms: `bb-form-group`, `bb-form-label`, `bb-form-help`, `bb-input`, `bb-select`
+- Status pills: `bb-pill`, `bb-pill-on`, `bb-pill-up`, `bb-pill-down`, `bb-pill-muted`
+- Alerts: `bb-alert`, `bb-alert-error`, `bb-alert-success`, `bb-alert-info`, `bb-alert-warn`
+- Tables: `bb-table`, `bb-table-row-tint-up`, `bb-table-row-tint-down`
+- Tabs: `bb-tabs`, `bb-tab-btn` (add `is-active` class for active tab)
+
+---
+
 ## Recent Changes Log
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
 
-- [x] **2026-05-05** — Fixed model/route mismatches across the entire backend so real Meta API data can flow:
-  - `database.py`: Added `meta_token` to Account model; renamed Campaign `daily_budget` → `monthly_budget`, added `is_active`; fixed flight date columns to `db.Date`; updated PacingData with `current_daily_budget`, `status`, `change_percent`; updated PacingRun with `triggered_by`, `campaigns_processed`, `status`, `error_message`, `run_at`; updated BudgetAdjustment with `old_budget`, `applied_by`
-  - `accounts.py`: Now saves `meta_token` on account creation; fixed summary route to use `status` field
-  - `history.py`: Fixed `executed_at` → `run_at` reference
-  - `settings.py`: Fixed flight date parsing to use `.date()` for Date columns
-  - `app.py`: Fixed session cookies to use Lax/non-Secure in dev (HTTP) vs None/Secure in prod; fixed `/health` → `/api/health`
-  - ⚠️ **DB tables need reset after this** — schema changed significantly. Drop all tables in Neon and let `db.create_all()` recreate them on next deploy.
-- [x] **2026-05-05 (session 2)** — Fixed remaining issues blocking real data flow:
-  - `app.py`: Added PostgreSQL advisory lock around `db.create_all()` to prevent race condition when multiple gunicorn workers boot simultaneously
-  - `routes/pacing.py`: Added missing `url_prefix="/api/pacing"` — routes were landing at `/<id>/run` instead of `/api/pacing/<id>/run`, causing 404s
-  - `routes/campaigns.py`: Added missing `url_prefix="/api/campaigns"`; added `/pacing-history` endpoint; added `timedelta` import
-  - `frontend/pages/CampaignDetail.jsx`: Fixed API calls to include `accountId` in URL (was calling `/api/campaigns/${campaignId}` instead of `/api/campaigns/${accountId}/${campaignId}`)
-  - `frontend/pages/Home.jsx`: Added Meta access token field to Add Account modal; fixed `total_daily_budget` → `total_monthly_budget`
-  - ⚠️ **Neon DB still needs reset** if not done yet: run `DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public; GRANT ALL ON SCHEMA public TO neon_superuser;` in Neon SQL Editor
-- [x] **2026-05-05 (session 3)** — Final fixes to get app fully functional:
-  - `routes/auth.py`: Fixed `/me` crash when session references a user that no longer exists (happens after DB wipe) — now clears session and returns 401 cleanly
-  - `frontend/pages/CampaignDetail.jsx`: Fixed ESLint missing dependency (`accountId`) in useCallback — was breaking Vercel build
-  - `meta-budgetbuddy/` old archived folder deleted from repo
-  - App is now fully deployed and working: Railway (backend) + Vercel (frontend) both green, DB tables creating cleanly, Meta API token field live in Add Account modal, campaigns importing from Meta successfully
+- [x] **2026-05-05** — Fixed model/route mismatches across the entire backend so real Meta API data can flow.
+  - `database.py`: Added `meta_token` to Account; renamed `daily_budget` → `monthly_budget`; added `is_active`; fixed date columns; updated PacingData, PacingRun, BudgetAdjustment fields
+  - `app.py`: Fixed session cookies for dev vs prod; fixed `/health` → `/api/health`; added advisory lock on `db.create_all()` for gunicorn race condition
+  - Multiple route prefix fixes (`/api/pacing`, `/api/campaigns`); fixed auth `/me` crash after DB wipe
+  - App fully deployed and working: Railway + Vercel both green
+
+- [x] **2026-05-05 (session 4)** — Built Google Sheets integration end-to-end:
+  - `backend/requirements.txt`: Added `gspread==6.1.2` and `google-auth==2.29.0`
+  - `database.py`: Added `google_sheet_id` nullable column to `AccountSettings` model
+  - `backend/routes/sheets.py`: New blueprint — `/config` (GET/PUT), `/preview` (GET), `/sync-budgets` (POST), `/write-spend` (POST)
+  - `backend/routes/__init__.py` + `app.py`: Registered `sheets_bp`
+  - `frontend/src/index.css`: Added missing `bb-btn-secondary` class to design system
+  - `frontend/src/pages/Settings.jsx`: Added "Google Sheets" tab with URL input, preview match table (exact/case/partial/none quality pills), Sync Budgets + Write Spend action buttons, setup info callout
+  - ⚠️ **Requires manual Neon migration:** `ALTER TABLE account_settings ADD COLUMN google_sheet_id VARCHAR(500);`
+  - ⚠️ **Requires Railway env var:** `GOOGLE_CREDENTIALS_JSON` = full contents of service account JSON key
+  - ⚠️ **Requires sheet share:** service account email must be Editor on the Google Sheet
 
 ---
 
 ## Known Issues / Open TODOs
 
-- [ ] **Google Sheets integration** — see full spec below
-
----
-
-## Next Feature: Google Sheets Integration
-
-### The Sheet
-- Called "Social Budget Pacing"
-- Lives in Google Sheets (user has access via their Google account)
-- Tabs are organized by month: "January 2026", "February 2026", etc. Always use the current month's tab.
-- Within each tab, rows are grouped by platform with colored header rows: **Meta**, **LinkedIn**, **TikTok**
-- **Only interact with rows in the Meta section** — stop before LinkedIn and TikTok rows
-
-### Column Layout (per row = one campaign)
-| Col | Contents |
-|-----|----------|
-| A | Campaign name (e.g., "Camelback - Lodge", "Harrah's Ak-Chin - FB/IG Ads") |
-| B | Total Monthly Budget |
-| C | Current Spend through yesterday (MTD spend, EOD prior day) |
-| D | Daily Spend |
-| E | Left to Spend |
-| F | Notes |
-| G | Last Paced |
-| H | Reset Account Limit on the 1st |
-
-### What to Build
-1. **READ (priority)** — When a user imports campaigns (or runs pacing), pull monthly budgets from column B of the current month's tab. Match sheet rows to Meta campaigns by campaign name. This replaces manual budget entry.
-2. **WRITE** — After each pacing run, update column C with actual MTD spend through yesterday (pulled from Meta API). Also update column G (Last Paced) with today's date.
-
-### Matching Logic
-- Sheet campaign names and Meta campaign names should align but may not be exact
-- Sheet changes month to month (campaigns added/removed, new ones appear)
-- Need smart/fuzzy name matching — if no exact match, try case-insensitive, then partial match
-- Only process rows in the Meta section (detect section by looking for the "Meta" header row, stop at "LinkedIn" or "TikTok" header)
-
-### Tech Requirements
-- Use `gspread` Python library with a Google Service Account
-- Service account JSON key stored as a Railway environment variable (`GOOGLE_CREDENTIALS_JSON`)
-- User provides the Google Sheet URL or Sheet ID in the app settings
-- New backend routes needed:
-  - `GET /api/sheets/:account_id/preview` — preview matched campaigns (sheet row ↔ Meta campaign)
-  - `POST /api/sheets/:account_id/sync-budgets` — read budgets from sheet into DB
-  - `POST /api/sheets/:account_id/write-spend` — write MTD spend back to sheet
-- New frontend: a "Sheets" section in Settings page with Sheet URL field + sync buttons
-
-### Starting Prompt for New Session
-> "Read my CLAUDE.md and get up to speed. I want to build Google Sheets integration for the Meta BudgetBuddy app. Full spec is in the CLAUDE.md under 'Next Feature: Google Sheets Integration'. The app is deployed on Railway (backend) and Vercel (frontend). Start by adding the gspread dependency and building the backend routes, then the frontend settings UI."
+- [ ] No known blocking issues. Sheets feature needs the Neon migration + Railway env var to activate.
