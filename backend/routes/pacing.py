@@ -190,6 +190,12 @@ def run_pacing(account_id):
     campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     included = [c for c in campaigns if _campaign_should_run_today(c, today)]
 
+    # Optional: scope the run to a single campaign (used by the Campaign Detail page).
+    body = request.get_json(silent=True) or {}
+    single_campaign_id = body.get("campaign_id")
+    if single_campaign_id:
+        included = [c for c in included if c.id == int(single_campaign_id)]
+
     recommendations = []
     adjustments_needed = 0
     failures = []
@@ -379,9 +385,7 @@ def run_pacing(account_id):
         if action != 'ON_PACE':
             adjustments_needed += 1
 
-    run_type = "MANUAL"
-    if request.is_json:
-        run_type = (request.get_json(silent=True) or {}).get("run_type", "MANUAL")
+    run_type = body.get("run_type", "MANUAL")
 
     pacing_run = PacingRun(
         account_id=account_id,

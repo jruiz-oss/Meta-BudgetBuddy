@@ -13,6 +13,8 @@ function CampaignDetail({ user, onLogout }) {
   const [applying, setApplying]       = useState(false);
   const [applyResult, setApplyResult] = useState(null);
   const [rejected, setRejected]       = useState(false);
+  const [pacingRunning, setPacingRunning] = useState(false);
+  const [pacingResult,  setPacingResult]  = useState(null);
 
   // Per-adset apply/reject (ABO only)
   const [adsetApplying,  setAdsetApplying]  = useState({});  // { [adset_id]: bool }
@@ -106,6 +108,27 @@ function CampaignDetail({ user, onLogout }) {
       setError(err.response?.data?.error || 'Failed to apply recommendation');
     } finally {
       setApplying(false);
+    }
+  };
+
+  // ── run pacing for this campaign only ────────────────────
+  const handleRunPacing = async () => {
+    setPacingRunning(true);
+    setPacingResult(null);
+    setAdsetApplying({});
+    setAdsetRejected({});
+    setAdsetResults({});
+    try {
+      await axios.post(`/api/pacing/${accountId}/run`, {
+        run_type: 'MANUAL',
+        campaign_id: campaignId,
+      });
+      await fetchData();   // refresh ad set pacing data from DB
+      setPacingResult({ ok: true, msg: 'Pacing updated.' });
+    } catch (err) {
+      setPacingResult({ ok: false, msg: err.response?.data?.error || 'Pacing run failed' });
+    } finally {
+      setPacingRunning(false);
     }
   };
 
@@ -472,15 +495,30 @@ function CampaignDetail({ user, onLogout }) {
                 <div>
                   <div className="bb-section-title">Ad Sets ({campaign.adsets.length})</div>
                   <div className="bb-section-meta">
-                    Pacing runs per ad set. Use <strong>Edit Allocations</strong> to adjust how the campaign budget is split.
+                    Pacing runs per ad set. Use <strong>Edit Allocations</strong> to adjust splits.
                   </div>
                 </div>
                 {!editingAdsets && (
-                  <button className="bb-btn bb-btn-secondary" onClick={enterEditMode}>
-                    Edit Allocations
-                  </button>
+                  <div className="bb-row">
+                    <button
+                      className="bb-btn bb-btn-primary"
+                      onClick={handleRunPacing}
+                      disabled={pacingRunning}
+                    >
+                      {pacingRunning ? 'Running…' : 'Run Pacing'}
+                    </button>
+                    <button className="bb-btn bb-btn-secondary" onClick={enterEditMode}>
+                      Edit Allocations
+                    </button>
+                  </div>
                 )}
               </div>
+              {pacingResult && (
+                <div className={`bb-alert ${pacingResult.ok ? 'bb-alert-success' : 'bb-alert-error'}`}
+                  style={{ margin: '8px 0 0' }}>
+                  {pacingResult.msg}
+                </div>
+              )}
             </div>
 
             {/* Edit-mode toolbar */}
