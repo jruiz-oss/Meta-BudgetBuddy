@@ -12,8 +12,6 @@ import CampaignDetail from './pages/CampaignDetail';
 import Settings from './pages/Settings';
 import History from './pages/History';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
-
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -24,7 +22,7 @@ function App() {
 
   const checkAuth = async () => {
     try {
-      const response = await axios.get(`${API_URL}/auth/me`, { withCredentials: true });
+      const response = await axios.get('/api/auth/me');
       setUser(response.data.user);
     } catch (error) {
       setUser(null);
@@ -35,7 +33,7 @@ function App() {
 
   const handleLogout = async () => {
     try {
-      await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true });
+      await axios.post('/api/auth/logout');
       setUser(null);
     } catch (error) {
       console.error('Logout error:', error);
@@ -59,6 +57,7 @@ function App() {
           <>
             <Route path="/" element={<Home user={user} onLogout={handleLogout} />} />
             <Route path="/account/:accountId" element={<AccountDashboard user={user} onLogout={handleLogout} />} />
+            <Route path="/account/:accountId/campaign/:campaignId" element={<CampaignDetail user={user} onLogout={handleLogout} />} />
             <Route path="/campaign/:campaignId" element={<CampaignDetail user={user} onLogout={handleLogout} />} />
             <Route path="/account/:accountId/settings" element={<Settings user={user} onLogout={handleLogout} />} />
             <Route path="/account/:accountId/history" element={<History user={user} onLogout={handleLogout} />} />

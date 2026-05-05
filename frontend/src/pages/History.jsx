@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import './History.css';
-
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+import Sidebar from '../components/Sidebar';
 
 function History({ user, onLogout }) {
   const { accountId } = useParams();
+  const [accounts, setAccounts] = useState([]);
   const [summary, setSummary] = useState(null);
   const [runs, setRuns] = useState([]);
   const [adjustments, setAdjustments] = useState([]);
-  const [activeTab, setActiveTab] = useState('summary');
+  const [activeTab, setActiveTab] = useState('runs');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -18,23 +17,17 @@ function History({ user, onLogout }) {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const summaryRes = await axios.get(
-        `${API_URL}/history/${accountId}/summary`,
-        { withCredentials: true }
-      );
+      const accountsRes = await axios.get('/api/accounts');
+      setAccounts(accountsRes.data.accounts || accountsRes.data || []);
+
+      const summaryRes = await axios.get(`/api/history/${accountId}/summary`);
       setSummary(summaryRes.data);
 
       if (activeTab === 'runs') {
-        const runsRes = await axios.get(
-          `${API_URL}/history/${accountId}/pacing-runs`,
-          { withCredentials: true }
-        );
+        const runsRes = await axios.get(`/api/history/${accountId}/pacing-runs`);
         setRuns(runsRes.data.runs || []);
       } else if (activeTab === 'adjustments') {
-        const adjRes = await axios.get(
-          `${API_URL}/history/${accountId}/adjustments`,
-          { withCredentials: true }
-        );
+        const adjRes = await axios.get(`/api/history/${accountId}/adjustments`);
         setAdjustments(adjRes.data.adjustments || []);
       }
     } catch (err) {
@@ -48,107 +41,84 @@ function History({ user, onLogout }) {
     fetchData();
   }, [fetchData]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await axios.post('/api/auth/logout');
+    } catch { /* ignore */ }
     onLogout();
     navigate('/login');
   };
 
-  if (loading) {
-    return (
-      <div className="page">
-        <div className="header">
-          <h1>Meta BudgetBuddy</h1>
-          <div className="header-actions">
-            <span className="header-user">{user.email}</span>
-            <button className="btn btn-secondary btn-small" onClick={handleLogout}>
-              Logout
-            </button>
-          </div>
-        </div>
-        <div className="container" style={{ textAlign: 'center', paddingTop: '60px' }}>
-          <div className="loading">Loading history...</div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="page">
-      <div className="header">
-        <h1>Meta BudgetBuddy</h1>
-        <div className="header-actions">
-          <span className="header-user">{user.email}</span>
-          <button className="btn btn-secondary btn-small" onClick={handleLogout}>
-            Logout
-          </button>
-        </div>
-      </div>
+    <div className="bb-app">
+      <Sidebar user={user} accounts={accounts} variant="account" />
 
-      <div className="container">
-        <div className="breadcrumb">
-          <button className="link-btn" onClick={() => navigate('/')}>Home</button> /
-          <button className="link-btn" onClick={() => navigate(`/account/${accountId}`)}>
-            Account
-          </button> / History
+      <main className="bb-main">
+        <div className="bb-breadcrumb">
+          <Link to="/">Home</Link>
+          {' / '}
+          <Link to={`/account/${accountId}`}>Dashboard</Link>
+          {' / History'}
         </div>
 
-        <h2 style={{ marginBottom: '24px', color: '#1a1a1a' }}>Activity History</h2>
+        <div className="bb-row-between" style={{ marginBottom: 18 }}>
+          <div>
+            <div className="bb-page-title">Activity History</div>
+            <div className="bb-page-subtitle">Pacing runs and budget adjustments for this account.</div>
+          </div>
+          <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>Log out</button>
+        </div>
 
-        {error && <div className="alert alert-error">{error}</div>}
+        {error && <div className="bb-alert bb-alert-error">{error}</div>}
 
-        {/* Summary Cards */}
+        {/* Top stats */}
         {summary && (
-          <div className="grid grid-4">
-            <div className="metric-card">
-              <div className="metric-label">Total Runs</div>
-              <div className="metric-value">{summary.total_runs}</div>
+          <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
+            <div className="bb-stat">
+              <span className="bb-stat-label">Total Runs</span>
+              <span className="bb-stat-value">{summary.total_runs ?? 0}</span>
             </div>
-            <div className="metric-card">
-              <div className="metric-label">Calculate Runs</div>
-              <div className="metric-value">{summary.calculate_runs}</div>
+            <div className="bb-stat">
+              <span className="bb-stat-label">Calculate Runs</span>
+              <span className="bb-stat-value">{summary.calculate_runs ?? 0}</span>
             </div>
-            <div className="metric-card">
-              <div className="metric-label">Apply Runs</div>
-              <div className="metric-value">{summary.apply_runs}</div>
+            <div className="bb-stat">
+              <span className="bb-stat-label">Apply Runs</span>
+              <span className="bb-stat-value">{summary.apply_runs ?? 0}</span>
             </div>
-            <div className="metric-card">
-              <div className="metric-label">Total Adjustments</div>
-              <div className="metric-value">{summary.total_adjustments}</div>
+            <div className="bb-stat">
+              <span className="bb-stat-label">Total Adjustments</span>
+              <span className="bb-stat-value">{summary.total_adjustments ?? 0}</span>
             </div>
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="settings-tabs" style={{ marginTop: '24px' }}>
+        <div className="bb-tabs">
           <button
-            className={`tab-btn ${activeTab === 'summary' ? 'active' : ''}`}
-            onClick={() => setActiveTab('summary')}
-          >
-            Summary
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'runs' ? 'active' : ''}`}
+            className={`bb-tab-btn ${activeTab === 'runs' ? 'is-active' : ''}`}
             onClick={() => setActiveTab('runs')}
           >
             Pacing Runs
           </button>
           <button
-            className={`tab-btn ${activeTab === 'adjustments' ? 'active' : ''}`}
+            className={`bb-tab-btn ${activeTab === 'adjustments' ? 'is-active' : ''}`}
             onClick={() => setActiveTab('adjustments')}
           >
             Budget Adjustments
           </button>
         </div>
 
-        {activeTab === 'runs' && (
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Pacing Run History</h3>
+        {loading ? (
+          <div className="bb-card bb-section bb-muted">Loading...</div>
+        ) : activeTab === 'runs' ? (
+          <div className="bb-card">
+            <div className="bb-section">
+              <div className="bb-section-title">Pacing Run History</div>
             </div>
             {runs.length === 0 ? (
-              <p style={{ color: '#666', margin: '16px 0' }}>No pacing runs yet</p>
+              <div className="bb-section bb-muted" style={{ paddingTop: 0 }}>No pacing runs yet.</div>
             ) : (
-              <table className="table">
+              <table className="bb-table">
                 <thead>
                   <tr>
                     <th>Executed At</th>
@@ -163,20 +133,17 @@ function History({ user, onLogout }) {
                     <tr key={run.id}>
                       <td>{new Date(run.executed_at).toLocaleString()}</td>
                       <td>
-                        <span className="badge" style={{
-                          backgroundColor: run.run_type === 'calculate' ? '#d1ecf1' : '#d4edda',
-                          color: run.run_type === 'calculate' ? '#0c5460' : '#155724'
-                        }}>
+                        <span className={`bb-pill ${run.run_type === 'apply' ? 'bb-pill-on' : 'bb-pill-up'}`}>
                           {run.run_type}
                         </span>
                       </td>
-                      <td>{run.campaigns_checked}</td>
-                      <td>{run.adjustments_made}</td>
+                      <td className="num">{run.campaigns_checked}</td>
+                      <td className="num">{run.adjustments_made}</td>
                       <td>
                         {run.errors ? (
-                          <span style={{ color: '#dc3545', fontSize: '12px' }}>Error</span>
+                          <span className="bb-pill bb-pill-down">Error</span>
                         ) : (
-                          <span style={{ color: '#28a745', fontSize: '12px' }}>Success</span>
+                          <span className="bb-pill bb-pill-on">Success</span>
                         )}
                       </td>
                     </tr>
@@ -185,47 +152,48 @@ function History({ user, onLogout }) {
               </table>
             )}
           </div>
-        )}
-
-        {activeTab === 'adjustments' && (
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Budget Adjustment Log</h3>
+        ) : (
+          <div className="bb-card">
+            <div className="bb-section">
+              <div className="bb-section-title">Budget Adjustment Log</div>
             </div>
             {adjustments.length === 0 ? (
-              <p style={{ color: '#666', margin: '16px 0' }}>No adjustments yet</p>
+              <div className="bb-section bb-muted" style={{ paddingTop: 0 }}>No adjustments yet.</div>
             ) : (
-              <table className="table">
+              <table className="bb-table">
                 <thead>
                   <tr>
                     <th>Applied At</th>
                     <th>Previous Budget</th>
                     <th>New Budget</th>
-                    <th>Change (%)</th>
+                    <th>Change</th>
                     <th>Reason</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {adjustments.map((adj) => (
-                    <tr key={adj.id}>
-                      <td>{new Date(adj.applied_at).toLocaleString()}</td>
-                      <td>${adj.previous_budget.toFixed(2)}</td>
-                      <td>${adj.new_budget.toFixed(2)}</td>
-                      <td style={{
-                        color: adj.change_percent > 0 ? '#dc3545' : '#28a745',
-                        fontWeight: '600'
-                      }}>
-                        {adj.change_percent > 0 ? '+' : ''}{adj.change_percent.toFixed(2)}%
-                      </td>
-                      <td style={{ fontSize: '12px', color: '#666' }}>{adj.reason}</td>
-                    </tr>
-                  ))}
+                  {adjustments.map((adj) => {
+                    const up = adj.change_percent > 0;
+                    const flat = Math.abs(adj.change_percent || 0) < 0.5;
+                    return (
+                      <tr key={adj.id} className={!flat ? (up ? 'bb-table-row-tint-up' : 'bb-table-row-tint-down') : ''}>
+                        <td>{new Date(adj.applied_at).toLocaleString()}</td>
+                        <td className="num">${adj.previous_budget.toFixed(2)}</td>
+                        <td className="num">${adj.new_budget.toFixed(2)}</td>
+                        <td>
+                          <span className={`bb-change ${flat ? 'bb-change-flat' : up ? 'bb-change-up' : 'bb-change-down'}`}>
+                            {up ? '↗ +' : flat ? '' : '↘ '}{adj.change_percent.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="bb-muted" style={{ fontSize: 12 }}>{adj.reason}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }

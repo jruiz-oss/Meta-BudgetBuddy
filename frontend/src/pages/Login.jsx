@@ -1,9 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import './Auth.css';
-
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 function Login({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
@@ -16,14 +13,8 @@ function Login({ onLoginSuccess }) {
     e.preventDefault();
     setError('');
     setLoading(true);
-
     try {
-      const response = await axios.post(
-        `${API_URL}/auth/login`,
-        { email, password },
-        { withCredentials: true }
-      );
-
+      const response = await axios.post('/api/auth/login', { email, password });
       if (response.status === 200) {
         onLoginSuccess();
         navigate('/');
@@ -36,52 +27,51 @@ function Login({ onLoginSuccess }) {
   };
 
   return (
-    <div className="auth-page">
-      <div className="auth-container">
-        <div className="auth-card">
-          <h1>Meta BudgetBuddy</h1>
-          <p className="auth-subtitle">Smart budget pacing for Meta ads</p>
+    <div className="bb-auth-shell">
+      <div className="bb-auth-card">
+        <div className="bb-auth-title">BudgetBuddy</div>
+        <div className="bb-auth-subtitle">Meta Ads Budget Pacing Tool</div>
 
-          {error && <div className="alert alert-error">{error}</div>}
+        {error && <div className="bb-alert bb-alert-error">{error}</div>}
 
-          <form onSubmit={handleSubmit}>
-            <div className="form-group">
-              <label htmlFor="email">Email</label>
-              <input
-                id="email"
-                type="email"
-                className="form-control"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
+        <form onSubmit={handleSubmit}>
+          <div className="bb-form-group">
+            <label htmlFor="email" className="bb-form-label">Email</label>
+            <input
+              id="email"
+              type="email"
+              className="bb-input"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoFocus
+            />
+          </div>
 
-            <div className="form-group">
-              <label htmlFor="password">Password</label>
-              <input
-                id="password"
-                type="password"
-                className="form-control"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
+          <div className="bb-form-group">
+            <label htmlFor="password" className="bb-form-label">Password</label>
+            <input
+              id="password"
+              type="password"
+              className="bb-input"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
 
-            <button
-              type="submit"
-              className="btn btn-primary"
-              style={{ width: '100%' }}
-              disabled={loading}
-            >
-              {loading ? 'Logging in...' : 'Login'}
-            </button>
-          </form>
+          <button
+            type="submit"
+            className="bb-btn bb-btn-primary"
+            style={{ width: '100%', justifyContent: 'center', padding: '11px', fontSize: '14px' }}
+            disabled={loading}
+          >
+            {loading ? 'Logging in...' : 'Log In'}
+          </button>
+        </form>
 
-          <p className="auth-footer">
-            Don't have an account? <Link to="/register">Register here</Link>
-          </p>
+        <div className="bb-auth-footer">
+          Don't have an account? <Link to="/register">Register</Link>
         </div>
       </div>
     </div>

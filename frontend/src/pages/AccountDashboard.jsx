@@ -1,47 +1,58 @@
 /* eslint-disable react-hooks/exhaustive-deps */
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
-import './Dashboard.css';
+import Sidebar from '../components/Sidebar';
 
+/**
+ * Single-account dashboard.
+ *
+ * Top: 4 stat tiles (On Pace / Need Increase / Need Decrease / Total Spend)
+ * Middle: latest pacing run summary (when present) with Apply All button
+ * Bottom: tracked campaigns table with current daily, recommended daily, and change indicator
+ * Modal: Import campaigns from Meta
+ */
 function AccountDashboard({ user, onLogout }) {
   const { accountId } = useParams();
   const navigate = useNavigate();
+
+  const [accounts, setAccounts] = useState([]);
   const [account, setAccount] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
   const [pacingRunning, setPacingRunning] = useState(false);
+  const [lastRun, setLastRun] = useState(null);
+  const [applying, setApplying] = useState(false);
+  const [applyResult, setApplyResult] = useState(null);
 
   // Import-from-Meta modal state
   const [showImport, setShowImport] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [importError, setImportError] = useState('');
   const [importSaving, setImportSaving] = useState(false);
-  const [metaCampaigns, setMetaCampaigns] = useState([]); // raw list from /sync GET
-  const [importSelections, setImportSelections] = useState({}); // { meta_id: { selected, monthly_budget } }
+  const [metaCampaigns, setMetaCampaigns] = useState([]);
+  const [importSelections, setImportSelections] = useState({});
 
-  // Latest pacing run details (for showing recommendations + Apply button)
-  const [lastRun, setLastRun] = useState(null);
-  const [applying, setApplying] = useState(false);
-  const [applyResult, setApplyResult] = useState(null);
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    fetchAccountData();
+    fetchAll();
   }, [accountId]);
 
-  const fetchAccountData = async () => {
+  const fetchAll = async () => {
     try {
-      const [accountRes, campaignsRes] = await Promise.all([
+      setLoading(true);
+      const [accountsRes, accountRes, campaignsRes] = await Promise.all([
+        axios.get('/api/accounts'),
         axios.get(`/api/accounts/${accountId}`),
-        axios.get(`/api/campaigns/${accountId}`)
+        axios.get(`/api/campaigns/${accountId}`),
       ]);
-      setAccount(accountRes.data);
-      setCampaigns(campaignsRes.data.campaigns);
-      setLoading(false);
+      setAccounts(accountsRes.data.accounts || accountsRes.data || []);
+      setAccount(accountRes.data.account || accountRes.data);
+      setCampaigns(campaignsRes.data.campaigns || []);
     } catch (err) {
       setError('Failed to load account data');
+    } finally {
       setLoading(false);
     }
   };
@@ -51,12 +62,9 @@ function AccountDashboard({ user, onLogout }) {
     setError('');
     setApplyResult(null);
     try {
-      const response = await axios.post(`/api/pacing/${accountId}/run`, {
-        run_type: 'MANUAL'
-      });
+      const response = await axios.post(`/api/pacing/${accountId}/run`, { run_type: 'MANUAL' });
       setLastRun(response.data);
-      // Refresh campaigns so the badges update
-      fetchAccountData();
+      fetchAll();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to run pacing calculations');
     } finally {
@@ -67,8 +75,8 @@ function AccountDashboard({ user, onLogout }) {
   const handleApplyAll = async () => {
     if (!lastRun || !lastRun.recommendations) return;
     const adjustments = lastRun.recommendations
-      .filter(r => r.action !== 'ON_PACE')
-      .map(r => ({
+      .filter((r) => r.action !== 'ON_PACE')
+      .map((r) => ({
         campaign_id: r.campaign_id,
         current_daily_budget: r.current_daily_budget,
         recommended_daily_budget: r.recommended_daily_budget,
@@ -86,7 +94,7 @@ function AccountDashboard({ user, onLogout }) {
     try {
       const response = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments });
       setApplyResult(response.data);
-      fetchAccountData();
+      fetchAll();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to apply recommendations');
     } finally {
@@ -104,9 +112,8 @@ function AccountDashboard({ user, onLogout }) {
       const response = await axios.get(`/api/campaigns/${accountId}/sync`);
       const list = response.data.campaigns || [];
       setMetaCampaigns(list);
-      // Pre-select campaigns already tracked
       const seed = {};
-      list.forEach(c => {
+      list.forEach((c) => {
         seed[c.meta_campaign_id] = {
           selected: !!c.already_tracked,
           monthly_budget: c.current_daily_budget ? Math.round(c.current_daily_budget * 30) : '',
@@ -129,14 +136,14 @@ function AccountDashboard({ user, onLogout }) {
   };
 
   const toggleImportSelection = (metaId) => {
-    setImportSelections(prev => ({
+    setImportSelections((prev) => ({
       ...prev,
       [metaId]: { ...prev[metaId], selected: !prev[metaId]?.selected },
     }));
   };
 
   const updateImportBudget = (metaId, value) => {
-    setImportSelections(prev => ({
+    setImportSelections((prev) => ({
       ...prev,
       [metaId]: { ...prev[metaId], monthly_budget: value },
     }));
@@ -144,8 +151,8 @@ function AccountDashboard({ user, onLogout }) {
 
   const saveImport = async () => {
     const chosen = metaCampaigns
-      .filter(c => importSelections[c.meta_campaign_id]?.selected)
-      .map(c => {
+      .filter((c) => importSelections[c.meta_campaign_id]?.selected)
+      .map((c) => {
         const sel = importSelections[c.meta_campaign_id];
         return {
           meta_campaign_id: c.meta_campaign_id,
@@ -154,7 +161,7 @@ function AccountDashboard({ user, onLogout }) {
           flight_type: 'ALWAYS_ON',
         };
       })
-      .filter(c => c.monthly_budget > 0);
+      .filter((c) => c.monthly_budget > 0);
 
     if (chosen.length === 0) {
       setImportError('Pick at least one campaign and give it a monthly budget.');
@@ -166,7 +173,7 @@ function AccountDashboard({ user, onLogout }) {
     try {
       await axios.post(`/api/campaigns/${accountId}/sync`, { campaigns: chosen });
       closeImport();
-      fetchAccountData();
+      fetchAll();
     } catch (err) {
       setImportError(err.response?.data?.error || 'Failed to save campaigns');
     } finally {
@@ -177,302 +184,351 @@ function AccountDashboard({ user, onLogout }) {
   const handleLogout = async () => {
     try {
       await axios.post('/api/auth/logout');
-      onLogout();
-      navigate('/login');
-    } catch (err) {
-      console.error('Logout failed');
+    } catch { /* ignore */ }
+    onLogout();
+    navigate('/login');
+  };
+
+  // ---- Derived stats ----
+  const stats = useMemo(() => {
+    const s = { onPace: 0, needIncrease: 0, needDecrease: 0, totalSpend: 0, monthlyBudget: 0 };
+    campaigns.forEach((c) => {
+      s.monthlyBudget += c.monthly_budget || 0;
+      if (c.latest_pacing) {
+        const status = (c.latest_pacing.status || '').toUpperCase();
+        if (status === 'ON_PACE') s.onPace += 1;
+        else if (status === 'INCREASE') s.needIncrease += 1;
+        else if (status === 'DECREASE') s.needDecrease += 1;
+        s.totalSpend += c.latest_pacing.actual_spend || 0;
+      }
+    });
+    return s;
+  }, [campaigns]);
+
+  const pillForStatus = (status) => {
+    const s = (status || '').toUpperCase();
+    if (s === 'ON_PACE')  return { cls: 'bb-pill bb-pill-on',   text: 'ON_PACE' };
+    if (s === 'INCREASE') return { cls: 'bb-pill bb-pill-up',   text: 'INCREASE' };
+    if (s === 'DECREASE') return { cls: 'bb-pill bb-pill-down', text: 'DECREASE' };
+    return { cls: 'bb-pill bb-pill-muted', text: '—' };
+  };
+
+  const changeIndicator = (changePct) => {
+    if (changePct === undefined || changePct === null) {
+      return <span className="bb-change bb-change-flat">No change</span>;
     }
+    if (Math.abs(changePct) < 0.5) {
+      return <span className="bb-change bb-change-flat">No change</span>;
+    }
+    if (changePct > 0) {
+      return <span className="bb-change bb-change-up">↗ +{changePct.toFixed(1)}%</span>;
+    }
+    return <span className="bb-change bb-change-down">↘ {changePct.toFixed(1)}%</span>;
   };
 
   if (loading) {
     return (
-      <div className="app-container">
-        <div className="navbar">
-          <h1>Meta BudgetBuddy</h1>
-          <div className="navbar-right">
-            <button className="logout-btn" onClick={handleLogout}>Logout</button>
-          </div>
-        </div>
-        <div className="main-content">Loading account...</div>
+      <div className="bb-app">
+        <Sidebar user={user} accounts={accounts} variant="account" />
+        <main className="bb-main">
+          <div className="bb-card bb-section bb-muted">Loading account...</div>
+        </main>
       </div>
     );
   }
 
   if (!account) {
     return (
-      <div className="app-container">
-        <div className="navbar">
-          <h1>Meta BudgetBuddy</h1>
-          <div className="navbar-right">
-            <button className="logout-btn" onClick={handleLogout}>Logout</button>
+      <div className="bb-app">
+        <Sidebar user={user} accounts={accounts} variant="account" />
+        <main className="bb-main">
+          <div className="bb-card bb-section">
+            <div className="bb-alert bb-alert-error">Account not found.</div>
           </div>
-        </div>
-        <div className="main-content">Account not found</div>
+        </main>
       </div>
     );
   }
 
   return (
-    <div className="app-container">
-      <div className="navbar">
-        <div>
-          <h1>Meta BudgetBuddy</h1>
-          <p className="breadcrumb">
-            <Link to="/">Dashboard</Link> / {account.account_name}
-          </p>
-        </div>
-        <div className="navbar-right">
-          <button className="logout-btn" onClick={handleLogout}>Logout</button>
-        </div>
-      </div>
+    <div className="bb-app">
+      <Sidebar user={user} accounts={accounts} variant="account" />
 
-      <div className="main-content">
-        <div className="dashboard-header">
+      <main className="bb-main">
+        <div className="bb-breadcrumb">
+          <Link to="/">Home</Link> / {account.account_name}
+        </div>
+
+        <div className="bb-row-between" style={{ marginBottom: 18 }}>
           <div>
-            <h2>{account.account_name}</h2>
-            <p className="meta-id">ID: {account.meta_account_id}</p>
+            <div className="bb-page-title">{account.account_name}</div>
+            <div className="bb-page-subtitle">Meta account ID: {account.meta_account_id || '—'}</div>
           </div>
-          <div className="dashboard-actions">
-            <button className="btn btn-secondary" onClick={openImport}>
-              Import from Meta
-            </button>
-            <Link to={`/account/${accountId}/settings`} className="btn btn-secondary">
-              Settings
-            </Link>
-            <Link to={`/account/${accountId}/history`} className="btn btn-secondary">
-              History
-            </Link>
+          <div className="bb-row">
+            <button className="bb-btn" onClick={openImport}>Import from Meta</button>
+            <Link to={`/account/${accountId}/history`} className="bb-btn">History</Link>
+            <Link to={`/account/${accountId}/settings`} className="bb-btn">Settings</Link>
             <button
-              className="btn btn-primary"
+              className="bb-btn bb-btn-primary"
               onClick={handleRunPacing}
               disabled={pacingRunning}
             >
               {pacingRunning ? 'Running...' : 'Run Pacing'}
             </button>
+            <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>Log out</button>
           </div>
         </div>
 
-        {error && <div className="alert alert-error">{error}</div>}
+        {error && <div className="bb-alert bb-alert-error">{error}</div>}
 
+        {/* 4 stat tiles */}
+        <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
+          <div className="bb-stat">
+            <span className="bb-stat-label">On Pace</span>
+            <span className="bb-stat-value">{stats.onPace}</span>
+          </div>
+          <div className="bb-stat">
+            <span className="bb-stat-label">Need Increase</span>
+            <span className="bb-stat-value">{stats.needIncrease}</span>
+          </div>
+          <div className="bb-stat">
+            <span className="bb-stat-label">Need Decrease</span>
+            <span className="bb-stat-value">{stats.needDecrease}</span>
+          </div>
+          <div className="bb-stat">
+            <span className="bb-stat-label">Total Spend (MTD)</span>
+            <span className="bb-stat-value">${stats.totalSpend.toFixed(0)}</span>
+            <span className="bb-stat-sub">of ${stats.monthlyBudget.toFixed(0)} monthly</span>
+          </div>
+        </div>
+
+        {/* Latest run summary */}
         {lastRun && (
-          <div className="card">
-            <div className="card-header">
-              <h3>
-                Latest run — {lastRun.campaigns_processed} campaigns, {lastRun.adjustments_needed} need adjusting
-              </h3>
-              <button
-                className="btn btn-primary"
-                onClick={handleApplyAll}
-                disabled={applying || lastRun.adjustments_needed === 0}
-              >
-                {applying ? 'Applying...' : 'Apply all to Meta'}
-              </button>
+          <div className="bb-card" style={{ marginBottom: 20 }}>
+            <div className="bb-section">
+              <div className="bb-section-head">
+                <div>
+                  <div className="bb-section-title">
+                    Latest pacing run — {lastRun.campaigns_processed} campaigns,{' '}
+                    {lastRun.adjustments_needed} need adjusting
+                  </div>
+                  <div className="bb-section-meta">Recommendations from the most recent calculation.</div>
+                </div>
+                <button
+                  className="bb-btn bb-btn-primary"
+                  onClick={handleApplyAll}
+                  disabled={applying || lastRun.adjustments_needed === 0}
+                >
+                  {applying ? 'Applying...' : 'Apply all to Meta'}
+                </button>
+              </div>
+
+              {lastRun.failures && lastRun.failures.length > 0 && (
+                <div className="bb-alert bb-alert-error">
+                  {lastRun.failures.length} campaign(s) failed:&nbsp;
+                  {lastRun.failures.map((f) => `${f.campaign_name}: ${f.error}`).join(' — ')}
+                </div>
+              )}
+              {applyResult && (
+                <div className="bb-alert bb-alert-success">{applyResult.message || 'Applied to Meta.'}</div>
+              )}
             </div>
-            {lastRun.failures && lastRun.failures.length > 0 && (
-              <div className="alert alert-error">
-                {lastRun.failures.length} campaign(s) failed:&nbsp;
-                {lastRun.failures.map(f => `${f.campaign_name}: ${f.error}`).join(' — ')}
-              </div>
-            )}
-            {applyResult && (
-              <div className="alert alert-success">
-                {applyResult.message}
-              </div>
-            )}
+
             {lastRun.recommendations && lastRun.recommendations.length > 0 && (
-              <table className="table">
+              <table className="bb-table">
                 <thead>
                   <tr>
                     <th>Campaign</th>
-                    <th>MTD spend</th>
+                    <th>MTD Spend</th>
                     <th>Expected</th>
                     <th>Pace</th>
-                    <th>Current daily</th>
+                    <th>Current Daily</th>
                     <th>Recommended</th>
                     <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {lastRun.recommendations.map(r => (
-                    <tr key={r.campaign_id}>
-                      <td>{r.campaign_name}</td>
-                      <td>${r.actual_spend.toFixed(2)}</td>
-                      <td>${r.expected_spend.toFixed(2)}</td>
-                      <td>
-                        <span className={r.pace_ratio > 1.05 ? 'over-spending' : r.pace_ratio < 0.95 ? 'under-spending' : ''}>
-                          {r.pace_ratio.toFixed(2)}x
-                        </span>
-                      </td>
-                      <td>${r.current_daily_budget.toFixed(2)}</td>
-                      <td>${r.recommended_daily_budget.toFixed(2)}</td>
-                      <td>
-                        <span className={`status-badge status-${r.action.toLowerCase()}`}>
-                          {r.action}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {lastRun.recommendations.map((r) => {
+                    const action = (r.action || '').toUpperCase();
+                    const rowTint =
+                      action === 'INCREASE' ? 'bb-table-row-tint-up' :
+                      action === 'DECREASE' ? 'bb-table-row-tint-down' : '';
+                    return (
+                      <tr key={r.campaign_id} className={rowTint}>
+                        <td>{r.campaign_name}</td>
+                        <td className="num">${(r.actual_spend || 0).toFixed(2)}</td>
+                        <td className="num">${(r.expected_spend || 0).toFixed(2)}</td>
+                        <td className="num">{(r.pace_ratio || 0).toFixed(2)}x</td>
+                        <td className="num">${(r.current_daily_budget || 0).toFixed(2)}</td>
+                        <td className="num">
+                          ${(r.recommended_daily_budget || 0).toFixed(2)}
+                          <div>{changeIndicator(r.change_percent)}</div>
+                        </td>
+                        <td><span className={pillForStatus(action).cls}>{pillForStatus(action).text}</span></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
           </div>
         )}
 
-        <div className="card">
-          <div className="card-header">
-            <h3>Tracked campaigns ({campaigns.length})</h3>
+        {/* Tracked campaigns table */}
+        <div className="bb-card">
+          <div className="bb-section">
+            <div className="bb-section-head">
+              <div className="bb-section-title">Tracked campaigns ({campaigns.length})</div>
+              <div className="bb-section-meta">Pulled from Meta via the Import button above.</div>
+            </div>
           </div>
 
           {campaigns.length === 0 ? (
-            <p className="no-data">
+            <div className="bb-section bb-muted" style={{ paddingTop: 0 }}>
               No campaigns tracked yet. Click <strong>Import from Meta</strong> above to pull them in.
-            </p>
+            </div>
           ) : (
-            <table className="table">
+            <table className="bb-table">
               <thead>
                 <tr>
-                  <th>Campaign Name</th>
-                  <th>Status</th>
-                  <th>Monthly Budget</th>
-                  <th>Pace Ratio</th>
-                  <th>Recommendation</th>
+                  <th>Campaign</th>
                   <th>Flight</th>
-                  <th>Action</th>
+                  <th>Monthly Budget</th>
+                  <th>Current Daily</th>
+                  <th>Pace</th>
+                  <th>Recommended Daily</th>
+                  <th>Status</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {campaigns.map(campaign => (
-                  <tr key={campaign.id}>
-                    <td className="campaign-name">{campaign.campaign_name}</td>
-                    <td>
-                      {campaign.latest_pacing && (
-                        <span className={`status-badge status-${campaign.latest_pacing.status.toLowerCase()}`}>
-                          {campaign.latest_pacing.status}
-                        </span>
-                      )}
-                    </td>
-                    <td>${campaign.monthly_budget.toFixed(2)}</td>
-                    <td>
-                      {campaign.latest_pacing ? (
-                        <span className={campaign.latest_pacing.pace_ratio > 1.05 ? 'over-spending' : campaign.latest_pacing.pace_ratio < 0.95 ? 'under-spending' : ''}>
-                          {campaign.latest_pacing.pace_ratio.toFixed(2)}x
-                        </span>
-                      ) : (
-                        '–'
-                      )}
-                    </td>
-                    <td>
-                      {campaign.latest_pacing && (
-                        <span className={`change-${campaign.latest_pacing.status.toLowerCase()}`}>
-                          {campaign.latest_pacing.change_percent > 0 ? '+' : ''}{campaign.latest_pacing.change_percent.toFixed(1)}%
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`flight-badge flight-${campaign.flight_status.toLowerCase()}`}>
-                        {campaign.flight_status}
-                      </span>
-                    </td>
-                    <td>
-                      <Link
-                        to={`/account/${accountId}/campaign/${campaign.id}`}
-                        className="link"
-                      >
-                        View
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                {campaigns.map((c) => {
+                  const lp = c.latest_pacing;
+                  const status = lp ? (lp.status || '').toUpperCase() : null;
+                  const pill = pillForStatus(status);
+                  const flightStatus = (c.flight_status || '').toUpperCase();
+                  const isLive = flightStatus === 'ACTIVE' || flightStatus === 'LIVE';
+
+                  return (
+                    <tr key={c.id}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>
+                          {c.campaign_name}
+                          {isLive && c.flight_type === 'LIMITED' && <span className="bb-flight-live">LIVE</span>}
+                        </div>
+                      </td>
+                      <td>
+                        <span className="bb-pill bb-pill-muted">{c.flight_status || c.flight_type || '—'}</span>
+                      </td>
+                      <td className="num">${(c.monthly_budget || 0).toFixed(0)}</td>
+                      <td className="num">
+                        {lp?.current_daily_budget !== undefined
+                          ? `$${(lp.current_daily_budget || 0).toFixed(2)}`
+                          : (c.current_daily_budget !== undefined ? `$${c.current_daily_budget.toFixed(2)}` : '—')}
+                      </td>
+                      <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
+                      <td className="num">
+                        {lp?.recommended_daily_budget !== undefined
+                          ? <>${(lp.recommended_daily_budget).toFixed(2)}<div>{changeIndicator(lp.change_percent)}</div></>
+                          : '—'}
+                      </td>
+                      <td>{lp ? <span className={pill.cls}>{pill.text}</span> : <span className="bb-muted">No data</span>}</td>
+                      <td>
+                        <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-link">View →</Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
         </div>
-      </div>
 
-      {showImport && (
-        <div className="modal-backdrop" onClick={closeImport}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Import campaigns from Meta</h3>
-              <button className="close-btn" onClick={closeImport}>×</button>
-            </div>
+        {/* Import-from-Meta modal */}
+        {showImport && (
+          <div className="bb-modal-backdrop" onClick={closeImport}>
+            <div className="bb-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="bb-modal-head">
+                <div className="bb-modal-title">Import campaigns from Meta</div>
+                <button className="bb-icon-btn" onClick={closeImport}>×</button>
+              </div>
 
-            <div className="modal-body">
-              {importLoading && <p>Fetching campaigns from Meta...</p>}
-              {importError && <div className="alert alert-error">{importError}</div>}
+              <div className="bb-modal-body">
+                {importLoading && <p className="bb-muted">Fetching campaigns from Meta...</p>}
+                {importError && <div className="bb-alert bb-alert-error">{importError}</div>}
 
-              {!importLoading && metaCampaigns.length > 0 && (
-                <>
-                  <p className="muted">
-                    Pick the campaigns you want to track and set a monthly budget for each.
-                    The default monthly budget is <em>current daily × 30</em>; edit as needed.
-                  </p>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th></th>
-                        <th>Campaign</th>
-                        <th>Status</th>
-                        <th>CBO?</th>
-                        <th>Current daily</th>
-                        <th>Monthly budget</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {metaCampaigns.map(c => {
-                        const sel = importSelections[c.meta_campaign_id] || {};
-                        return (
-                          <tr key={c.meta_campaign_id}>
-                            <td>
-                              <input
-                                type="checkbox"
-                                checked={!!sel.selected}
-                                onChange={() => toggleImportSelection(c.meta_campaign_id)}
-                              />
-                            </td>
-                            <td>
-                              {c.name}
-                              {c.already_tracked && <span className="muted"> (tracked)</span>}
-                            </td>
-                            <td>{c.effective_status || c.status}</td>
-                            <td>{c.is_cbo ? 'Yes' : 'No'}</td>
-                            <td>{c.current_daily_budget ? `$${c.current_daily_budget.toFixed(2)}` : '–'}</td>
-                            <td>
-                              <input
-                                type="number"
-                                step="1"
-                                min="0"
-                                placeholder="0.00"
-                                value={sel.monthly_budget ?? ''}
-                                onChange={e => updateImportBudget(c.meta_campaign_id, e.target.value)}
-                                disabled={!sel.selected}
-                                style={{ width: '110px' }}
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </>
-              )}
+                {!importLoading && metaCampaigns.length > 0 && (
+                  <>
+                    <p className="bb-muted" style={{ marginBottom: 12 }}>
+                      Pick the campaigns you want to track and set a monthly budget for each.
+                      The default monthly budget is current daily × 30.
+                    </p>
+                    <table className="bb-table">
+                      <thead>
+                        <tr>
+                          <th></th>
+                          <th>Campaign</th>
+                          <th>Status</th>
+                          <th>CBO?</th>
+                          <th>Current Daily</th>
+                          <th>Monthly Budget</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {metaCampaigns.map((c) => {
+                          const sel = importSelections[c.meta_campaign_id] || {};
+                          return (
+                            <tr key={c.meta_campaign_id}>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  checked={!!sel.selected}
+                                  onChange={() => toggleImportSelection(c.meta_campaign_id)}
+                                />
+                              </td>
+                              <td>
+                                {c.name}
+                                {c.already_tracked && <span className="bb-muted"> (tracked)</span>}
+                              </td>
+                              <td>{c.effective_status || c.status}</td>
+                              <td>{c.is_cbo ? 'Yes' : 'No'}</td>
+                              <td className="num">{c.current_daily_budget ? `$${c.current_daily_budget.toFixed(2)}` : '—'}</td>
+                              <td>
+                                <input
+                                  type="number"
+                                  step="1"
+                                  min="0"
+                                  className="bb-input"
+                                  placeholder="0"
+                                  value={sel.monthly_budget ?? ''}
+                                  onChange={(e) => updateImportBudget(c.meta_campaign_id, e.target.value)}
+                                  disabled={!sel.selected}
+                                  style={{ width: 110 }}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </>
+                )}
 
-              {!importLoading && !importError && metaCampaigns.length === 0 && (
-                <p>No active campaigns found in this Meta ad account.</p>
-              )}
-            </div>
+                {!importLoading && !importError && metaCampaigns.length === 0 && (
+                  <p className="bb-muted">No active campaigns found in this Meta ad account.</p>
+                )}
+              </div>
 
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={closeImport} disabled={importSaving}>
-                Cancel
-              </button>
-              <button className="btn btn-primary" onClick={saveImport} disabled={importSaving || importLoading}>
-                {importSaving ? 'Saving...' : 'Save selections'}
-              </button>
+              <div className="bb-modal-foot">
+                <button className="bb-btn" onClick={closeImport} disabled={importSaving}>Cancel</button>
+                <button className="bb-btn bb-btn-primary" onClick={saveImport} disabled={importSaving || importLoading}>
+                  {importSaving ? 'Saving...' : 'Save selections'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </main>
     </div>
   );
 }
