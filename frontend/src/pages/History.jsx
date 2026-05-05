@@ -85,7 +85,7 @@ function History({ user, onLogout }) {
 
   return (
     <div className="bb-app">
-      <Sidebar user={user} accounts={accounts} variant="account" />
+      <Sidebar user={user} accounts={accounts} />
 
       <main className="bb-main">
         {/* Breadcrumb */}

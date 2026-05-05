@@ -102,7 +102,7 @@ function Home({ user, onLogout }) {
         user={user}
         accounts={accounts}
         onAddAccount={() => setShowAdd(true)}
-        variant="home"
+       
       />
 
       <main className="bb-main">

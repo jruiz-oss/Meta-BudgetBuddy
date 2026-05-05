@@ -356,7 +356,7 @@ function AccountDashboard({ user, onLogout }) {
   if (loading) {
     return (
       <div className="bb-app">
-        <Sidebar user={user} accounts={accounts} variant="account" />
+        <Sidebar user={user} accounts={accounts} />
         <main className="bb-main">
           <div className="bb-card bb-section bb-muted">Loading account...</div>
         </main>
@@ -367,7 +367,7 @@ function AccountDashboard({ user, onLogout }) {
   if (!account) {
     return (
       <div className="bb-app">
-        <Sidebar user={user} accounts={accounts} variant="account" />
+        <Sidebar user={user} accounts={accounts} />
         <main className="bb-main">
           <div className="bb-card bb-section">
             <div className="bb-alert bb-alert-error">Account not found.</div>
@@ -379,7 +379,7 @@ function AccountDashboard({ user, onLogout }) {
 
   return (
     <div className="bb-app">
-      <Sidebar user={user} accounts={accounts} variant="account" />
+      <Sidebar user={user} accounts={accounts} />
 
       <main className="bb-main">
         <div className="bb-breadcrumb">

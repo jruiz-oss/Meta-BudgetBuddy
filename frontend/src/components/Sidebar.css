@@ -80,6 +80,13 @@
 }
 .bb-sidebar-add:hover { background: #fff; color: var(--bb-text); border-color: #b6bcc4; }
 
+/* Nav items unavailable until an account is selected */
+.bb-sidebar-item-dim {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
 .bb-sidebar-user {
   margin-top: auto;
   padding-top: 12px;

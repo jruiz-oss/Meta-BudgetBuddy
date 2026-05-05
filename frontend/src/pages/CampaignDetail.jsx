@@ -243,7 +243,7 @@ function CampaignDetail({ user, onLogout }) {
   // ── loading / error guards ────────────────────────────────
   if (loading) return (
     <div className="bb-app">
-      <Sidebar user={user} accounts={accounts} variant="account" />
+      <Sidebar user={user} accounts={accounts} />
       <main className="bb-main">
         <div className="bb-card bb-section bb-muted">Loading campaign…</div>
       </main>
@@ -252,7 +252,7 @@ function CampaignDetail({ user, onLogout }) {
 
   if (!campaign) return (
     <div className="bb-app">
-      <Sidebar user={user} accounts={accounts} variant="account" />
+      <Sidebar user={user} accounts={accounts} />
       <main className="bb-main">
         <div className="bb-alert bb-alert-error">Campaign not found.</div>
       </main>
@@ -262,7 +262,7 @@ function CampaignDetail({ user, onLogout }) {
   // ── render ────────────────────────────────────────────────
   return (
     <div className="bb-app">
-      <Sidebar user={user} accounts={accounts} variant="account" />
+      <Sidebar user={user} accounts={accounts} />
 
       <main className="bb-main">
 
