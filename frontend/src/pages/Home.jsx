@@ -193,8 +193,8 @@ function Home({ user, onLogout }) {
                       <div className="lbl">Campaigns</div>
                     </div>
                     <div>
-                      <div className="num">${(account.total_daily_budget || 0).toFixed(0)}</div>
-                      <div className="lbl">Daily Budget</div>
+                      <div className="num">${(account.total_monthly_budget || 0).toFixed(0)}</div>
+                      <div className="lbl">Monthly Budget</div>
                     </div>
                     <div>
                       <div className="num">{account.pacing_status?.on_track || 0}</div>
