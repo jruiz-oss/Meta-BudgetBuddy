@@ -54,4 +54,7 @@ def logout():
 @login_required
 def me():
     user = User.query.get(session['user_id'])
+    if not user:
+        session.clear()
+        return jsonify({'error': 'Session expired'}), 401
     return jsonify({'user': user.to_dict()}), 200

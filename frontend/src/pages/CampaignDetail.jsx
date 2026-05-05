@@ -41,7 +41,7 @@ function CampaignDetail({ user, onLogout }) {
     } finally {
       setLoading(false);
     }
-  }, [campaignId]);
+  }, [campaignId, accountId]);
 
   useEffect(() => {
     fetchData();
