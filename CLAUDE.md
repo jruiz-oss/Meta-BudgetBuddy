@@ -151,11 +151,60 @@ cd frontend && npm start
   - `frontend/pages/CampaignDetail.jsx`: Fixed API calls to include `accountId` in URL (was calling `/api/campaigns/${campaignId}` instead of `/api/campaigns/${accountId}/${campaignId}`)
   - `frontend/pages/Home.jsx`: Added Meta access token field to Add Account modal; fixed `total_daily_budget` → `total_monthly_budget`
   - ⚠️ **Neon DB still needs reset** if not done yet: run `DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public; GRANT ALL ON SCHEMA public TO neon_superuser;` in Neon SQL Editor
+- [x] **2026-05-05 (session 3)** — Final fixes to get app fully functional:
+  - `routes/auth.py`: Fixed `/me` crash when session references a user that no longer exists (happens after DB wipe) — now clears session and returns 401 cleanly
+  - `frontend/pages/CampaignDetail.jsx`: Fixed ESLint missing dependency (`accountId`) in useCallback — was breaking Vercel build
+  - `meta-budgetbuddy/` old archived folder deleted from repo
+  - App is now fully deployed and working: Railway (backend) + Vercel (frontend) both green, DB tables creating cleanly, Meta API token field live in Add Account modal, campaigns importing from Meta successfully
 
 ---
 
 ## Known Issues / Open TODOs
 
-> Add anything you're actively working on or bugs you've noticed.
+- [ ] **Google Sheets integration** — see full spec below
 
-- [ ] *Add open items here*
+---
+
+## Next Feature: Google Sheets Integration
+
+### The Sheet
+- Called "Social Budget Pacing"
+- Lives in Google Sheets (user has access via their Google account)
+- Tabs are organized by month: "January 2026", "February 2026", etc. Always use the current month's tab.
+- Within each tab, rows are grouped by platform with colored header rows: **Meta**, **LinkedIn**, **TikTok**
+- **Only interact with rows in the Meta section** — stop before LinkedIn and TikTok rows
+
+### Column Layout (per row = one campaign)
+| Col | Contents |
+|-----|----------|
+| A | Campaign name (e.g., "Camelback - Lodge", "Harrah's Ak-Chin - FB/IG Ads") |
+| B | Total Monthly Budget |
+| C | Current Spend through yesterday (MTD spend, EOD prior day) |
+| D | Daily Spend |
+| E | Left to Spend |
+| F | Notes |
+| G | Last Paced |
+| H | Reset Account Limit on the 1st |
+
+### What to Build
+1. **READ (priority)** — When a user imports campaigns (or runs pacing), pull monthly budgets from column B of the current month's tab. Match sheet rows to Meta campaigns by campaign name. This replaces manual budget entry.
+2. **WRITE** — After each pacing run, update column C with actual MTD spend through yesterday (pulled from Meta API). Also update column G (Last Paced) with today's date.
+
+### Matching Logic
+- Sheet campaign names and Meta campaign names should align but may not be exact
+- Sheet changes month to month (campaigns added/removed, new ones appear)
+- Need smart/fuzzy name matching — if no exact match, try case-insensitive, then partial match
+- Only process rows in the Meta section (detect section by looking for the "Meta" header row, stop at "LinkedIn" or "TikTok" header)
+
+### Tech Requirements
+- Use `gspread` Python library with a Google Service Account
+- Service account JSON key stored as a Railway environment variable (`GOOGLE_CREDENTIALS_JSON`)
+- User provides the Google Sheet URL or Sheet ID in the app settings
+- New backend routes needed:
+  - `GET /api/sheets/:account_id/preview` — preview matched campaigns (sheet row ↔ Meta campaign)
+  - `POST /api/sheets/:account_id/sync-budgets` — read budgets from sheet into DB
+  - `POST /api/sheets/:account_id/write-spend` — write MTD spend back to sheet
+- New frontend: a "Sheets" section in Settings page with Sheet URL field + sync buttons
+
+### Starting Prompt for New Session
+> "Read my CLAUDE.md and get up to speed. I want to build Google Sheets integration for the Meta BudgetBuddy app. Full spec is in the CLAUDE.md under 'Next Feature: Google Sheets Integration'. The app is deployed on Railway (backend) and Vercel (frontend). Start by adding the gspread dependency and building the backend routes, then the frontend settings UI."
