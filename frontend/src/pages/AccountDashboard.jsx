@@ -324,13 +324,30 @@ function AccountDashboard({ user, onLogout }) {
                   </div>
                   <div className="bb-section-meta">Recommendations from the most recent calculation.</div>
                 </div>
-                <button
-                  className="bb-btn bb-btn-primary"
-                  onClick={handleApplyAll}
-                  disabled={applying || lastRun.adjustments_needed === 0}
-                >
-                  {applying ? 'Applying...' : 'Apply all to Meta'}
-                </button>
+                <div className="bb-row">
+                  <button
+                    className="bb-btn bb-btn-secondary"
+                    title="Download full run data as JSON for debugging"
+                    onClick={() => {
+                      const blob = new Blob([JSON.stringify(lastRun, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `pacing-run-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    ↓ Download Run Log
+                  </button>
+                  <button
+                    className="bb-btn bb-btn-primary"
+                    onClick={handleApplyAll}
+                    disabled={applying || lastRun.adjustments_needed === 0}
+                  >
+                    {applying ? 'Applying...' : 'Apply all to Meta'}
+                  </button>
+                </div>
               </div>
 
               {lastRun.failures && lastRun.failures.length > 0 && (
