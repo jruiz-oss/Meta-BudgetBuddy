@@ -395,6 +395,10 @@ def get_campaigns(account_id):
             else:
                 camp_dict['flight_status'] = 'ALWAYS_ON'
 
+            # Include adset-level pacing for ABO campaigns (needed by the Home view).
+            if campaign.budget_mode == 'ABO':
+                camp_dict['adsets'] = [a.to_dict() for a in campaign.adsets if a.is_active]
+
             campaigns_data.append(camp_dict)
 
         return jsonify({

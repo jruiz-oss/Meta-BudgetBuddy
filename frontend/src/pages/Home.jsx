@@ -23,14 +23,38 @@ function Home({ user, onLogout }) {
   const fetchAll = useCallback(async () => {
     try {
       setLoading(true);
-      const [allRes, acctRes] = await Promise.all([
-        axios.get('/api/campaigns/all'),
-        axios.get('/api/accounts'),
-      ]);
-      setAccountBlocks(allRes.data.accounts || []);
-      setAllAccounts(acctRes.data.accounts || acctRes.data || []);
-    } catch {
-      setError('Failed to load campaigns');
+      // Fetch accounts first, then campaigns + pacing summary for each in parallel.
+      const acctRes = await axios.get('/api/accounts');
+      const accounts = acctRes.data.accounts || acctRes.data || [];
+      setAllAccounts(accounts);
+
+      if (accounts.length === 0) {
+        setAccountBlocks([]);
+        return;
+      }
+
+      // For each account, fetch its campaigns and pacing summary.
+      const blocks = await Promise.all(
+        accounts.map(async (acct) => {
+          const [campRes, summaryRes] = await Promise.all([
+            axios.get(`/api/campaigns/${acct.id}`),
+            axios.get(`/api/pacing/${acct.id}/summary`).catch(() => ({ data: {} })),
+          ]);
+          const campaigns = campRes.data.campaigns || [];
+          const lastRun   = summaryRes.data?.last_run || null;
+
+          // For ABO campaigns, fetch adsets (they're already in to_dict via the campaign endpoint)
+          return {
+            id: acct.id,
+            account_name: acct.account_name,
+            last_run: lastRun,
+            campaigns,
+          };
+        })
+      );
+      setAccountBlocks(blocks);
+    } catch (err) {
+      setError('Failed to load campaigns: ' + (err.response?.data?.error || err.message));
     } finally {
       setLoading(false);
     }
