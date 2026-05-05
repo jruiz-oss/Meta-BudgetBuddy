@@ -14,6 +14,11 @@ function CampaignDetail({ user, onLogout }) {
   const [applyResult, setApplyResult] = useState(null);
   const [rejected, setRejected]       = useState(false);
 
+  // Per-adset apply/reject (ABO only)
+  const [adsetApplying,  setAdsetApplying]  = useState({});  // { [adset_id]: bool }
+  const [adsetRejected,  setAdsetRejected]  = useState({});  // { [adset_id]: bool }
+  const [adsetResults,   setAdsetResults]   = useState({});  // { [adset_id]: {ok,msg} }
+
   // Ad set allocation editing
   const [editingAdsets, setEditingAdsets]   = useState(false);
   const [adsetMode, setAdsetMode]           = useState('pct');   // 'pct' | 'daily'
@@ -103,6 +108,43 @@ function CampaignDetail({ user, onLogout }) {
       setApplying(false);
     }
   };
+
+  // ── per-adset apply (ABO) ────────────────────────────────
+  const handleApplyAdset = async (adset) => {
+    const alp = adset.latest_pacing;
+    if (!alp || adsetApplying[adset.id]) return;
+
+    setAdsetApplying((p) => ({ ...p, [adset.id]: true }));
+    setAdsetResults((p) => ({ ...p, [adset.id]: null }));
+
+    const adjustment = {
+      level: 'adset',
+      campaign_id: campaign.id,
+      campaign_name: campaign.campaign_name,
+      adset_id: adset.id,
+      adset_name: adset.adset_name,
+      current_daily_budget: alp.current_daily_budget,
+      recommended_daily_budget: alp.recommended_daily_budget,
+      change_percent: alp.change_percent,
+      action: alp.action || alp.status,
+    };
+
+    try {
+      await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: [adjustment] });
+      setAdsetResults((p) => ({ ...p, [adset.id]: { ok: true, msg: `Applied — new daily: $${(alp.recommended_daily_budget || 0).toFixed(2)}` } }));
+      fetchData();
+    } catch (err) {
+      setAdsetResults((p) => ({ ...p, [adset.id]: { ok: false, msg: err.response?.data?.error || 'Failed to apply' } }));
+    } finally {
+      setAdsetApplying((p) => ({ ...p, [adset.id]: false }));
+    }
+  };
+
+  const handleRejectAdset = (adsetId) =>
+    setAdsetRejected((p) => ({ ...p, [adsetId]: true }));
+
+  const handleUndoRejectAdset = (adsetId) =>
+    setAdsetRejected((p) => ({ ...p, [adsetId]: false }));
 
   // ── adset allocation editing ─────────────────────────────
   const enterEditMode = () => {
@@ -331,7 +373,7 @@ function CampaignDetail({ user, onLogout }) {
           </div>
         </div>
 
-        {/* Pacing Breakdown + Recommended Action */}
+        {/* Pacing Breakdown + Recommended Action (CBO only for the action card) */}
         {hasPacing && (
           <div className="cd-two-col" style={{ marginBottom: 20 }}>
 
@@ -365,12 +407,19 @@ function CampaignDetail({ user, onLogout }) {
               </div>
             </div>
 
-            {/* RIGHT — Recommended Action */}
-            <div className={`bb-card cd-recommendation${showRec ? ' cd-recommendation-active' : ''}`}>
+            {/* RIGHT — Recommended Action (CBO only; ABO handles this per-adset in the table below) */}
+            <div className={`bb-card cd-recommendation${showRec && mode !== 'ABO' ? ' cd-recommendation-active' : ''}`}>
               <div className="bb-section">
                 <div className="bb-section-title" style={{ marginBottom: 16 }}>Recommended Action</div>
 
-                {rejected ? (
+                {mode === 'ABO' ? (
+                  // ABO: per-adset Apply/Reject are in the Ad Sets table below
+                  <div style={{ fontSize: 13, color: 'var(--bb-text-muted)', lineHeight: 1.6 }}>
+                    This is an <strong>ABO</strong> campaign — budgets are set per ad set.
+                    Use the <strong>Apply</strong> / <strong>Reject</strong> buttons in the
+                    Ad Sets table below to act on individual ad set recommendations.
+                  </div>
+                ) : rejected ? (
                   <p className="bb-muted" style={{ fontSize: 14 }}>
                     Recommendation rejected. Run pacing again to get a new one.
                   </p>
@@ -494,13 +543,19 @@ function CampaignDetail({ user, onLogout }) {
                   <th>Pace</th>
                   <th>Rec. Daily</th>
                   <th>Status</th>
+                  {!editingAdsets && <th>Action</th>}
                 </tr>
               </thead>
               <tbody>
                 {campaign.adsets.map((a) => {
-                  const alp      = a.latest_pacing;
-                  const aPill    = pillForStatus(alp?.action || alp?.status);
+                  const alp          = a.latest_pacing;
+                  const alpAction    = (alp?.action || alp?.status || '').toUpperCase();
+                  const aPill        = pillForStatus(alpAction);
                   const adsetMonthly = campaign.monthly_budget * (a.allocation_pct / 100);
+                  const isApplying   = !!adsetApplying[a.id];
+                  const isRejected   = !!adsetRejected[a.id];
+                  const result       = adsetResults[a.id];
+                  const needsAction  = alp && alpAction !== 'ON_PACE';
 
                   return (
                     <tr key={a.id}>
@@ -540,6 +595,47 @@ function CampaignDetail({ user, onLogout }) {
                           ? <span className={aPill.cls}>{aPill.label}</span>
                           : <span className="bb-muted">No data</span>}
                       </td>
+                      {!editingAdsets && (
+                        <td>
+                          {result?.ok ? (
+                            <span style={{ color: '#10b981', fontSize: 12, fontWeight: 600 }}>✓ Applied</span>
+                          ) : result && !result.ok ? (
+                            <span style={{ color: '#ef4444', fontSize: 12 }}>{result.msg}</span>
+                          ) : isRejected ? (
+                            <span style={{ fontSize: 12 }}>
+                              <span className="bb-muted">Skipped</span>
+                              {' · '}
+                              <button
+                                style={{ background: 'none', border: 'none', color: 'var(--bb-primary)', cursor: 'pointer', fontSize: 12, padding: 0 }}
+                                onClick={() => handleUndoRejectAdset(a.id)}
+                              >
+                                Undo
+                              </button>
+                            </span>
+                          ) : needsAction ? (
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button
+                                className="bb-btn bb-btn-primary"
+                                style={{ fontSize: 11, padding: '3px 10px' }}
+                                onClick={() => handleApplyAdset(a)}
+                                disabled={isApplying}
+                              >
+                                {isApplying ? '…' : 'Apply'}
+                              </button>
+                              <button
+                                className="bb-btn"
+                                style={{ fontSize: 11, padding: '3px 8px' }}
+                                onClick={() => handleRejectAdset(a.id)}
+                                disabled={isApplying}
+                              >
+                                Skip
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="bb-muted" style={{ fontSize: 12 }}>—</span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
