@@ -123,14 +123,21 @@ class Campaign(db.Model):
         latest = None
         if self.budget_mode == 'ABO':
             # Sum the most-recent ad-set rows for the *same date* into a roll-up.
-            adset_ids = [a.id for a in self.adsets]
+            adset_ids = [a.id for a in self.adsets if a.is_active]
             if adset_ids and self.pacing_data:
                 # Latest date across this campaign's pacing rows that belong to adsets
                 rows_for_adsets = [p for p in self.pacing_data if p.adset_id in adset_ids]
                 if rows_for_adsets:
                     last_date = max((p.date for p in rows_for_adsets if p.date), default=None)
                     if last_date:
-                        same_day = [p for p in rows_for_adsets if p.date == last_date]
+                        # Pacing may be run multiple times per day — keep only the highest-id
+                        # (most recently written) row per adset so we don't double-count spend.
+                        latest_per_adset = {}
+                        for p in rows_for_adsets:
+                            if p.date == last_date:
+                                if p.adset_id not in latest_per_adset or p.id > latest_per_adset[p.adset_id].id:
+                                    latest_per_adset[p.adset_id] = p
+                        same_day = list(latest_per_adset.values())
                         actual = sum(p.actual_spend or 0 for p in same_day)
                         expected = sum(p.expected_spend or 0 for p in same_day)
                         rec = sum(p.recommended_daily_budget or 0 for p in same_day)
@@ -202,9 +209,14 @@ class AdSet(db.Model):
 
     def to_dict(self):
         # Find the most recent ad-set-level PacingData row for this adset.
+        # Sort by (date, id) so that when pacing is run multiple times on the same
+        # day, the highest-id (most recently written) row wins.
         latest = None
         if self.pacing_data:
-            sorted_rows = sorted(self.pacing_data, key=lambda r: r.date or datetime.min.date())
+            sorted_rows = sorted(
+                self.pacing_data,
+                key=lambda r: (r.date or datetime.min.date(), r.id),
+            )
             latest = sorted_rows[-1].to_dict() if sorted_rows else None
         return {
             'id': self.id,
