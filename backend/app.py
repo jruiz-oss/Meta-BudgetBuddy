@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, jsonify
 from sqlalchemy import text
 from flask_cors import CORS
@@ -89,6 +89,164 @@ with app.app_context():
                 conn.execute(text("SELECT pg_advisory_unlock(20260505)"))
     except Exception as e:
         logging.exception("db.create_all() failed at startup: %s", e)
+
+# ── Scheduled auto-pacing ────────────────────────────────────────────────────
+# Runs once daily at 06:00 UTC using APScheduler's BackgroundScheduler.
+# Bypasses HTTP auth by working directly inside the app context.
+# max_instances=1 prevents overlapping runs if a previous run is still going.
+
+def _scheduled_pacing_job():
+    """Called by APScheduler. Runs pacing for every account that has campaigns."""
+    with app.app_context():
+        try:
+            from database import (
+                Account, AccountSettings, Campaign, AdSet,
+                PacingData, PacingRun,
+            )
+            from meta_client import MetaClient, MetaAPIError
+            from routes.pacing import (
+                _month_bounds, _campaign_should_run_today, _compute_recommendation,
+            )
+
+            today = datetime.utcnow().date()
+            yesterday = today - timedelta(days=1)
+            month_start, month_end = _month_bounds(today)
+            days_in_month = (month_end - month_start).days + 1
+            days_elapsed = max(1, (yesterday - month_start).days + 1)
+            spend_until = max(month_start, yesterday)
+
+            accounts = Account.query.all()
+            for account in accounts:
+                settings = AccountSettings.query.filter_by(account_id=account.id).first()
+                if not settings:
+                    continue
+                try:
+                    meta = MetaClient(
+                        access_token=account.meta_token,
+                        ad_account_id=account.meta_account_id,
+                    )
+                except ValueError:
+                    continue
+
+                campaigns = Campaign.query.filter_by(account_id=account.id, is_active=True).all()
+                included = [c for c in campaigns if _campaign_should_run_today(c, today)]
+                adjustments_needed = 0
+
+                for campaign in included:
+                    if not campaign.meta_campaign_id:
+                        continue
+
+                    if campaign.budget_mode == 'ABO':
+                        active_adsets = [a for a in campaign.adsets if a.is_active]
+                        live_daily_map = {}
+                        try:
+                            live_adsets = meta.list_adsets_for_campaign(
+                                campaign.meta_campaign_id, only_active=False
+                            )
+                            for la in live_adsets:
+                                raw = la.get('daily_budget')
+                                if raw is not None:
+                                    try:
+                                        live_daily_map[la['id']] = float(raw) / 100.0
+                                    except (TypeError, ValueError):
+                                        pass
+                        except MetaAPIError:
+                            pass
+
+                        for adset in active_adsets:
+                            allocated = campaign.monthly_budget * (adset.allocation_pct / 100.0)
+                            actual_meta_daily = live_daily_map.get(adset.meta_adset_id)
+                            try:
+                                actual_spend = meta.get_adset_spend(
+                                    adset.meta_adset_id, since=month_start, until=spend_until,
+                                )
+                            except MetaAPIError:
+                                continue
+                            daily_target, expected_mtd, pace_ratio, new_daily, change_pct, action = (
+                                _compute_recommendation(
+                                    monthly_budget=allocated,
+                                    actual_spend=actual_spend,
+                                    days_in_month=days_in_month,
+                                    days_elapsed=days_elapsed,
+                                    settings=settings,
+                                    actual_current_daily=actual_meta_daily,
+                                )
+                            )
+                            display_current = actual_meta_daily if actual_meta_daily is not None else daily_target
+                            db.session.add(PacingData(
+                                campaign_id=campaign.id, adset_id=adset.id,
+                                date=yesterday, current_daily_budget=display_current,
+                                actual_spend=actual_spend, expected_spend=expected_mtd,
+                                pace_ratio=pace_ratio, status=action,
+                                recommended_daily_budget=new_daily, change_percent=change_pct,
+                            ))
+                            if action != 'ON_PACE':
+                                adjustments_needed += 1
+                    else:
+                        try:
+                            actual_spend = meta.get_campaign_spend(
+                                campaign.meta_campaign_id, since=month_start, until=spend_until,
+                            )
+                        except MetaAPIError:
+                            continue
+                        daily_target, expected_mtd, pace_ratio, new_daily, change_pct, action = (
+                            _compute_recommendation(
+                                monthly_budget=campaign.monthly_budget,
+                                actual_spend=actual_spend,
+                                days_in_month=days_in_month,
+                                days_elapsed=days_elapsed,
+                                settings=settings,
+                            )
+                        )
+                        db.session.add(PacingData(
+                            campaign_id=campaign.id, adset_id=None,
+                            date=yesterday, current_daily_budget=daily_target,
+                            actual_spend=actual_spend, expected_spend=expected_mtd,
+                            pace_ratio=pace_ratio, status=action,
+                            recommended_daily_budget=new_daily, change_percent=change_pct,
+                        ))
+                        if action != 'ON_PACE':
+                            adjustments_needed += 1
+
+                db.session.add(PacingRun(
+                    account_id=account.id,
+                    run_type='AUTO',
+                    triggered_by='scheduler',
+                    campaigns_processed=len(included),
+                    adjustments_made=adjustments_needed,
+                    status='COMPLETED',
+                ))
+
+            db.session.commit()
+            logging.info("Scheduled pacing run completed at %s UTC", datetime.utcnow().isoformat())
+
+        except Exception:
+            logging.exception("Scheduled pacing run failed")
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+
+# Only start the scheduler when not in debug/reload mode (avoids double-start).
+# Also skips if DISABLE_SCHEDULER=true (useful for local dev).
+if not os.getenv('DISABLE_SCHEDULER') and os.getenv('FLASK_ENV') == 'production':
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        _scheduler = BackgroundScheduler(timezone='UTC')
+        _scheduler.add_job(
+            _scheduled_pacing_job,
+            trigger='cron',
+            hour=6,
+            minute=0,
+            max_instances=1,
+            id='daily_pacing',
+        )
+        _scheduler.start()
+        logging.info("APScheduler started — daily pacing at 06:00 UTC")
+    except Exception as _e:
+        logging.warning("Could not start APScheduler: %s", _e)
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

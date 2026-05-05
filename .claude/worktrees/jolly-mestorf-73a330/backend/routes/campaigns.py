@@ -54,10 +54,8 @@ def sync_campaigns(account_id):
         except MetaAPIError as e:
             return jsonify({'error': f'Meta API error: {e}'}), 502
 
-        # Normalize: convert cents → dollars, mark which are actively tracked.
-        # Only is_active=True campaigns count as "already tracked" so inactive/removed
-        # campaigns don't show as pre-selected in the import modal.
-        tracked_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
+        # Normalize: convert cents → dollars, mark which are already tracked.
+        tracked_campaigns = Campaign.query.filter_by(account_id=account_id).all()
         tracked_ids = {c.meta_campaign_id for c in tracked_campaigns}
         tracked_by_meta_id = {c.meta_campaign_id: c for c in tracked_campaigns}
 
@@ -65,18 +63,7 @@ def sync_campaigns(account_id):
         for c in campaigns:
             daily_cents = c.get('daily_budget')
             lifetime_cents = c.get('lifetime_budget')
-            # Use the canonical CBO flag from Meta when available.
-            # Fall back to checking daily_budget as a number > 0 (Meta returns "0"
-            # as a string for ABO campaigns, so bool(daily_cents) was incorrectly
-            # True for ABO — that was the bug).
-            cbo_flag = c.get('is_campaign_budget_optimized')
-            if cbo_flag is not None:
-                is_cbo = bool(cbo_flag)
-            else:
-                try:
-                    is_cbo = int(daily_cents or 0) > 0
-                except (TypeError, ValueError):
-                    is_cbo = False
+            is_cbo = bool(daily_cents)
             budget_mode = 'CBO' if is_cbo else 'ABO'
             entry = {
                 'meta_campaign_id': c['id'],
@@ -84,14 +71,11 @@ def sync_campaigns(account_id):
                 'status': c.get('status'),
                 'effective_status': c.get('effective_status'),
                 'objective': c.get('objective'),
-                'current_daily_budget': float(daily_cents) / 100 if daily_cents and int(daily_cents) > 0 else None,
-                'current_lifetime_budget': float(lifetime_cents) / 100 if lifetime_cents and int(lifetime_cents) > 0 else None,
+                'current_daily_budget': float(daily_cents) / 100 if daily_cents else None,
+                'current_lifetime_budget': float(lifetime_cents) / 100 if lifetime_cents else None,
                 'is_cbo': is_cbo,
                 'budget_mode': budget_mode,
                 'already_tracked': c['id'] in tracked_ids,
-                # Return the saved monthly budget so the import modal can pre-fill it
-                # (especially important for ABO campaigns which have no campaign-level daily budget).
-                'saved_monthly_budget': tracked_by_meta_id[c['id']].monthly_budget if c['id'] in tracked_by_meta_id else None,
                 'adsets': [],
             }
 
@@ -303,65 +287,6 @@ def sync_campaigns(account_id):
     }), 200
 
 
-@campaigns_bp.route('/all', methods=['GET'])
-@login_required
-def get_all_campaigns():
-    """
-    Return all active campaigns (with latest pacing + adsets) across every
-    account that belongs to the current user. Used by the unified Home view.
-    """
-    try:
-        uid = session.get('user_id')
-        if not uid:
-            return jsonify({'error': 'Not authenticated'}), 401
-
-        accounts = Account.query.filter_by(user_id=uid).all()
-        result = []
-        today = datetime.utcnow().date()
-
-        for account in accounts:
-            # Most recent pacing run for this account
-            last_run = None
-            if account.pacing_runs:
-                lr = sorted(account.pacing_runs, key=lambda r: r.run_at)[-1]
-                last_run = lr.run_at.isoformat()
-
-            campaigns = Campaign.query.filter_by(account_id=account.id, is_active=True).all()
-            camp_list = []
-            for campaign in campaigns:
-                camp_dict = campaign.to_dict()
-
-                # Flight status
-                if campaign.flight_type == 'LIMITED':
-                    if campaign.flight_start_date and campaign.flight_end_date:
-                        if today < campaign.flight_start_date:
-                            camp_dict['flight_status'] = 'SCHEDULED'
-                        elif campaign.flight_start_date <= today <= campaign.flight_end_date:
-                            camp_dict['flight_status'] = 'LIVE'
-                        else:
-                            camp_dict['flight_status'] = 'ENDED'
-                else:
-                    camp_dict['flight_status'] = 'ALWAYS_ON'
-
-                # Include adsets with their latest_pacing for ABO
-                if campaign.budget_mode == 'ABO':
-                    camp_dict['adsets'] = [a.to_dict() for a in campaign.adsets if a.is_active]
-
-                camp_list.append(camp_dict)
-
-            result.append({
-                'id': account.id,
-                'account_name': account.account_name,
-                'last_run': last_run,
-                'campaigns': camp_list,
-            })
-
-        return jsonify({'accounts': result}), 200
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 @campaigns_bp.route('/<account_id>', methods=['GET'])
 @login_required
 def get_campaigns(account_id):
@@ -375,7 +300,7 @@ def get_campaigns(account_id):
         if not account:
             return jsonify({'error': 'Account not found'}), 404
 
-        campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
+        campaigns = Campaign.query.filter_by(account_id=account_id).all()
 
         campaigns_data = []
         for campaign in campaigns:
@@ -580,83 +505,6 @@ def delete_campaign(account_id, campaign_id):
         db.session.commit()
 
         return jsonify({'message': 'Campaign deleted successfully'}), 200
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-
-@campaigns_bp.route('/<account_id>/<campaign_id>/adsets', methods=['PUT'])
-@login_required
-def update_adset_allocations(account_id, campaign_id):
-    """
-    Update allocation percentages for ad sets on an ABO campaign.
-
-    Body: { "adsets": [{ "id": <db_id>, "allocation_pct": <float> }, ...] }
-
-    Validation:
-    - Campaign must exist, belong to this account, and be ABO.
-    - Every adset id must belong to this campaign.
-    - Allocations must be >= 0 and sum to 100 ± 1.5.
-    """
-    ALLOC_TOLERANCE = 1.5
-
-    try:
-        user = _current_user()
-        if not user:
-            return jsonify({'error': 'Not authenticated'}), 401
-
-        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
-        if not account:
-            return jsonify({'error': 'Account not found'}), 404
-
-        campaign = Campaign.query.filter_by(id=campaign_id, account_id=account_id).first()
-        if not campaign:
-            return jsonify({'error': 'Campaign not found'}), 404
-
-        if campaign.budget_mode != 'ABO':
-            return jsonify({'error': 'Allocation editing is only available for ABO campaigns'}), 400
-
-        payload = request.get_json(silent=True) or {}
-        incoming = payload.get('adsets', [])
-        if not incoming:
-            return jsonify({'error': 'No adsets provided'}), 400
-
-        # Build a map of active adsets that belong to this campaign.
-        campaign_adset_ids = {a.id for a in campaign.adsets if a.is_active}
-
-        # Validate all ids and percentages before touching the DB.
-        validated = []
-        total_pct = 0.0
-        for item in incoming:
-            adset_id = item.get('id')
-            if adset_id not in campaign_adset_ids:
-                return jsonify({'error': f'Ad set id {adset_id} does not belong to this campaign'}), 400
-            try:
-                pct = float(item.get('allocation_pct', 0))
-            except (TypeError, ValueError):
-                return jsonify({'error': f'allocation_pct must be a number for adset {adset_id}'}), 400
-            if pct < 0:
-                return jsonify({'error': f'allocation_pct must be >= 0 for adset {adset_id}'}), 400
-            total_pct += pct
-            validated.append({'id': adset_id, 'pct': pct})
-
-        if abs(total_pct - 100.0) > ALLOC_TOLERANCE:
-            return jsonify({
-                'error': f'Allocations must sum to ~100% (got {round(total_pct, 2)}%)'
-            }), 400
-
-        # All good — write.
-        adset_map = {a.id: a for a in campaign.adsets}
-        for item in validated:
-            adset_map[item['id']].allocation_pct = item['pct']
-
-        db.session.commit()
-
-        return jsonify({
-            'message': 'Allocations updated',
-            'adsets': [a.to_dict() for a in campaign.adsets if a.is_active],
-        }), 200
 
     except Exception as e:
         db.session.rollback()

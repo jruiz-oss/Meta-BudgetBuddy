@@ -37,7 +37,7 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
             <button
               type="button"
               className="bb-sidebar-add"
-              onClick={onAddAccount || (() => navigate('/'))}
+              onClick={onAddAccount || (() => navigate('/accounts'))}
             >
               + Add Account
             </button>
@@ -56,6 +56,14 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
               className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
             >
               Home
+            </NavLink>
+          </li>
+          <li>
+            <NavLink
+              to="/accounts"
+              className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
+            >
+              Accounts
             </NavLink>
           </li>
           <li>
