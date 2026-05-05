@@ -62,7 +62,7 @@ except ImportError:
         return new_budget, actual_pct, action
 
 
-pacing_bp = Blueprint("pacing", __name__)
+pacing_bp = Blueprint("pacing", __name__, url_prefix="/api/pacing")
 
 
 # ----------------------------------------------------------------------

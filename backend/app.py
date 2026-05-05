@@ -1,6 +1,8 @@
 import os
 import logging
+from datetime import datetime
 from flask import Flask, jsonify
+from sqlalchemy import text
 from flask_cors import CORS
 from dotenv import load_dotenv
 from database import db
@@ -24,10 +26,12 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
 
-# Cross-domain session cookies (frontend on Vercel, backend on Railway).
-# Browsers drop cookies on cross-site responses unless SameSite=None + Secure.
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'
-app.config['SESSION_COOKIE_SECURE'] = True
+# Cross-domain session cookies.
+# In production (Vercel → Railway): SameSite=None + Secure required for cross-site cookies.
+# In development (localhost → localhost): Lax + not Secure, otherwise browsers drop cookies over HTTP.
+_is_production = os.getenv('FLASK_ENV') == 'production'
+app.config['SESSION_COOKIE_SAMESITE'] = 'None' if _is_production else 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = _is_production
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 # Initialize extensions
@@ -66,18 +70,22 @@ def server_error(error):
 def unauthorized(error):
     return jsonify({'error': 'Unauthorized'}), 401
 
-@app.route('/health', methods=['GET'])
+@app.route('/api/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok'}), 200
+    return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()}), 200
 
-# Create tables on startup. Wrap in try/except so:
-#   1) racing gunicorn workers don't both die when the second one sees
-#      "table already exists" (this was causing Worker failed to boot).
-#   2) a temporarily unreachable DB at boot doesn't kill the worker —
-#      health check still responds and the platform can retry.
+# Create tables on startup.
+# Uses a PostgreSQL advisory lock so only one gunicorn worker runs create_all —
+# otherwise two workers boot simultaneously, both try to CREATE TABLE, and one
+# crashes with a duplicate type error in pg_type.
 with app.app_context():
     try:
-        db.create_all()
+        with db.engine.connect() as conn:
+            conn.execute(text("SELECT pg_advisory_lock(20260505)"))
+            try:
+                db.create_all()
+            finally:
+                conn.execute(text("SELECT pg_advisory_unlock(20260505)"))
     except Exception as e:
         logging.exception("db.create_all() failed at startup: %s", e)
 

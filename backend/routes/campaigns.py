@@ -7,9 +7,9 @@ from flask import Blueprint, request, jsonify, session
 from database import db, Account, Campaign, PacingData, User
 from meta_client import MetaAPIError, MetaClient
 from routes.auth import login_required
-from datetime import datetime
+from datetime import datetime, timedelta
 
-campaigns_bp = Blueprint('campaigns', __name__)
+campaigns_bp = Blueprint('campaigns', __name__, url_prefix='/api/campaigns')
 
 
 def _current_user():
@@ -224,6 +224,33 @@ def get_campaign(account_id, campaign_id):
         camp_dict['recent_adjustments'] = adjustments
 
         return jsonify(camp_dict), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@campaigns_bp.route('/<account_id>/<campaign_id>/pacing-history', methods=['GET'])
+@login_required
+def get_pacing_history(account_id, campaign_id):
+    """Return the last 30 days of PacingData for a campaign (for charts)."""
+    try:
+        user = _current_user()
+        if not user:
+            return jsonify({'error': 'Not authenticated'}), 401
+        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        if not account:
+            return jsonify({'error': 'Account not found'}), 404
+
+        campaign = Campaign.query.filter_by(id=campaign_id, account_id=account_id).first()
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+
+        cutoff = datetime.utcnow().date() - timedelta(days=30)
+        history = [
+            p.to_dict() for p in campaign.pacing_data
+            if p.date and p.date >= cutoff
+        ]
+        return jsonify({'history': history, 'campaign_id': campaign_id}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500

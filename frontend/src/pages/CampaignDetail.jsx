@@ -30,8 +30,8 @@ function CampaignDetail({ user, onLogout }) {
       setLoading(true);
       const [accountsRes, campaignRes, historyRes] = await Promise.all([
         axios.get('/api/accounts'),
-        axios.get(`/api/campaigns/${campaignId}`),
-        axios.get(`/api/campaigns/${campaignId}/pacing-history`),
+        axios.get(`/api/campaigns/${accountId}/${campaignId}`),
+        axios.get(`/api/campaigns/${accountId}/${campaignId}/pacing-history`),
       ]);
       setAccounts(accountsRes.data.accounts || accountsRes.data || []);
       setCampaign(campaignRes.data.campaign || campaignRes.data);

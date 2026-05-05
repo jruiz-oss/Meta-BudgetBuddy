@@ -28,7 +28,8 @@ def create_account():
     account = Account(
         user_id=user_id,
         account_name=data.get('account_name'),
-        meta_account_id=data.get('meta_account_id')
+        meta_account_id=data.get('meta_account_id'),
+        meta_token=data.get('meta_token'),
     )
     db.session.add(account)
     db.session.commit()
@@ -83,11 +84,11 @@ def account_summary(account_id):
             latest = campaign.pacing_data[-1]
             total_daily_budget += campaign.daily_budget
 
-            if latest.recommendation == 'on_track':
+            if latest.status == 'ON_PACE':
                 pacing_status['on_track'] += 1
-            elif latest.recommendation == 'over_pacing':
+            elif latest.status == 'DECREASE':
                 pacing_status['over_pacing'] += 1
-            elif latest.recommendation == 'under_pacing':
+            elif latest.status == 'INCREASE':
                 pacing_status['under_pacing'] += 1
 
     status_category = 'on_track'

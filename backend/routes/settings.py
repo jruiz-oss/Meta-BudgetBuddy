@@ -79,9 +79,9 @@ def update_flight(account_id, campaign_id):
     if 'flight_type' in data:
         campaign.flight_type = data['flight_type']
     if 'flight_start_date' in data and data['flight_start_date']:
-        campaign.flight_start_date = datetime.fromisoformat(data['flight_start_date'].replace('Z', '+00:00'))
+        campaign.flight_start_date = datetime.fromisoformat(data['flight_start_date'][:10]).date()
     if 'flight_end_date' in data and data['flight_end_date']:
-        campaign.flight_end_date = datetime.fromisoformat(data['flight_end_date'].replace('Z', '+00:00'))
+        campaign.flight_end_date = datetime.fromisoformat(data['flight_end_date'][:10]).date()
 
     db.session.commit()
     return jsonify({
@@ -109,9 +109,9 @@ def batch_update_flights(account_id):
             if 'flight_type' in update:
                 campaign.flight_type = update['flight_type']
             if 'flight_start_date' in update and update['flight_start_date']:
-                campaign.flight_start_date = datetime.fromisoformat(update['flight_start_date'].replace('Z', '+00:00'))
+                campaign.flight_start_date = datetime.fromisoformat(update['flight_start_date'][:10]).date()
             if 'flight_end_date' in update and update['flight_end_date']:
-                campaign.flight_end_date = datetime.fromisoformat(update['flight_end_date'].replace('Z', '+00:00'))
+                campaign.flight_end_date = datetime.fromisoformat(update['flight_end_date'][:10]).date()
             results.append(campaign.to_dict())
 
     db.session.commit()

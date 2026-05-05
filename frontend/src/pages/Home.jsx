@@ -16,6 +16,7 @@ function Home({ user, onLogout }) {
   const [showAdd, setShowAdd] = useState(false);
   const [newAccountName, setNewAccountName] = useState('');
   const [newMetaAccountId, setNewMetaAccountId] = useState('');
+  const [newMetaToken, setNewMetaToken] = useState('');
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('all');
   const navigate = useNavigate();
@@ -39,19 +40,21 @@ function Home({ user, onLogout }) {
   const handleCreateAccount = async (e) => {
     e.preventDefault();
     setError('');
-    if (!newAccountName || !newMetaAccountId) {
-      setError('Account name and Meta account ID are both required.');
+    if (!newAccountName || !newMetaAccountId || !newMetaToken) {
+      setError('All three fields are required.');
       return;
     }
     try {
       const response = await axios.post('/api/accounts', {
         account_name: newAccountName,
         meta_account_id: newMetaAccountId,
+        meta_token: newMetaToken,
       });
       const created = response.data.account || response.data;
       setAccounts([...accounts, created]);
       setNewAccountName('');
       setNewMetaAccountId('');
+      setNewMetaToken('');
       setShowAdd(false);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create account');
@@ -70,7 +73,7 @@ function Home({ user, onLogout }) {
   const totals = useMemo(() => {
     const t = { all: accounts.length, on: 0, under: 0, over: 0, dailyBudget: 0, campaigns: 0 };
     accounts.forEach((a) => {
-      t.dailyBudget += a.total_daily_budget || 0;
+      t.dailyBudget += a.total_monthly_budget || 0;
       t.campaigns += a.campaign_count || 0;
       const cat = a.status_category;
       if (cat === 'on_track') t.on += 1;
@@ -141,7 +144,7 @@ function Home({ user, onLogout }) {
             <span className="bb-stat-sub">need to slow down</span>
           </button>
           <div className="bb-stat">
-            <span className="bb-stat-label">Daily Budget</span>
+            <span className="bb-stat-label">Monthly Budget</span>
             <span className="bb-stat-value">${totals.dailyBudget.toFixed(0)}</span>
             <span className="bb-stat-sub">across all accounts</span>
           </div>
@@ -250,6 +253,17 @@ function Home({ user, onLogout }) {
                       onChange={(e) => setNewMetaAccountId(e.target.value)}
                     />
                     <span className="bb-form-help">From Meta Ads Manager — usually starts with "act_".</span>
+                  </div>
+                  <div className="bb-form-group">
+                    <label className="bb-form-label">Meta Access Token</label>
+                    <input
+                      type="password"
+                      className="bb-input"
+                      placeholder="EAAb..."
+                      value={newMetaToken}
+                      onChange={(e) => setNewMetaToken(e.target.value)}
+                    />
+                    <span className="bb-form-help">From Meta Business Manager → System Users, or your personal token from developers.facebook.com. Needs ads_management + read_insights permissions.</span>
                   </div>
                 </div>
                 <div className="bb-modal-foot">

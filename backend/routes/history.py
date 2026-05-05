@@ -47,7 +47,7 @@ def get_pacing_runs(account_id):
     if run_type:
         query = query.filter_by(run_type=run_type)
 
-    runs = query.order_by(PacingRun.executed_at.desc()).limit(limit).all()
+    runs = query.order_by(PacingRun.run_at.desc()).limit(limit).all()
 
     return jsonify({'runs': [run.to_dict() for run in runs]}), 200
 
