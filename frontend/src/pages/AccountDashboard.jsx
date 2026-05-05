@@ -25,6 +25,7 @@ function AccountDashboard({ user, onLogout }) {
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState(null);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     fetchAccountData();
   }, [accountId]);

@@ -3,13 +3,19 @@ Campaign management routes - CRUD for campaigns and flight configuration.
 Also exposes a /sync endpoint that pulls campaigns straight from Meta.
 """
 
-from flask import Blueprint, request, jsonify
-from database import db, Account, Campaign, PacingData
+from flask import Blueprint, request, jsonify, session
+from database import db, Account, Campaign, PacingData, User
 from meta_client import MetaAPIError, MetaClient
-from routes.auth import login_required, get_current_user
+from routes.auth import login_required
 from datetime import datetime
 
 campaigns_bp = Blueprint('campaigns', __name__)
+
+
+def _current_user():
+    """Fetch the User row for the current session, or None."""
+    uid = session.get('user_id')
+    return User.query.get(uid) if uid else None
 
 
 @campaigns_bp.route('/<account_id>/sync', methods=['GET', 'POST'])
@@ -30,7 +36,9 @@ def sync_campaigns(account_id):
            Upserts the chosen campaigns into our DB. Existing campaigns
            (matched by meta_campaign_id) get updated; new ones are created.
     """
-    user = get_current_user()
+    user = _current_user()
+    if not user:
+        return jsonify({'error': 'Not authenticated'}), 401
     account = Account.query.filter_by(id=account_id, user_id=user.id).first()
     if not account:
         return jsonify({'error': 'Account not found'}), 404
@@ -143,7 +151,9 @@ def sync_campaigns(account_id):
 def get_campaigns(account_id):
     """Get all campaigns for an account"""
     try:
-        user = get_current_user()
+        user = _current_user()
+        if not user:
+            return jsonify({'error': 'Not authenticated'}), 401
         account = Account.query.filter_by(id=account_id, user_id=user.id).first()
 
         if not account:
@@ -189,7 +199,9 @@ def get_campaigns(account_id):
 def get_campaign(account_id, campaign_id):
     """Get campaign details with history"""
     try:
-        user = get_current_user()
+        user = _current_user()
+        if not user:
+            return jsonify({'error': 'Not authenticated'}), 401
         account = Account.query.filter_by(id=account_id, user_id=user.id).first()
 
         if not account:
@@ -222,7 +234,9 @@ def get_campaign(account_id, campaign_id):
 def create_campaign(account_id):
     """Create new campaign"""
     try:
-        user = get_current_user()
+        user = _current_user()
+        if not user:
+            return jsonify({'error': 'Not authenticated'}), 401
         account = Account.query.filter_by(id=account_id, user_id=user.id).first()
 
         if not account:
@@ -264,7 +278,9 @@ def create_campaign(account_id):
 def update_campaign(account_id, campaign_id):
     """Update campaign and flight configuration"""
     try:
-        user = get_current_user()
+        user = _current_user()
+        if not user:
+            return jsonify({'error': 'Not authenticated'}), 401
         account = Account.query.filter_by(id=account_id, user_id=user.id).first()
 
         if not account:
@@ -307,7 +323,9 @@ def update_campaign(account_id, campaign_id):
 def delete_campaign(account_id, campaign_id):
     """Delete campaign"""
     try:
-        user = get_current_user()
+        user = _current_user()
+        if not user:
+            return jsonify({'error': 'Not authenticated'}), 401
         account = Account.query.filter_by(id=account_id, user_id=user.id).first()
 
         if not account:

@@ -13,7 +13,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 
 from database import (
     Account,
@@ -22,10 +22,17 @@ from database import (
     Campaign,
     PacingData,
     PacingRun,
+    User,
     db,
 )
 from meta_client import MetaAPIError, MetaClient
-from routes.auth import get_current_user, login_required
+from routes.auth import login_required
+
+
+def _current_user():
+    """Fetch the User row for the current session, or None."""
+    uid = session.get('user_id')
+    return User.query.get(uid) if uid else None
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +106,9 @@ def run_pacing(account_id):
     Returns the recommendations as JSON. Does NOT push changes to Meta;
     that's apply_recommendations.
     """
-    user = get_current_user()
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
     account = Account.query.filter_by(id=account_id, user_id=user.id).first()
     if not account:
         return jsonify({"error": "Account not found"}), 404
@@ -248,7 +257,9 @@ def apply_recommendations(account_id):
     For each adjustment, calls Meta with apply_campaign_daily_budget which
     tries CBO first and falls back to per-adset splitting.
     """
-    user = get_current_user()
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
     account = Account.query.filter_by(id=account_id, user_id=user.id).first()
     if not account:
         return jsonify({"error": "Account not found"}), 404
@@ -317,7 +328,9 @@ def apply_recommendations(account_id):
 @login_required
 def get_pacing_summary(account_id):
     """Get latest pacing summary for an account (status counts + last run)."""
-    user = get_current_user()
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
     account = Account.query.filter_by(id=account_id, user_id=user.id).first()
     if not account:
         return jsonify({"error": "Account not found"}), 404
