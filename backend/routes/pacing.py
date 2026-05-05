@@ -2,15 +2,26 @@
 Pacing calculation and recommendation routes.
 
 run_pacing pulls real month-to-date spend from the Meta Marketing API for
-each campaign, computes pace, and returns recommendations.
+each tracked campaign (or each ad set, for ABO campaigns), computes pace,
+and returns recommendations.
 
-apply_recommendations pushes the recommended daily budgets back to Meta,
-trying campaign-level (CBO) first and falling back to splitting across adsets.
+apply_recommendations pushes the recommended daily budgets back to Meta:
+  - CBO adjustments hit the campaign's daily_budget (with adset-split fallback).
+  - ABO adjustments hit each ad set's daily_budget directly.
+
+Math:
+  daily_target  = monthly_budget / days_in_month
+  expected_mtd  = daily_target * days_elapsed
+  pace_ratio    = actual_spend / expected_mtd
+  ideal_daily   = max(0, monthly_budget - actual_spend) / days_remaining
+                  (i.e. "what daily run-rate hits the monthly target if I keep it for the rest of the month")
+
+  - If |pace - 1.0| * 100 <= settings.pace_tolerance_percent → ON_PACE, no change
+  - Otherwise, change is capped at ± settings.max_daily_change_percent of daily_target
+  - Final value is floored at settings.min_daily_budget
 """
 
 import logging
-import os
-import sys
 from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request, session
@@ -18,6 +29,7 @@ from flask import Blueprint, jsonify, request, session
 from database import (
     Account,
     AccountSettings,
+    AdSet,
     BudgetAdjustment,
     Campaign,
     PacingData,
@@ -34,33 +46,8 @@ def _current_user():
     uid = session.get('user_id')
     return User.query.get(uid) if uid else None
 
+
 logger = logging.getLogger(__name__)
-
-# Pull pace math from the CLI tool living one level up from /backend.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-try:
-    from pacing import calculate_pace_ratio, calculate_recommended_budget  # type: ignore
-except ImportError:
-    # Fallback: minimal inline implementations so the route never fails to import.
-    def calculate_pace_ratio(actual_spend, current_budget, budget_type, start_time=None, end_time=None):
-        if current_budget <= 0:
-            return 1.0, 0.0
-        expected_spend = current_budget
-        pace_ratio = actual_spend / expected_spend if expected_spend > 0 else 1.0
-        return pace_ratio, expected_spend
-
-    def calculate_recommended_budget(current_budget, pace_ratio, budget_type, remaining_days=1.0):
-        tolerance = 5.0
-        if abs(pace_ratio - 1.0) * 100 <= tolerance:
-            return current_budget, 0.0, "ON_PACE"
-        ideal = current_budget / pace_ratio if pace_ratio > 0 else current_budget
-        ideal_pct = ((ideal - current_budget) / current_budget * 100) if current_budget > 0 else 0
-        capped = max(-25.0, min(25.0, ideal_pct))
-        new_budget = max(current_budget * (1 + capped / 100), 1.0)
-        action = "INCREASE" if new_budget > current_budget else ("DECREASE" if new_budget < current_budget else "ON_PACE")
-        actual_pct = ((new_budget - current_budget) / current_budget * 100) if current_budget > 0 else 0
-        return new_budget, actual_pct, action
-
 
 pacing_bp = Blueprint("pacing", __name__, url_prefix="/api/pacing")
 
@@ -88,6 +75,68 @@ def _campaign_should_run_today(campaign, today):
     return False
 
 
+def _compute_recommendation(
+    monthly_budget,
+    actual_spend,
+    days_in_month,
+    days_elapsed,
+    settings,
+):
+    """
+    Core pacing math. Returns:
+      (daily_target, expected_mtd, pace_ratio, recommended_daily, change_pct, action)
+
+    All inputs are floats / ints. settings is an AccountSettings row.
+    """
+    days_in_month = max(1, days_in_month)
+    days_elapsed = max(1, min(days_in_month, days_elapsed))
+    days_remaining = max(1, days_in_month - days_elapsed)
+
+    daily_target = monthly_budget / days_in_month if days_in_month > 0 else 0.0
+    expected_mtd = daily_target * days_elapsed
+    pace_ratio = (actual_spend / expected_mtd) if expected_mtd > 0 else 1.0
+
+    tolerance = float(getattr(settings, 'pace_tolerance_percent', 5.0) or 5.0)
+    max_change = float(getattr(settings, 'max_daily_change_percent', 25.0) or 25.0)
+    min_daily = float(getattr(settings, 'min_daily_budget', 5.0) or 5.0)
+
+    # If we're inside the tolerance band, no change.
+    pct_off_pace = abs(pace_ratio - 1.0) * 100.0
+    if pct_off_pace <= tolerance:
+        recommended = max(min_daily, daily_target)
+        change_pct = ((recommended - daily_target) / daily_target * 100.0) if daily_target > 0 else 0.0
+        return daily_target, expected_mtd, pace_ratio, recommended, change_pct, 'ON_PACE'
+
+    # Outside tolerance: aim daily run-rate so MTD spend hits monthly_budget by month end.
+    remaining_budget = max(0.0, monthly_budget - actual_spend)
+    ideal_daily = remaining_budget / days_remaining if days_remaining > 0 else daily_target
+
+    # Cap the swing relative to daily_target so a single run can't go wild.
+    if daily_target > 0:
+        delta_pct = (ideal_daily - daily_target) / daily_target * 100.0
+        capped_pct = max(-max_change, min(max_change, delta_pct))
+        recommended = daily_target * (1.0 + capped_pct / 100.0)
+    else:
+        recommended = ideal_daily
+
+    # Floor.
+    recommended = max(min_daily, recommended)
+
+    if daily_target > 0:
+        change_pct = (recommended - daily_target) / daily_target * 100.0
+    else:
+        change_pct = 0.0
+
+    if change_pct > 0.5:
+        action = 'INCREASE'
+    elif change_pct < -0.5:
+        action = 'DECREASE'
+    else:
+        action = 'ON_PACE'
+
+    return daily_target, expected_mtd, pace_ratio, recommended, change_pct, action
+
+
 # ----------------------------------------------------------------------
 # Routes
 # ----------------------------------------------------------------------
@@ -98,13 +147,12 @@ def run_pacing(account_id):
     Run pacing calculations for an account against real Meta data.
 
     For each tracked campaign:
-      1. Pull month-to-date spend from Meta Insights.
-      2. Compute pace = actual / expected (where expected = monthly_budget * days_elapsed / days_in_month).
-      3. Generate a recommended daily budget using existing pace math.
-      4. Persist a PacingData snapshot.
+      - CBO: pull MTD spend at the campaign level, compute one recommendation.
+      - ABO: pull MTD spend for each tracked ad set, compute a recommendation
+             per ad set using its allocation_pct of the campaign's monthly_budget.
 
-    Returns the recommendations as JSON. Does NOT push changes to Meta;
-    that's apply_recommendations.
+    Persists PacingData rows (campaign-level for CBO, ad-set-level for ABO).
+    Does NOT push changes to Meta; that's apply_recommendations.
     """
     user = _current_user()
     if not user:
@@ -117,7 +165,6 @@ def run_pacing(account_id):
     if not settings:
         return jsonify({"error": "Account settings not found"}), 404
 
-    # Build a Meta client for this account
     try:
         meta = MetaClient(
             access_token=account.meta_token,
@@ -130,9 +177,7 @@ def run_pacing(account_id):
     yesterday = today - timedelta(days=1)
     month_start, month_end = _month_bounds(today)
     days_in_month = (month_end - month_start).days + 1
-    # "days_elapsed" counts through yesterday (yesterday's data is the last complete day)
     days_elapsed = max(1, (yesterday - month_start).days + 1)
-    # Spend window is month_start..yesterday (today is partial)
     spend_until = max(month_start, yesterday)
 
     campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
@@ -151,12 +196,101 @@ def run_pacing(account_id):
             })
             continue
 
-        # 1) Real spend from Meta
+        if campaign.budget_mode == 'ABO':
+            # ABO: per-ad-set pacing
+            active_adsets = [a for a in campaign.adsets if a.is_active]
+            if not active_adsets:
+                failures.append({
+                    "campaign_id": campaign.id,
+                    "campaign_name": campaign.campaign_name,
+                    "error": "ABO campaign has no active ad sets tracked.",
+                })
+                continue
+
+            adset_recs = []
+            campaign_actual_total = 0.0
+            for adset in active_adsets:
+                allocated_budget = campaign.monthly_budget * (adset.allocation_pct / 100.0)
+                try:
+                    actual_spend = meta.get_adset_spend(
+                        adset.meta_adset_id, since=month_start, until=spend_until,
+                    )
+                except MetaAPIError as e:
+                    failures.append({
+                        "campaign_id": campaign.id,
+                        "campaign_name": campaign.campaign_name,
+                        "adset_id": adset.id,
+                        "adset_name": adset.adset_name,
+                        "error": str(e),
+                    })
+                    continue
+                campaign_actual_total += actual_spend
+
+                (
+                    daily_target, expected_mtd, pace_ratio,
+                    new_daily, change_pct, action,
+                ) = _compute_recommendation(
+                    monthly_budget=allocated_budget,
+                    actual_spend=actual_spend,
+                    days_in_month=days_in_month,
+                    days_elapsed=days_elapsed,
+                    settings=settings,
+                )
+
+                adset_recs.append({
+                    "adset_id": adset.id,
+                    "meta_adset_id": adset.meta_adset_id,
+                    "adset_name": adset.adset_name,
+                    "allocation_pct": adset.allocation_pct,
+                    "allocated_monthly_budget": round(allocated_budget, 2),
+                    "actual_spend": round(actual_spend, 2),
+                    "expected_spend": round(expected_mtd, 2),
+                    "pace_ratio": round(pace_ratio, 3),
+                    "current_daily_budget": round(daily_target, 2),
+                    "recommended_daily_budget": round(new_daily, 2),
+                    "change_percent": round(change_pct, 1),
+                    "action": action,
+                })
+
+                snapshot = PacingData(
+                    campaign_id=campaign.id,
+                    adset_id=adset.id,
+                    date=yesterday,
+                    current_daily_budget=daily_target,
+                    actual_spend=actual_spend,
+                    expected_spend=expected_mtd,
+                    pace_ratio=pace_ratio,
+                    status=action,
+                    recommended_daily_budget=new_daily,
+                    change_percent=change_pct,
+                )
+                db.session.add(snapshot)
+
+                if action != 'ON_PACE':
+                    adjustments_needed += 1
+
+            # Roll up for the response (but no campaign-level PacingData row).
+            campaign_expected = (campaign.monthly_budget / days_in_month) * days_elapsed
+            campaign_pace = (campaign_actual_total / campaign_expected) if campaign_expected > 0 else 1.0
+            recommendations.append({
+                "campaign_id": campaign.id,
+                "meta_campaign_id": campaign.meta_campaign_id,
+                "campaign_name": campaign.campaign_name,
+                "monthly_budget": campaign.monthly_budget,
+                "budget_mode": "ABO",
+                "actual_spend": round(campaign_actual_total, 2),
+                "expected_spend": round(campaign_expected, 2),
+                "pace_ratio": round(campaign_pace, 3),
+                "days_elapsed": days_elapsed,
+                "days_in_month": days_in_month,
+                "adset_level": adset_recs,
+            })
+            continue
+
+        # CBO path
         try:
             actual_spend = meta.get_campaign_spend(
-                campaign.meta_campaign_id,
-                since=month_start,
-                until=spend_until,
+                campaign.meta_campaign_id, since=month_start, until=spend_until,
             )
         except MetaAPIError as e:
             failures.append({
@@ -166,17 +300,15 @@ def run_pacing(account_id):
             })
             continue
 
-        # 2) Pace math at the daily level
-        daily_budget_target = campaign.monthly_budget / days_in_month
-        # Expected MTD spend = daily target * days elapsed
-        expected_mtd_spend = daily_budget_target * days_elapsed
-        pace_ratio = (actual_spend / expected_mtd_spend) if expected_mtd_spend > 0 else 1.0
-
-        # 3) Recommendation: use the daily-equivalent budget
-        new_daily_budget, change_pct, action = calculate_recommended_budget(
-            current_budget=daily_budget_target,
-            pace_ratio=pace_ratio,
-            budget_type="daily",
+        (
+            daily_target, expected_mtd, pace_ratio,
+            new_daily, change_pct, action,
+        ) = _compute_recommendation(
+            monthly_budget=campaign.monthly_budget,
+            actual_spend=actual_spend,
+            days_in_month=days_in_month,
+            days_elapsed=days_elapsed,
+            settings=settings,
         )
 
         recommendations.append({
@@ -184,32 +316,33 @@ def run_pacing(account_id):
             "meta_campaign_id": campaign.meta_campaign_id,
             "campaign_name": campaign.campaign_name,
             "monthly_budget": campaign.monthly_budget,
+            "budget_mode": "CBO",
             "actual_spend": round(actual_spend, 2),
-            "expected_spend": round(expected_mtd_spend, 2),
+            "expected_spend": round(expected_mtd, 2),
             "pace_ratio": round(pace_ratio, 3),
-            "current_daily_budget": round(daily_budget_target, 2),
-            "recommended_daily_budget": round(new_daily_budget, 2),
+            "current_daily_budget": round(daily_target, 2),
+            "recommended_daily_budget": round(new_daily, 2),
             "change_percent": round(change_pct, 1),
             "action": action,
             "days_elapsed": days_elapsed,
             "days_in_month": days_in_month,
         })
 
-        # 4) Persist snapshot
         snapshot = PacingData(
             campaign_id=campaign.id,
+            adset_id=None,
             date=yesterday,
-            current_daily_budget=daily_budget_target,
+            current_daily_budget=daily_target,
             actual_spend=actual_spend,
-            expected_spend=expected_mtd_spend,
+            expected_spend=expected_mtd,
             pace_ratio=pace_ratio,
             status=action,
-            recommended_daily_budget=new_daily_budget,
+            recommended_daily_budget=new_daily,
             change_percent=change_pct,
         )
         db.session.add(snapshot)
 
-        if action != "ON_PACE":
+        if action != 'ON_PACE':
             adjustments_needed += 1
 
     run_type = "MANUAL"
@@ -223,7 +356,7 @@ def run_pacing(account_id):
         campaigns_processed=len(recommendations),
         adjustments_made=adjustments_needed,
         status="COMPLETED" if not failures else "PARTIAL",
-        error_message=None if not failures else f"{len(failures)} campaign(s) failed",
+        error_message=None if not failures else f"{len(failures)} item(s) failed",
     )
     db.session.add(pacing_run)
     db.session.commit()
@@ -245,17 +378,22 @@ def apply_recommendations(account_id):
     """
     Apply recommended budgets to Meta.
 
-    Body:
+    Body (each adjustment is either CBO or ABO based on which id is present):
         { "adjustments": [
-            { "campaign_id": "<our-uuid>",
+            // CBO
+            { "campaign_id": <our-id>,
+              "current_daily_budget": <float>,
+              "recommended_daily_budget": <float>,
+              "change_percent": <float>,
+              "action": "INCREASE" | "DECREASE" },
+            // ABO
+            { "adset_id": <our-id>,
+              "campaign_id": <our-id>,         // optional but useful for logging
               "current_daily_budget": <float>,
               "recommended_daily_budget": <float>,
               "change_percent": <float>,
               "action": "INCREASE" | "DECREASE" }
           ] }
-
-    For each adjustment, calls Meta with apply_campaign_daily_budget which
-    tries CBO first and falls back to per-adset splitting.
     """
     user = _current_user()
     if not user:
@@ -263,6 +401,11 @@ def apply_recommendations(account_id):
     account = Account.query.filter_by(id=account_id, user_id=user.id).first()
     if not account:
         return jsonify({"error": "Account not found"}), 404
+
+    settings = AccountSettings.query.filter_by(account_id=account_id).first()
+    if not settings:
+        return jsonify({"error": "Account settings not found"}), 404
+    min_daily = float(settings.min_daily_budget or 5.0)
 
     payload = request.get_json(silent=True) or {}
     adjustments = payload.get("adjustments", [])
@@ -281,36 +424,90 @@ def apply_recommendations(account_id):
     applied_count = 0
 
     for adj in adjustments:
-        campaign = Campaign.query.filter_by(id=adj.get("campaign_id"), account_id=account_id).first()
+        # Server-side floor: never push below min_daily_budget regardless of payload.
+        try:
+            requested_new = float(adj["recommended_daily_budget"])
+        except (TypeError, ValueError, KeyError):
+            results.append({"error": "recommended_daily_budget missing or not a number", "adj": adj})
+            continue
+        new_daily = max(min_daily, requested_new)
+
+        adset_local_id = adj.get("adset_id")
+        if adset_local_id:
+            # ABO path
+            adset = AdSet.query.filter_by(id=adset_local_id).first()
+            if not adset:
+                results.append({"adset_id": adset_local_id, "error": "AdSet not found"})
+                continue
+            # Confirm the adset belongs to a campaign under this account.
+            owning_campaign = Campaign.query.filter_by(
+                id=adset.campaign_id, account_id=account_id,
+            ).first()
+            if not owning_campaign:
+                results.append({"adset_id": adset_local_id, "error": "AdSet does not belong to this account"})
+                continue
+            if not adset.meta_adset_id:
+                results.append({"adset_id": adset_local_id, "error": "No meta_adset_id"})
+                continue
+
+            try:
+                ok = meta.update_adset_budget(adset.meta_adset_id, new_daily)
+            except MetaAPIError as e:
+                results.append({"adset_id": adset_local_id, "error": str(e)})
+                continue
+
+            db.session.add(BudgetAdjustment(
+                campaign_id=owning_campaign.id,
+                adset_id=adset.id,
+                old_budget=float(adj.get("current_daily_budget", 0.0)),
+                new_budget=new_daily,
+                change_percent=float(adj.get("change_percent", 0.0)),
+                reason=adj.get("action", "ADJUST"),
+                applied_by=user.email,
+            ))
+
+            results.append({
+                "level": "adset",
+                "adset_id": adset.id,
+                "adset_name": adset.adset_name,
+                "campaign_id": owning_campaign.id,
+                "applied_new_daily": round(new_daily, 2),
+                "success": ok,
+            })
+            applied_count += 1
+            continue
+
+        # CBO path
+        campaign_local_id = adj.get("campaign_id")
+        campaign = Campaign.query.filter_by(id=campaign_local_id, account_id=account_id).first()
         if not campaign:
-            results.append({"campaign_id": adj.get("campaign_id"), "error": "Campaign not found"})
+            results.append({"campaign_id": campaign_local_id, "error": "Campaign not found"})
             continue
         if not campaign.meta_campaign_id:
             results.append({"campaign_id": campaign.id, "error": "No meta_campaign_id"})
             continue
 
-        new_daily_budget = float(adj["recommended_daily_budget"])
-
         try:
-            meta_result = meta.apply_campaign_daily_budget(campaign.meta_campaign_id, new_daily_budget)
+            meta_result = meta.apply_campaign_daily_budget(campaign.meta_campaign_id, new_daily)
         except MetaAPIError as e:
             results.append({"campaign_id": campaign.id, "error": str(e)})
             continue
 
-        # Log it locally
-        budget_adj = BudgetAdjustment(
+        db.session.add(BudgetAdjustment(
             campaign_id=campaign.id,
+            adset_id=None,
             old_budget=float(adj.get("current_daily_budget", 0.0)),
-            new_budget=new_daily_budget,
+            new_budget=new_daily,
             change_percent=float(adj.get("change_percent", 0.0)),
             reason=adj.get("action", "ADJUST"),
             applied_by=user.email,
-        )
-        db.session.add(budget_adj)
+        ))
 
         results.append({
+            "level": "campaign",
             "campaign_id": campaign.id,
             "campaign_name": campaign.campaign_name,
+            "applied_new_daily": round(new_daily, 2),
             "meta": meta_result,
         })
         applied_count += 1
@@ -327,7 +524,13 @@ def apply_recommendations(account_id):
 @pacing_bp.route("/<account_id>/summary", methods=["GET"])
 @login_required
 def get_pacing_summary(account_id):
-    """Get latest pacing summary for an account (status counts + last run)."""
+    """
+    Latest pacing summary for an account (status counts + last run).
+
+    Counts are at the *level* the campaign is paced at:
+      - CBO campaigns count once per campaign-level row
+      - ABO campaigns count once per ad-set-level row
+    """
     user = _current_user()
     if not user:
         return jsonify({"error": "Not authenticated"}), 401
@@ -338,16 +541,37 @@ def get_pacing_summary(account_id):
     campaigns = Campaign.query.filter_by(account_id=account_id).all()
 
     on_pace = need_increase = need_decrease = 0
+    paced_units = 0  # number of CBO campaigns + active ABO ad sets
+
     for campaign in campaigns:
-        latest = campaign.pacing_data[-1] if campaign.pacing_data else None
-        if not latest:
-            continue
-        if latest.status == "ON_PACE":
-            on_pace += 1
-        elif latest.status == "INCREASE":
-            need_increase += 1
-        elif latest.status == "DECREASE":
-            need_decrease += 1
+        if campaign.budget_mode == 'ABO':
+            for adset in campaign.adsets:
+                if not adset.is_active:
+                    continue
+                paced_units += 1
+                # Latest ad-set-level row
+                rows = [p for p in campaign.pacing_data if p.adset_id == adset.id]
+                if not rows:
+                    continue
+                latest = sorted(rows, key=lambda r: r.date or datetime.min.date())[-1]
+                if latest.status == "ON_PACE":
+                    on_pace += 1
+                elif latest.status == "INCREASE":
+                    need_increase += 1
+                elif latest.status == "DECREASE":
+                    need_decrease += 1
+        else:
+            paced_units += 1
+            rows = [p for p in campaign.pacing_data if p.adset_id is None]
+            if not rows:
+                continue
+            latest = sorted(rows, key=lambda r: r.date or datetime.min.date())[-1]
+            if latest.status == "ON_PACE":
+                on_pace += 1
+            elif latest.status == "INCREASE":
+                need_increase += 1
+            elif latest.status == "DECREASE":
+                need_decrease += 1
 
     last_run = account.pacing_runs[-1] if account.pacing_runs else None
 
@@ -356,6 +580,7 @@ def get_pacing_summary(account_id):
         "need_increase": need_increase,
         "need_decrease": need_decrease,
         "total_campaigns": len(campaigns),
+        "total_paced_units": paced_units,
         "last_run": last_run.run_at.isoformat() if last_run else None,
         "last_run_type": last_run.run_type if last_run else None,
     }), 200

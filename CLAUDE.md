@@ -10,13 +10,19 @@
 
 Full-stack budget pacing tool for Meta (Facebook) Ads. Monitors campaign spend vs. expected spend, calculates pace ratios, and recommends (or auto-applies) daily budget adjustments to keep campaigns on track for their monthly budget.
 
-**Core pacing logic:**
-- `pace_ratio = actual_MTD_spend / expected_spend`
-- > 1.05 → DECREASE budget recommendation
-- < 0.95 → INCREASE budget recommendation
-- Within ±5% → ON_PACE (tolerance configurable)
-- Budget changes capped at ±25% per run (configurable)
-- Min daily budget floor: $5 (configurable)
+**Core pacing logic (per `routes/pacing.py:_compute_recommendation`):**
+- `daily_target = monthly_budget / days_in_month`
+- `expected_mtd  = daily_target * days_elapsed`
+- `pace_ratio    = actual_spend / expected_mtd`
+- If `|pace_ratio - 1| * 100 ≤ pace_tolerance_percent` → **ON_PACE** (no change)
+- Otherwise: `ideal_daily = max(0, monthly_budget - actual_spend) / days_remaining` (i.e. "what daily run-rate hits the monthly target if held for the rest of the month")
+- The change vs `daily_target` is capped at ±`max_daily_change_percent`
+- Final value is floored at `min_daily_budget` (server-side, in both `/run` and `/apply`)
+- All three thresholds come from `AccountSettings` (defaults: 5% tolerance, ±25% cap, $5 floor)
+
+**Budget modes:**
+- **CBO** — budget set at the campaign level. Pacing runs once per campaign; PacingData rows have `adset_id = NULL`.
+- **ABO** — budget set per ad set. Each tracked AdSet has an `allocation_pct` (0–100). The campaign's `monthly_budget` is split across ad sets by those percentages, and pacing runs once per ad set. PacingData and BudgetAdjustment rows for ABO have `adset_id` populated.
 
 ---
 
@@ -121,18 +127,42 @@ Meta BudgetBuddy/
 - Service account email must be added as **Editor** on the Google Sheet
 - Neon DB needs `google_sheet_id` column on `account_settings` (see migration below)
 
-### DB migration needed (one-time, run in Neon SQL Editor)
+### DB migrations (one-time per environment, run in Neon SQL Editor)
+
+**Sheets integration (already applied if Sheets is working in prod):**
 ```sql
-ALTER TABLE account_settings ADD COLUMN google_sheet_id VARCHAR(500);
+ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS google_sheet_id VARCHAR(500);
+```
+
+**ABO support (new — must be run before deploying session-7 code):**
+```sql
+-- Campaign mode flag (CBO is the safe default for legacy rows)
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS budget_mode VARCHAR(10) DEFAULT 'CBO' NOT NULL;
+
+-- Ad sets table (ABO campaigns only)
+CREATE TABLE IF NOT EXISTS adsets (
+  id SERIAL PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  meta_adset_id VARCHAR(255) NOT NULL,
+  adset_name VARCHAR(255) NOT NULL,
+  allocation_pct DOUBLE PRECISION NOT NULL DEFAULT 100.0,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Pacing snapshots can be either campaign-level (NULL) or ad-set-level
+ALTER TABLE pacing_data ADD COLUMN IF NOT EXISTS adset_id INTEGER REFERENCES adsets(id);
+
+-- Same for budget adjustments
+ALTER TABLE budget_adjustments ADD COLUMN IF NOT EXISTS adset_id INTEGER REFERENCES adsets(id);
 ```
 
 ---
 
 ## Budget Update Strategy (meta_client.py)
 
-1. Try campaign-level (CBO) budget update first
-2. If not CBO → split new daily budget across active adsets proportionally (based on current adset budgets)
-3. Response indicates which strategy was used
+- **CBO campaigns** — `apply_campaign_daily_budget()` posts the new daily to the campaign. If the campaign isn't actually CBO, falls back to splitting across active ad sets proportionally to current daily budgets.
+- **ABO campaigns** — `update_adset_budget()` is called once per ad set being adjusted. The frontend builds the `adset_adjustments` payload from the per-adset recommendations.
 
 ---
 
@@ -186,25 +216,27 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
 
-- [x] **2026-05-05** — Fixed model/route mismatches across the entire backend so real Meta API data can flow.
-  - `database.py`: Added `meta_token` to Account; renamed `daily_budget` → `monthly_budget`; added `is_active`; fixed date columns; updated PacingData, PacingRun, BudgetAdjustment fields
-  - `app.py`: Fixed session cookies for dev vs prod; fixed `/health` → `/api/health`; added advisory lock on `db.create_all()` for gunicorn race condition
-  - Multiple route prefix fixes (`/api/pacing`, `/api/campaigns`); fixed auth `/me` crash after DB wipe
-  - App fully deployed and working: Railway + Vercel both green
+- [x] **2026-05-05 (session 7 — Opus)** — Real CBO/ABO support, pacing math overhaul, design alignment.
+  - `backend/database.py` — added `AdSet` model, `Campaign.budget_mode`, nullable `adset_id` on `PacingData` and `BudgetAdjustment`. `Campaign.to_dict` now produces a roll-up `latest_pacing` for ABO and a single-row latest for CBO (so frontend doesn't see one ad set's row as if it were the whole campaign).
+  - `backend/meta_client.py` — added `get_adset_spend()`. (`update_adset_budget` and `list_adsets_for_campaign` already existed.)
+  - `backend/routes/campaigns.py` — sync GET surfaces live ad sets for ABO campaigns with seeded allocation %s. Sync POST validates allocations sum to ~100 ± 1.5 *before* writing anything; on validation failure nothing is written. Sync POST also reconciles ad sets: incoming list becomes the active set, anything missing is soft-deactivated. List endpoint no longer leaks ad-set-level pacing as if it were campaign-level (uses `Campaign.to_dict`'s mode-aware roll-up).
+  - `backend/routes/pacing.py` — full rewrite. Inlined the math (no more fragile `from pacing import ...` at module load time). Math switched from "pace-perpetuating" (`current / pace_ratio`) to "remaining budget over remaining days" so spend exactly hits monthly target. ABO branch fans out per ad set and stores PacingData with `adset_id` set. `/apply` accepts both shapes (presence of `adset_id` distinguishes), enforces `min_daily_budget` server-side. `/summary` counts at the right level per mode.
+  - `frontend/src/pages/AccountDashboard.jsx` — Mode column on tracked-campaigns table. Recommendations table renders ABO as parent rollup row + indented per-adset rows. `handleApplyAll` builds correct payload for both modes. Import modal shows allocation editor for selected ABO campaigns with live "must = 100%" validation + "Split evenly" button.
+  - `frontend/src/pages/CampaignDetail.jsx` — adds an Ad sets table for ABO campaigns showing per-ad-set pacing. Subtitle shows budget mode badge.
+  - `frontend/src/index.css` — brand color updated to design's `#004359` (was `#0f3845`), Inter font added, sidebar widened to 240px, page title bumped to 28px, status stat tiles use design's accent-bordered gradients (#10b981 / #3b82f6 / #f59e0b). New `bb-mode-badge` family + ABO-row tint.
+  - ⚠️ **Requires Neon migration** before this code can ship — see "ABO support" SQL block above. Without it, `/run` will 500 on first call.
+  - End-to-end tested with a faked Meta client: CBO + ABO `/run`, `/apply` with mixed payload, sub-floor enforcement, ABO sync validation (good/bad allocation totals), CBO↔ABO mode flip on re-sync. All green.
 
-- [x] **2026-05-05 (session 4)** — Built Google Sheets integration end-to-end:
-  - `backend/requirements.txt`: Added `gspread==6.1.2` and `google-auth==2.29.0`
-  - `database.py`: Added `google_sheet_id` nullable column to `AccountSettings` model
-  - `backend/routes/sheets.py`: New blueprint — `/config` (GET/PUT), `/preview` (GET), `/sync-budgets` (POST), `/write-spend` (POST)
-  - `backend/routes/__init__.py` + `app.py`: Registered `sheets_bp`
-  - `frontend/src/index.css`: Added missing `bb-btn-secondary` class to design system
-  - `frontend/src/pages/Settings.jsx`: Added "Google Sheets" tab with URL input, preview match table (exact/case/partial/none quality pills), Sync Budgets + Write Spend action buttons, setup info callout
-  - ⚠️ **Requires manual Neon migration:** `ALTER TABLE account_settings ADD COLUMN google_sheet_id VARCHAR(500);`
-  - ⚠️ **Requires Railway env var:** `GOOGLE_CREDENTIALS_JSON` = full contents of service account JSON key
-  - ⚠️ **Requires sheet share:** service account email must be Editor on the Google Sheet
+- [x] **2026-05-04..05 — earlier sessions** — Built the working foundation:
+  - Backend: Flask app with auth, accounts, campaigns, pacing, settings, history, sheets blueprints. SQLAlchemy models. Meta API client (per-account token + ad account ID).
+  - Frontend: React 18 with `bb-*` design system in `index.css`, Sidebar layout, Home/AccountDashboard/CampaignDetail/History/Settings pages. Confirmation modal before applying budget changes. Download Run Log JSON button.
+  - Google Sheets integration: `routes/sheets.py` reads/writes the "Social Budget Pacing" sheet (Meta section only; tabs per month). Service-account auth via `GOOGLE_CREDENTIALS_JSON` env var.
+  - Deploy pipeline: GitHub repo `jruiz-oss/Meta-BudgetBuddy` → Railway (backend) + Vercel (frontend). Both green.
 
 ---
 
 ## Known Issues / Open TODOs
 
-- [ ] No known blocking issues. Sheets feature needs the Neon migration + Railway env var to activate.
+- [ ] **Run the ABO migration in Neon before deploying session-7 code** — see SQL block above. Once that's done, the new code is safe to push.
+- [ ] No real-Meta-API ABO test yet — math + apply flow are unit-tested with a faked Meta client. First production run on a real ABO campaign should be watched (recommend running on one campaign and inspecting Ads Manager before enabling it broadly).
+- [ ] Recommendations table can get long for ABO accounts with many ad sets. Consider a per-campaign collapse/expand toggle if it gets uncomfortable.

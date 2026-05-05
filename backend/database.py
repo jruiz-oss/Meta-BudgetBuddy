@@ -90,10 +90,15 @@ class Campaign(db.Model):
     flight_start_date = db.Column(db.Date)
     flight_end_date = db.Column(db.Date)
     is_active = db.Column(db.Boolean, default=True)
+    # Budget mode: CBO = budget set on the campaign itself (single Meta daily_budget),
+    # ABO = budget set on each adset (campaign has no daily_budget, adsets carry it).
+    # Defaults to CBO for backward compat with existing rows; new rows are detected at sync time.
+    budget_mode = db.Column(db.String(10), default='CBO', nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     pacing_data = db.relationship('PacingData', backref='campaign', lazy=True, cascade='all, delete-orphan')
     adjustments = db.relationship('BudgetAdjustment', backref='campaign', lazy=True, cascade='all, delete-orphan')
+    adsets = db.relationship('AdSet', backref='campaign', lazy=True, cascade='all, delete-orphan')
 
     @property
     def flight_status(self):
@@ -112,6 +117,49 @@ class Campaign(db.Model):
         return 'pending'
 
     def to_dict(self):
+        # For ABO campaigns, latest_pacing should be a roll-up across the campaign's adsets,
+        # not just the most recent PacingData row (which may be one ad set's row).
+        # Callers that want per-adset detail should call get_campaign and look at .adsets.
+        latest = None
+        if self.budget_mode == 'ABO':
+            # Sum the most-recent ad-set rows for the *same date* into a roll-up.
+            adset_ids = [a.id for a in self.adsets]
+            if adset_ids and self.pacing_data:
+                # Latest date across this campaign's pacing rows that belong to adsets
+                rows_for_adsets = [p for p in self.pacing_data if p.adset_id in adset_ids]
+                if rows_for_adsets:
+                    last_date = max((p.date for p in rows_for_adsets if p.date), default=None)
+                    if last_date:
+                        same_day = [p for p in rows_for_adsets if p.date == last_date]
+                        actual = sum(p.actual_spend or 0 for p in same_day)
+                        expected = sum(p.expected_spend or 0 for p in same_day)
+                        rec = sum(p.recommended_daily_budget or 0 for p in same_day)
+                        cur = sum(p.current_daily_budget or 0 for p in same_day)
+                        ratio = (actual / expected) if expected > 0 else 1.0
+                        # Pick the worst status across ad sets (DECREASE > INCREASE > ON_PACE)
+                        statuses = {p.status for p in same_day}
+                        if 'DECREASE' in statuses:
+                            roll_status = 'DECREASE'
+                        elif 'INCREASE' in statuses:
+                            roll_status = 'INCREASE'
+                        else:
+                            roll_status = 'ON_PACE'
+                        change_pct = ((rec - cur) / cur * 100) if cur > 0 else 0.0
+                        latest = {
+                            'date': last_date.isoformat(),
+                            'current_daily_budget': round(cur, 2),
+                            'actual_spend': round(actual, 2),
+                            'expected_spend': round(expected, 2),
+                            'pace_ratio': round(ratio, 3),
+                            'recommended_daily_budget': round(rec, 2),
+                            'change_percent': round(change_pct, 1),
+                            'status': roll_status,
+                        }
+        else:
+            # CBO: just the most recent campaign-level PacingData row (adset_id IS NULL).
+            campaign_rows = [p for p in self.pacing_data if p.adset_id is None]
+            latest = campaign_rows[-1].to_dict() if campaign_rows else None
+
         return {
             'id': self.id,
             'account_id': self.account_id,
@@ -123,8 +171,49 @@ class Campaign(db.Model):
             'flight_end_date': self.flight_end_date.isoformat() if self.flight_end_date else None,
             'flight_status': self.flight_status,
             'is_active': self.is_active,
+            'budget_mode': self.budget_mode,
+            'adset_count': len(self.adsets),
             'created_at': self.created_at.isoformat(),
-            'latest_pacing': self.pacing_data[-1].to_dict() if self.pacing_data else None,
+            'latest_pacing': latest,
+        }
+
+
+class AdSet(db.Model):
+    __tablename__ = 'adsets'
+
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False)
+    meta_adset_id = db.Column(db.String(255), nullable=False)
+    adset_name = db.Column(db.String(255), nullable=False)
+    # Percent of the campaign's monthly_budget allocated to this adset (0-100).
+    # Sum across a campaign's active adsets should be ~100. Used only for ABO campaigns.
+    allocation_pct = db.Column(db.Float, default=100.0, nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    pacing_data = db.relationship(
+        'PacingData', backref='adset', lazy=True,
+        primaryjoin='PacingData.adset_id == AdSet.id',
+    )
+    adjustments = db.relationship(
+        'BudgetAdjustment', backref='adset', lazy=True,
+        primaryjoin='BudgetAdjustment.adset_id == AdSet.id',
+    )
+
+    def to_dict(self):
+        # Find the most recent ad-set-level PacingData row for this adset.
+        latest = None
+        if self.pacing_data:
+            sorted_rows = sorted(self.pacing_data, key=lambda r: r.date or datetime.min.date())
+            latest = sorted_rows[-1].to_dict() if sorted_rows else None
+        return {
+            'id': self.id,
+            'campaign_id': self.campaign_id,
+            'meta_adset_id': self.meta_adset_id,
+            'adset_name': self.adset_name,
+            'allocation_pct': round(self.allocation_pct, 2),
+            'is_active': self.is_active,
+            'latest_pacing': latest,
         }
 
 
@@ -133,6 +222,8 @@ class PacingData(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False)
+    # Nullable: NULL means campaign-level row (CBO); set means ad-set-level row (ABO).
+    adset_id = db.Column(db.Integer, db.ForeignKey('adsets.id'), nullable=True)
     date = db.Column(db.Date, nullable=False)
     current_daily_budget = db.Column(db.Float)
     actual_spend = db.Column(db.Float, nullable=False)
@@ -146,6 +237,7 @@ class PacingData(db.Model):
         return {
             'id': self.id,
             'campaign_id': self.campaign_id,
+            'adset_id': self.adset_id,
             'date': self.date.isoformat() if self.date else None,
             'current_daily_budget': round(self.current_daily_budget, 2) if self.current_daily_budget else None,
             'actual_spend': round(self.actual_spend, 2),
@@ -162,6 +254,8 @@ class BudgetAdjustment(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False)
+    # Nullable: NULL means a campaign-level (CBO) adjustment; set means an ad-set-level (ABO) one.
+    adset_id = db.Column(db.Integer, db.ForeignKey('adsets.id'), nullable=True)
     old_budget = db.Column(db.Float, nullable=False)
     new_budget = db.Column(db.Float, nullable=False)
     change_percent = db.Column(db.Float, nullable=False)
@@ -173,6 +267,7 @@ class BudgetAdjustment(db.Model):
         return {
             'id': self.id,
             'campaign_id': self.campaign_id,
+            'adset_id': self.adset_id,
             'old_budget': round(self.old_budget, 2),
             'new_budget': round(self.new_budget, 2),
             'change_percent': round(self.change_percent, 2),

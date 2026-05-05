@@ -4,7 +4,7 @@ Also exposes a /sync endpoint that pulls campaigns straight from Meta.
 """
 
 from flask import Blueprint, request, jsonify, session
-from database import db, Account, Campaign, PacingData, User
+from database import db, Account, AdSet, Campaign, PacingData, User
 from meta_client import MetaAPIError, MetaClient
 from routes.auth import login_required
 from datetime import datetime, timedelta
@@ -55,16 +55,17 @@ def sync_campaigns(account_id):
             return jsonify({'error': f'Meta API error: {e}'}), 502
 
         # Normalize: convert cents → dollars, mark which are already tracked.
-        tracked_ids = {
-            c.meta_campaign_id
-            for c in Campaign.query.filter_by(account_id=account_id).all()
-        }
+        tracked_campaigns = Campaign.query.filter_by(account_id=account_id).all()
+        tracked_ids = {c.meta_campaign_id for c in tracked_campaigns}
+        tracked_by_meta_id = {c.meta_campaign_id: c for c in tracked_campaigns}
 
         out = []
         for c in campaigns:
             daily_cents = c.get('daily_budget')
             lifetime_cents = c.get('lifetime_budget')
-            out.append({
+            is_cbo = bool(daily_cents)
+            budget_mode = 'CBO' if is_cbo else 'ABO'
+            entry = {
                 'meta_campaign_id': c['id'],
                 'name': c.get('name'),
                 'status': c.get('status'),
@@ -72,9 +73,44 @@ def sync_campaigns(account_id):
                 'objective': c.get('objective'),
                 'current_daily_budget': float(daily_cents) / 100 if daily_cents else None,
                 'current_lifetime_budget': float(lifetime_cents) / 100 if lifetime_cents else None,
-                'is_cbo': bool(daily_cents),
+                'is_cbo': is_cbo,
+                'budget_mode': budget_mode,
                 'already_tracked': c['id'] in tracked_ids,
-            })
+                'adsets': [],
+            }
+
+            # For ABO campaigns, surface the live ad sets so the UI can build an allocation editor.
+            if budget_mode == 'ABO':
+                try:
+                    live_adsets = meta.list_adsets_for_campaign(c['id'], only_active=True)
+                except MetaAPIError as ex:
+                    # Don't fail the whole sync preview if one campaign's adsets call dies;
+                    # just surface an empty list for that campaign.
+                    live_adsets = []
+                    entry['adsets_error'] = str(ex)
+
+                # If we already track this campaign, prefer the saved allocation_pct values
+                # so re-opening the modal doesn't clobber edits the user made.
+                saved_allocations = {}
+                if c['id'] in tracked_by_meta_id:
+                    saved_campaign = tracked_by_meta_id[c['id']]
+                    saved_allocations = {
+                        a.meta_adset_id: a.allocation_pct for a in saved_campaign.adsets
+                    }
+
+                # Default to even split when no saved allocation exists.
+                even_split = round(100.0 / len(live_adsets), 2) if live_adsets else 0.0
+                for a in live_adsets:
+                    a_daily = a.get('daily_budget')
+                    entry['adsets'].append({
+                        'meta_adset_id': a.get('id'),
+                        'name': a.get('name'),
+                        'status': a.get('status'),
+                        'current_daily_budget': float(a_daily) / 100 if a_daily else None,
+                        'allocation_pct': saved_allocations.get(a.get('id'), even_split),
+                    })
+
+            out.append(entry)
 
         return jsonify({'campaigns': out, 'total': len(out)}), 200
 
@@ -84,57 +120,162 @@ def sync_campaigns(account_id):
     if not chosen:
         return jsonify({'error': 'No campaigns provided'}), 400
 
-    created = 0
-    updated = 0
+    # First pass: VALIDATE every entry. If any one is invalid, reject the whole batch
+    # so we never end up with half-written ABO campaigns (parent created, adsets missing).
+    validated = []
     errors = []
+
+    ALLOC_TOLERANCE = 1.5  # percent — ABO allocations should sum to 100 ± 1.5
 
     for entry in chosen:
         meta_id = entry.get('meta_campaign_id')
         name = entry.get('campaign_name') or entry.get('name')
         monthly_budget = entry.get('monthly_budget')
-
+        budget_mode = (entry.get('budget_mode') or 'CBO').upper()
+        if budget_mode not in ('CBO', 'ABO'):
+            errors.append({'entry': entry, 'error': f'budget_mode must be CBO or ABO, got {budget_mode}'})
+            continue
         if not meta_id or not name or monthly_budget is None:
             errors.append({'entry': entry, 'error': 'Missing meta_campaign_id, name, or monthly_budget'})
             continue
 
+        try:
+            monthly_budget = float(monthly_budget)
+            if monthly_budget <= 0:
+                errors.append({'entry': entry, 'error': 'monthly_budget must be > 0'})
+                continue
+        except (TypeError, ValueError):
+            errors.append({'entry': entry, 'error': 'monthly_budget must be a number'})
+            continue
+
+        adsets_payload = entry.get('adsets') or []
+        if budget_mode == 'ABO':
+            if not adsets_payload:
+                errors.append({'entry': entry, 'error': 'ABO campaign requires non-empty adsets[]'})
+                continue
+            # Validate each ad set has the fields we need.
+            adset_errors = []
+            total_alloc = 0.0
+            for a in adsets_payload:
+                if not a.get('meta_adset_id') or not a.get('name'):
+                    adset_errors.append('adset missing meta_adset_id or name')
+                    continue
+                try:
+                    pct = float(a.get('allocation_pct', 0))
+                except (TypeError, ValueError):
+                    adset_errors.append(f'adset {a.get("name")}: allocation_pct must be a number')
+                    continue
+                if pct < 0:
+                    adset_errors.append(f'adset {a.get("name")}: allocation_pct must be >= 0')
+                    continue
+                total_alloc += pct
+            if adset_errors:
+                errors.append({'entry': entry, 'error': '; '.join(adset_errors)})
+                continue
+            if abs(total_alloc - 100.0) > ALLOC_TOLERANCE:
+                errors.append({
+                    'entry': entry,
+                    'error': f'ABO allocations must sum to ~100 (got {round(total_alloc, 2)})',
+                })
+                continue
+
+        validated.append({
+            'meta_id': meta_id,
+            'name': name,
+            'monthly_budget': monthly_budget,
+            'budget_mode': budget_mode,
+            'flight_type': entry.get('flight_type', 'ALWAYS_ON'),
+            'flight_start': entry.get('flight_start_date'),
+            'flight_end': entry.get('flight_end_date'),
+            'adsets': adsets_payload,
+        })
+
+    # If anything failed validation, refuse the whole batch — easier than partial state.
+    if errors:
+        return jsonify({
+            'error': 'Validation failed; nothing was saved.',
+            'details': errors,
+        }), 400
+
+    # Second pass: write.
+    created = 0
+    updated = 0
+    write_errors = []
+
+    for v in validated:
         existing = Campaign.query.filter_by(
-            account_id=account_id,
-            meta_campaign_id=meta_id,
+            account_id=account_id, meta_campaign_id=v['meta_id'],
         ).first()
-
-        flight_type = entry.get('flight_type', 'ALWAYS_ON')
-        flight_start = entry.get('flight_start_date')
-        flight_end = entry.get('flight_end_date')
-
         try:
             if existing:
-                existing.campaign_name = name
-                existing.monthly_budget = float(monthly_budget)
-                existing.flight_type = flight_type
+                existing.campaign_name = v['name']
+                existing.monthly_budget = v['monthly_budget']
+                existing.flight_type = v['flight_type']
                 existing.flight_start_date = (
-                    datetime.fromisoformat(flight_start).date() if flight_start else None
+                    datetime.fromisoformat(v['flight_start']).date() if v['flight_start'] else None
                 )
                 existing.flight_end_date = (
-                    datetime.fromisoformat(flight_end).date() if flight_end else None
+                    datetime.fromisoformat(v['flight_end']).date() if v['flight_end'] else None
                 )
                 existing.is_active = True
+                existing.budget_mode = v['budget_mode']
+                campaign = existing
                 updated += 1
             else:
                 campaign = Campaign(
                     account_id=account_id,
-                    meta_campaign_id=meta_id,
-                    campaign_name=name,
-                    monthly_budget=float(monthly_budget),
-                    flight_type=flight_type,
+                    meta_campaign_id=v['meta_id'],
+                    campaign_name=v['name'],
+                    monthly_budget=v['monthly_budget'],
+                    flight_type=v['flight_type'],
+                    budget_mode=v['budget_mode'],
                 )
-                if flight_start:
-                    campaign.flight_start_date = datetime.fromisoformat(flight_start).date()
-                if flight_end:
-                    campaign.flight_end_date = datetime.fromisoformat(flight_end).date()
+                if v['flight_start']:
+                    campaign.flight_start_date = datetime.fromisoformat(v['flight_start']).date()
+                if v['flight_end']:
+                    campaign.flight_end_date = datetime.fromisoformat(v['flight_end']).date()
                 db.session.add(campaign)
+                db.session.flush()  # populate campaign.id so we can attach adsets
                 created += 1
+
+            # Reconcile ad sets only for ABO. CBO campaigns intentionally have no adsets.
+            if v['budget_mode'] == 'ABO':
+                incoming_meta_ids = {a['meta_adset_id'] for a in v['adsets']}
+                # Soft-delete (mark inactive) any saved adsets that aren't in the new payload.
+                for existing_a in list(campaign.adsets):
+                    if existing_a.meta_adset_id not in incoming_meta_ids:
+                        existing_a.is_active = False
+                # Upsert each incoming adset.
+                existing_by_meta = {a.meta_adset_id: a for a in campaign.adsets}
+                for a in v['adsets']:
+                    pct = float(a.get('allocation_pct', 0))
+                    if a['meta_adset_id'] in existing_by_meta:
+                        ea = existing_by_meta[a['meta_adset_id']]
+                        ea.adset_name = a['name']
+                        ea.allocation_pct = pct
+                        ea.is_active = True
+                    else:
+                        new_a = AdSet(
+                            campaign_id=campaign.id,
+                            meta_adset_id=a['meta_adset_id'],
+                            adset_name=a['name'],
+                            allocation_pct=pct,
+                            is_active=True,
+                        )
+                        db.session.add(new_a)
+            else:
+                # Switching to CBO: deactivate any orphaned ad set rows so pacing skips them.
+                for existing_a in list(campaign.adsets):
+                    existing_a.is_active = False
         except Exception as e:
-            errors.append({'entry': entry, 'error': str(e)})
+            write_errors.append({'meta_id': v['meta_id'], 'error': str(e)})
+
+    if write_errors:
+        db.session.rollback()
+        return jsonify({
+            'error': 'Write failed; nothing was saved.',
+            'details': write_errors,
+        }), 500
 
     db.session.commit()
 
@@ -142,7 +283,7 @@ def sync_campaigns(account_id):
         'message': f'Synced {created + updated} campaigns',
         'created': created,
         'updated': updated,
-        'errors': errors,
+        'errors': [],
     }), 200
 
 
@@ -163,12 +304,8 @@ def get_campaigns(account_id):
 
         campaigns_data = []
         for campaign in campaigns:
+            # campaign.to_dict() now correctly handles ABO roll-up vs CBO row.
             camp_dict = campaign.to_dict()
-
-            # Get latest pacing data
-            latest_pacing = campaign.pacing_data[-1] if campaign.pacing_data else None
-            if latest_pacing:
-                camp_dict['latest_pacing'] = latest_pacing.to_dict()
 
             # Determine flight status
             today = datetime.utcnow().date()
@@ -212,16 +349,17 @@ def get_campaign(account_id, campaign_id):
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
 
+        # to_dict() handles CBO vs ABO roll-up internally.
         camp_dict = campaign.to_dict()
 
-        # Latest pacing data
-        latest_pacing = campaign.pacing_data[-1] if campaign.pacing_data else None
-        if latest_pacing:
-            camp_dict['latest_pacing'] = latest_pacing.to_dict()
-
-        # Adjustment history (last 10)
+        # Adjustment history (last 10) — include both campaign-level and ad-set-level.
         adjustments = [adj.to_dict() for adj in campaign.adjustments[-10:]]
         camp_dict['recent_adjustments'] = adjustments
+
+        # For ABO: also include per-ad-set detail so the detail page can render
+        # an ad-set table with each adset's own pacing row.
+        if campaign.budget_mode == 'ABO':
+            camp_dict['adsets'] = [a.to_dict() for a in campaign.adsets if a.is_active]
 
         return jsonify(camp_dict), 200
 

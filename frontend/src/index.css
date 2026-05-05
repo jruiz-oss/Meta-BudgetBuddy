@@ -1,13 +1,15 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 :root {
-  /* Brand */
-  --bb-primary: #0f3845;
-  --bb-primary-hover: #134656;
-  --bb-primary-light: #1a5365;
+  /* Brand — matches design handoff #004359 */
+  --bb-primary: #004359;
+  --bb-primary-hover: #003848;
+  --bb-primary-light: #0c5468;
 
   /* Surfaces */
-  --bb-bg: #f5f6f7;
+  --bb-bg: #f9fafb;
   --bb-surface: #ffffff;
-  --bb-sidebar: #f4f5f6;
+  --bb-sidebar: #ffffff;
   --bb-border: #e5e7eb;
   --bb-divider: #eef0f2;
 
@@ -16,29 +18,32 @@
   --bb-text-muted: #6b7280;
   --bb-text-subtle: #9ca3af;
 
-  /* Status palettes (card gradients) */
-  --bb-on-pace-bg: linear-gradient(135deg, #c7f5d9 0%, #9ee9bb 100%);
-  --bb-on-pace-fg: #0f5132;
+  /* Status palettes — match design handoff gradients + accent borders */
+  --bb-on-pace-bg: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+  --bb-on-pace-fg: #065f46;
+  --bb-on-pace-border: #10b981;
 
-  --bb-under-bg: linear-gradient(135deg, #d6e6ff 0%, #b3cdfb 100%);
-  --bb-under-fg: #1e3a8a;
+  --bb-under-bg: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+  --bb-under-fg: #1e40af;
+  --bb-under-border: #3b82f6;
 
-  --bb-over-bg: linear-gradient(135deg, #fde7a3 0%, #f8c563 100%);
-  --bb-over-fg: #7c3a00;
+  --bb-over-bg: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  --bb-over-fg: #92400e;
+  --bb-over-border: #f59e0b;
 
   --bb-neutral-bg: #f3f4f6;
   --bb-neutral-fg: #111827;
 
   /* Status pill colors */
-  --bb-pill-on: #d1f4e0;
-  --bb-pill-on-fg: #0f5132;
-  --bb-pill-up: #d6e6ff;
-  --bb-pill-up-fg: #1e3a8a;
-  --bb-pill-down: #fde2cf;
-  --bb-pill-down-fg: #7c2d12;
+  --bb-pill-on: #d1fae5;
+  --bb-pill-on-fg: #065f46;
+  --bb-pill-up: #dbeafe;
+  --bb-pill-up-fg: #1e40af;
+  --bb-pill-down: #fef3c7;
+  --bb-pill-down-fg: #92400e;
 
-  /* Sizing */
-  --bb-sidebar-width: 224px;
+  /* Sizing — sidebar matches design 240px */
+  --bb-sidebar-width: 240px;
   --bb-radius-sm: 6px;
   --bb-radius: 10px;
   --bb-radius-lg: 14px;
@@ -57,8 +62,8 @@ html, body, #root {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-    Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--bb-bg);
@@ -110,15 +115,17 @@ a {
 }
 
 .bb-page-title {
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   margin-bottom: 4px;
+  color: var(--bb-text);
 }
 
 .bb-page-subtitle {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--bb-text-muted);
+  line-height: 1.5;
 }
 
 .bb-card {
@@ -302,12 +309,12 @@ a {
 /* Big-number variant for Home dashboard */
 .bb-stat-hero .bb-stat-value { font-size: 44px; }
 
-/* Status-tinted stat tiles (gradients per status) */
-.bb-stat-on    { background: var(--bb-on-pace-bg); color: var(--bb-on-pace-fg); border-color: rgba(15, 81, 50, 0.18); }
+/* Status-tinted stat tiles (gradients per status) — uses accent border per design handoff */
+.bb-stat-on    { background: var(--bb-on-pace-bg); color: var(--bb-on-pace-fg); border-color: var(--bb-on-pace-border); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15); }
 .bb-stat-on .bb-stat-label,    .bb-stat-on .bb-stat-value,    .bb-stat-on .bb-stat-sub    { color: var(--bb-on-pace-fg); }
-.bb-stat-under { background: var(--bb-under-bg);   color: var(--bb-under-fg);   border-color: rgba(30, 58, 138, 0.18); }
+.bb-stat-under { background: var(--bb-under-bg);   color: var(--bb-under-fg);   border-color: var(--bb-under-border); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15); }
 .bb-stat-under .bb-stat-label, .bb-stat-under .bb-stat-value, .bb-stat-under .bb-stat-sub { color: var(--bb-under-fg); }
-.bb-stat-over  { background: var(--bb-over-bg);    color: var(--bb-over-fg);    border-color: rgba(124, 58, 0, 0.18); }
+.bb-stat-over  { background: var(--bb-over-bg);    color: var(--bb-over-fg);    border-color: var(--bb-over-border); box-shadow: 0 4px 12px rgba(245, 158, 11, 0.15); }
 .bb-stat-over .bb-stat-label,  .bb-stat-over .bb-stat-value,  .bb-stat-over .bb-stat-sub  { color: var(--bb-over-fg); }
 .bb-stat-neutral { background: var(--bb-neutral-bg); color: var(--bb-neutral-fg); }
 
@@ -597,3 +604,36 @@ a {
   margin-left: 6px;
   vertical-align: middle;
 }
+
+/* ============ Mode badges (CBO / ABO / ad set) ============ */
+
+.bb-mode-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.bb-mode-cbo {
+  background: #e0f2fe;
+  color: #0369a1;
+  border-color: #bae6fd;
+}
+.bb-mode-abo {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+.bb-mode-adset {
+  background: #f3f4f6;
+  color: #4b5563;
+  border-color: #e5e7eb;
+}
+
+/* ABO parent row in the recommendations table — quieter so the per-adset rows pop */
+.bb-row-abo-parent td { background: #fcfcfd; }

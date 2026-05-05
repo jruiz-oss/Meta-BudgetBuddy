@@ -132,6 +132,11 @@ function CampaignDetail({ user, onLogout }) {
             <div className="bb-page-subtitle">
               Meta campaign ID: {campaign.meta_campaign_id}
               {campaign.flight_type && <> · Flight: {campaign.flight_type}</>}
+              {campaign.budget_mode && (
+                <> · Budget mode: <span className={`bb-mode-badge ${campaign.budget_mode === 'ABO' ? 'bb-mode-abo' : 'bb-mode-cbo'}`}>
+                  {campaign.budget_mode}
+                </span></>
+              )}
             </div>
           </div>
           <div className="bb-row">
@@ -167,6 +172,49 @@ function CampaignDetail({ user, onLogout }) {
             </span>
           </div>
         </div>
+
+        {/* ABO ad-set table */}
+        {campaign.budget_mode === 'ABO' && Array.isArray(campaign.adsets) && campaign.adsets.length > 0 && (
+          <div className="bb-card" style={{ marginBottom: 20 }}>
+            <div className="bb-section">
+              <div className="bb-section-head">
+                <div>
+                  <div className="bb-section-title">Ad sets ({campaign.adsets.length})</div>
+                  <div className="bb-section-meta">Pacing is calculated per ad set for ABO campaigns.</div>
+                </div>
+              </div>
+            </div>
+            <table className="bb-table">
+              <thead>
+                <tr>
+                  <th>Ad set</th>
+                  <th>Allocation %</th>
+                  <th>MTD Spend</th>
+                  <th>Pace</th>
+                  <th>Recommended Daily</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {campaign.adsets.map((a) => {
+                  const alp = a.latest_pacing;
+                  const status = alp ? (alp.status || '').toUpperCase() : null;
+                  const aPill = pillForStatus(status);
+                  return (
+                    <tr key={a.id}>
+                      <td style={{ fontWeight: 600 }}>{a.adset_name}</td>
+                      <td className="num">{(a.allocation_pct || 0).toFixed(1)}%</td>
+                      <td className="num">{alp ? `$${(alp.actual_spend || 0).toFixed(2)}` : '—'}</td>
+                      <td className="num">{alp ? `${(alp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
+                      <td className="num">{alp?.recommended_daily_budget ? `$${alp.recommended_daily_budget.toFixed(2)}` : '—'}</td>
+                      <td>{alp ? <span className={aPill.cls}>{aPill.text}</span> : <span className="bb-muted">No data</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {history.length > 0 && (
           <div className="bb-card" style={{ marginBottom: 20 }}>

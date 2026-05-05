@@ -174,6 +174,28 @@ class MetaClient:
         except (TypeError, ValueError):
             return 0.0
 
+    def get_adset_spend(
+        self,
+        meta_adset_id: str,
+        since: date,
+        until: date,
+    ) -> float:
+        """Get total spend for an ad set over a date range. Returns dollars."""
+        endpoint = f"/{meta_adset_id}/insights"
+        params = {
+            "fields": "spend",
+            "time_range": '{"since":"%s","until":"%s"}' % (since.isoformat(), until.isoformat()),
+            "level": "adset",
+        }
+        resp = self._request("GET", endpoint, params=params)
+        rows = resp.get("data", [])
+        if not rows:
+            return 0.0
+        try:
+            return float(rows[0].get("spend", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
     def list_adsets_for_campaign(self, meta_campaign_id: str, only_active: bool = True) -> List[Dict[str, Any]]:
         """List adsets under a campaign with their budgets."""
         fields = [

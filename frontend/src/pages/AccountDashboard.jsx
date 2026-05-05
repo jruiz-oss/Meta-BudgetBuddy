@@ -76,16 +76,38 @@ function AccountDashboard({ user, onLogout }) {
 
   const handleApplyAll = () => {
     if (!lastRun || !lastRun.recommendations) return;
-    const adjustments = lastRun.recommendations
-      .filter((r) => r.action !== 'ON_PACE')
-      .map((r) => ({
-        campaign_id: r.campaign_id,
-        campaign_name: r.campaign_name,
-        current_daily_budget: r.current_daily_budget,
-        recommended_daily_budget: r.recommended_daily_budget,
-        change_percent: r.change_percent,
-        action: r.action,
-      }));
+    const adjustments = [];
+    lastRun.recommendations.forEach((r) => {
+      if ((r.budget_mode || 'CBO') === 'ABO') {
+        // ABO: emit one adjustment per ad set that needs a change
+        (r.adset_level || []).forEach((a) => {
+          if (a.action === 'ON_PACE') return;
+          adjustments.push({
+            level: 'adset',
+            campaign_id: r.campaign_id,
+            campaign_name: r.campaign_name,
+            adset_id: a.adset_id,
+            adset_name: a.adset_name,
+            current_daily_budget: a.current_daily_budget,
+            recommended_daily_budget: a.recommended_daily_budget,
+            change_percent: a.change_percent,
+            action: a.action,
+          });
+        });
+      } else {
+        // CBO
+        if (r.action === 'ON_PACE') return;
+        adjustments.push({
+          level: 'campaign',
+          campaign_id: r.campaign_id,
+          campaign_name: r.campaign_name,
+          current_daily_budget: r.current_daily_budget,
+          recommended_daily_budget: r.recommended_daily_budget,
+          change_percent: r.change_percent,
+          action: r.action,
+        });
+      }
+    });
 
     if (adjustments.length === 0) {
       setApplyResult({ message: 'Nothing to apply — everything is on pace.' });
@@ -124,9 +146,19 @@ function AccountDashboard({ user, onLogout }) {
       setMetaCampaigns(list);
       const seed = {};
       list.forEach((c) => {
+        // Seed allocation map for ABO campaigns from the response (server returns even split or saved values).
+        const adsetSeed = {};
+        (c.adsets || []).forEach((a) => {
+          adsetSeed[a.meta_adset_id] = {
+            name: a.name,
+            current_daily_budget: a.current_daily_budget,
+            allocation_pct: a.allocation_pct,
+          };
+        });
         seed[c.meta_campaign_id] = {
           selected: !!c.already_tracked,
           monthly_budget: c.current_daily_budget ? Math.round(c.current_daily_budget * 30) : '',
+          adsets: adsetSeed,
         };
       });
       setImportSelections(seed);
@@ -159,20 +191,94 @@ function AccountDashboard({ user, onLogout }) {
     }));
   };
 
-  const saveImport = async () => {
-    const chosen = metaCampaigns
-      .filter((c) => importSelections[c.meta_campaign_id]?.selected)
-      .map((c) => {
-        const sel = importSelections[c.meta_campaign_id];
-        return {
-          meta_campaign_id: c.meta_campaign_id,
-          campaign_name: c.name,
-          monthly_budget: parseFloat(sel.monthly_budget) || 0,
-          flight_type: 'ALWAYS_ON',
-        };
-      })
-      .filter((c) => c.monthly_budget > 0);
+  const updateAdsetAllocation = (metaCampaignId, metaAdsetId, value) => {
+    setImportSelections((prev) => {
+      const c = prev[metaCampaignId] || {};
+      const adsets = { ...(c.adsets || {}) };
+      adsets[metaAdsetId] = { ...(adsets[metaAdsetId] || {}), allocation_pct: value };
+      return { ...prev, [metaCampaignId]: { ...c, adsets } };
+    });
+  };
 
+  const allocationSumFor = (metaCampaignId) => {
+    const sel = importSelections[metaCampaignId];
+    if (!sel || !sel.adsets) return 0;
+    return Object.values(sel.adsets).reduce((sum, a) => {
+      const n = parseFloat(a.allocation_pct);
+      return sum + (Number.isFinite(n) ? n : 0);
+    }, 0);
+  };
+
+  const evenSplitAllocations = (metaCampaignId) => {
+    setImportSelections((prev) => {
+      const c = prev[metaCampaignId] || {};
+      const adsets = { ...(c.adsets || {}) };
+      const keys = Object.keys(adsets);
+      if (keys.length === 0) return prev;
+      const even = Math.round((100 / keys.length) * 100) / 100;
+      // Distribute remainder onto first row so sum is exactly 100
+      const remainder = 100 - even * keys.length;
+      keys.forEach((k, i) => {
+        adsets[k] = { ...adsets[k], allocation_pct: i === 0 ? +(even + remainder).toFixed(2) : even };
+      });
+      return { ...prev, [metaCampaignId]: { ...c, adsets } };
+    });
+  };
+
+  const saveImport = async () => {
+    // Build the chosen list, validate ABO allocations sum to ~100.
+    const chosen = [];
+    const validationErrors = [];
+    metaCampaigns.forEach((c) => {
+      const sel = importSelections[c.meta_campaign_id];
+      if (!sel?.selected) return;
+      const monthly = parseFloat(sel.monthly_budget) || 0;
+      if (monthly <= 0) {
+        validationErrors.push(`${c.name}: missing monthly budget`);
+        return;
+      }
+      const mode = c.budget_mode || (c.is_cbo ? 'CBO' : 'ABO');
+      const entry = {
+        meta_campaign_id: c.meta_campaign_id,
+        campaign_name: c.name,
+        monthly_budget: monthly,
+        flight_type: 'ALWAYS_ON',
+        budget_mode: mode,
+        adsets: [],
+      };
+      if (mode === 'ABO') {
+        const liveAdsets = c.adsets || [];
+        if (liveAdsets.length === 0) {
+          validationErrors.push(`${c.name} (ABO): no ad sets returned by Meta`);
+          return;
+        }
+        let total = 0;
+        liveAdsets.forEach((a) => {
+          const pctRaw = sel.adsets?.[a.meta_adset_id]?.allocation_pct;
+          const pct = parseFloat(pctRaw);
+          if (!Number.isFinite(pct) || pct < 0) {
+            validationErrors.push(`${c.name}: ${a.name} has invalid allocation %`);
+            return;
+          }
+          total += pct;
+          entry.adsets.push({
+            meta_adset_id: a.meta_adset_id,
+            name: a.name,
+            allocation_pct: pct,
+          });
+        });
+        if (Math.abs(total - 100) > 1.5) {
+          validationErrors.push(`${c.name} (ABO): allocations sum to ${total.toFixed(2)}%, must be ~100%`);
+          return;
+        }
+      }
+      chosen.push(entry);
+    });
+
+    if (validationErrors.length > 0) {
+      setImportError(validationErrors.join(' • '));
+      return;
+    }
     if (chosen.length === 0) {
       setImportError('Pick at least one campaign and give it a monthly budget.');
       return;
@@ -185,7 +291,13 @@ function AccountDashboard({ user, onLogout }) {
       closeImport();
       fetchAll();
     } catch (err) {
-      setImportError(err.response?.data?.error || 'Failed to save campaigns');
+      const msg = err.response?.data?.error || 'Failed to save campaigns';
+      const details = err.response?.data?.details;
+      if (Array.isArray(details) && details.length > 0) {
+        setImportError(`${msg}: ${details.map((d) => d.error || JSON.stringify(d)).join(' • ')}`);
+      } else {
+        setImportError(msg);
+      }
     } finally {
       setImportSaving(false);
     }
@@ -365,7 +477,8 @@ function AccountDashboard({ user, onLogout }) {
               <table className="bb-table">
                 <thead>
                   <tr>
-                    <th>Campaign</th>
+                    <th>Campaign / Ad set</th>
+                    <th>Mode</th>
                     <th>MTD Spend</th>
                     <th>Expected</th>
                     <th>Pace</th>
@@ -375,14 +488,56 @@ function AccountDashboard({ user, onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {lastRun.recommendations.map((r) => {
+                  {lastRun.recommendations.flatMap((r) => {
+                    const mode = r.budget_mode || 'CBO';
+                    if (mode === 'ABO') {
+                      // Parent (campaign rollup) row + one sub-row per ad set
+                      const parentRow = (
+                        <tr key={`c-${r.campaign_id}`} className="bb-row-abo-parent">
+                          <td style={{ fontWeight: 600 }}>{r.campaign_name}</td>
+                          <td><span className="bb-mode-badge bb-mode-abo">ABO</span></td>
+                          <td className="num">${(r.actual_spend || 0).toFixed(2)}</td>
+                          <td className="num">${(r.expected_spend || 0).toFixed(2)}</td>
+                          <td className="num">{(r.pace_ratio || 0).toFixed(2)}x</td>
+                          <td className="num bb-muted">—</td>
+                          <td className="num bb-muted">—</td>
+                          <td><span className="bb-pill bb-pill-muted">rollup</span></td>
+                        </tr>
+                      );
+                      const adsetRows = (r.adset_level || []).map((a) => {
+                        const action = (a.action || '').toUpperCase();
+                        const tint =
+                          action === 'INCREASE' ? 'bb-table-row-tint-up' :
+                          action === 'DECREASE' ? 'bb-table-row-tint-down' : '';
+                        return (
+                          <tr key={`a-${a.adset_id}`} className={tint}>
+                            <td style={{ paddingLeft: 32, color: 'var(--bb-text-muted)' }}>
+                              ↳ {a.adset_name} <span className="bb-muted">({a.allocation_pct}%)</span>
+                            </td>
+                            <td><span className="bb-mode-badge bb-mode-adset">ad&nbsp;set</span></td>
+                            <td className="num">${(a.actual_spend || 0).toFixed(2)}</td>
+                            <td className="num">${(a.expected_spend || 0).toFixed(2)}</td>
+                            <td className="num">{(a.pace_ratio || 0).toFixed(2)}x</td>
+                            <td className="num">${(a.current_daily_budget || 0).toFixed(2)}</td>
+                            <td className="num">
+                              ${(a.recommended_daily_budget || 0).toFixed(2)}
+                              <div>{changeIndicator(a.change_percent)}</div>
+                            </td>
+                            <td><span className={pillForStatus(action).cls}>{pillForStatus(action).text}</span></td>
+                          </tr>
+                        );
+                      });
+                      return [parentRow, ...adsetRows];
+                    }
+                    // CBO
                     const action = (r.action || '').toUpperCase();
                     const rowTint =
                       action === 'INCREASE' ? 'bb-table-row-tint-up' :
                       action === 'DECREASE' ? 'bb-table-row-tint-down' : '';
-                    return (
-                      <tr key={r.campaign_id} className={rowTint}>
-                        <td>{r.campaign_name}</td>
+                    return [(
+                      <tr key={`c-${r.campaign_id}`} className={rowTint}>
+                        <td style={{ fontWeight: 600 }}>{r.campaign_name}</td>
+                        <td><span className="bb-mode-badge bb-mode-cbo">CBO</span></td>
                         <td className="num">${(r.actual_spend || 0).toFixed(2)}</td>
                         <td className="num">${(r.expected_spend || 0).toFixed(2)}</td>
                         <td className="num">{(r.pace_ratio || 0).toFixed(2)}x</td>
@@ -393,7 +548,7 @@ function AccountDashboard({ user, onLogout }) {
                         </td>
                         <td><span className={pillForStatus(action).cls}>{pillForStatus(action).text}</span></td>
                       </tr>
-                    );
+                    )];
                   })}
                 </tbody>
               </table>
@@ -419,6 +574,7 @@ function AccountDashboard({ user, onLogout }) {
               <thead>
                 <tr>
                   <th>Campaign</th>
+                  <th>Mode</th>
                   <th>Flight</th>
                   <th>Monthly Budget</th>
                   <th>Current Daily</th>
@@ -435,6 +591,7 @@ function AccountDashboard({ user, onLogout }) {
                   const pill = pillForStatus(status);
                   const flightStatus = (c.flight_status || '').toUpperCase();
                   const isLive = flightStatus === 'ACTIVE' || flightStatus === 'LIVE';
+                  const mode = c.budget_mode || 'CBO';
 
                   return (
                     <tr key={c.id}>
@@ -443,6 +600,16 @@ function AccountDashboard({ user, onLogout }) {
                           {c.campaign_name}
                           {isLive && c.flight_type === 'LIMITED' && <span className="bb-flight-live">LIVE</span>}
                         </div>
+                        {mode === 'ABO' && c.adset_count > 0 && (
+                          <div className="bb-muted" style={{ fontSize: 11, marginTop: 2 }}>
+                            {c.adset_count} ad set{c.adset_count === 1 ? '' : 's'}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`bb-mode-badge ${mode === 'ABO' ? 'bb-mode-abo' : 'bb-mode-cbo'}`}>
+                          {mode}
+                        </span>
                       </td>
                       <td>
                         <span className="bb-pill bb-pill-muted">{c.flight_status || c.flight_type || '—'}</span>
@@ -489,18 +656,28 @@ function AccountDashboard({ user, onLogout }) {
                 <table className="bb-table">
                   <thead>
                     <tr>
-                      <th>Campaign</th>
+                      <th>Target</th>
                       <th>Current Daily</th>
                       <th>New Daily</th>
                       <th>Change</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pendingAdjustments.map((adj) => {
+                    {pendingAdjustments.map((adj, idx) => {
                       const up = adj.change_percent > 0;
+                      const isAdset = adj.level === 'adset' || !!adj.adset_id;
                       return (
-                        <tr key={adj.campaign_id}>
-                          <td style={{ fontWeight: 600 }}>{adj.campaign_name}</td>
+                        <tr key={`${adj.level || 'c'}-${adj.adset_id || adj.campaign_id}-${idx}`}>
+                          <td>
+                            <div style={{ fontWeight: 600 }}>
+                              {isAdset ? adj.adset_name : adj.campaign_name}
+                            </div>
+                            {isAdset && (
+                              <div className="bb-muted" style={{ fontSize: 11 }}>
+                                Ad set in {adj.campaign_name}
+                              </div>
+                            )}
+                          </td>
                           <td className="num">${(adj.current_daily_budget || 0).toFixed(2)}</td>
                           <td className="num">${(adj.recommended_daily_budget || 0).toFixed(2)}</td>
                           <td>
@@ -550,15 +727,20 @@ function AccountDashboard({ user, onLogout }) {
                           <th></th>
                           <th>Campaign</th>
                           <th>Status</th>
-                          <th>CBO?</th>
+                          <th>Mode</th>
                           <th>Current Daily</th>
                           <th>Monthly Budget</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {metaCampaigns.map((c) => {
+                        {metaCampaigns.flatMap((c) => {
                           const sel = importSelections[c.meta_campaign_id] || {};
-                          return (
+                          const mode = c.budget_mode || (c.is_cbo ? 'CBO' : 'ABO');
+                          const liveAdsets = c.adsets || [];
+                          const allocSum = allocationSumFor(c.meta_campaign_id);
+                          const allocOk = Math.abs(allocSum - 100) <= 1.5;
+
+                          const mainRow = (
                             <tr key={c.meta_campaign_id}>
                               <td>
                                 <input
@@ -568,11 +750,15 @@ function AccountDashboard({ user, onLogout }) {
                                 />
                               </td>
                               <td>
-                                {c.name}
-                                {c.already_tracked && <span className="bb-muted"> (tracked)</span>}
+                                <div>{c.name}</div>
+                                {c.already_tracked && <div className="bb-muted" style={{ fontSize: 11 }}>tracked</div>}
                               </td>
                               <td>{c.effective_status || c.status}</td>
-                              <td>{c.is_cbo ? 'Yes' : 'No'}</td>
+                              <td>
+                                <span className={`bb-mode-badge ${mode === 'ABO' ? 'bb-mode-abo' : 'bb-mode-cbo'}`}>
+                                  {mode}
+                                </span>
+                              </td>
                               <td className="num">{c.current_daily_budget ? `$${c.current_daily_budget.toFixed(2)}` : '—'}</td>
                               <td>
                                 <input
@@ -589,6 +775,81 @@ function AccountDashboard({ user, onLogout }) {
                               </td>
                             </tr>
                           );
+
+                          if (mode !== 'ABO' || !sel.selected || liveAdsets.length === 0) {
+                            return [mainRow];
+                          }
+
+                          const allocRow = (
+                            <tr key={`${c.meta_campaign_id}-alloc`}>
+                              <td colSpan={6} style={{ padding: 0, background: '#fafbfb' }}>
+                                <div style={{ padding: '12px 16px 16px 48px' }}>
+                                  <div className="bb-row-between" style={{ marginBottom: 8 }}>
+                                    <div className="bb-section-meta">
+                                      Set how much of <strong>${(parseFloat(sel.monthly_budget) || 0).toFixed(0)}</strong> /mo
+                                      goes to each ad set. Total must equal 100%.
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="bb-btn bb-btn-ghost"
+                                      onClick={() => evenSplitAllocations(c.meta_campaign_id)}
+                                      style={{ fontSize: 12 }}
+                                    >
+                                      Split evenly
+                                    </button>
+                                  </div>
+                                  <table className="bb-table" style={{ marginBottom: 4 }}>
+                                    <thead>
+                                      <tr>
+                                        <th style={{ width: '60%' }}>Ad set</th>
+                                        <th>Current Daily</th>
+                                        <th>Allocation %</th>
+                                        <th>Allocated /mo</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {liveAdsets.map((a) => {
+                                        const pct = parseFloat(sel.adsets?.[a.meta_adset_id]?.allocation_pct);
+                                        const monthly = parseFloat(sel.monthly_budget) || 0;
+                                        const allocated = Number.isFinite(pct) ? (monthly * pct / 100) : 0;
+                                        return (
+                                          <tr key={a.meta_adset_id}>
+                                            <td>{a.name} {a.status !== 'ACTIVE' && <span className="bb-muted">({a.status})</span>}</td>
+                                            <td className="num">{a.current_daily_budget ? `$${a.current_daily_budget.toFixed(2)}` : '—'}</td>
+                                            <td>
+                                              <input
+                                                type="number"
+                                                step="0.5"
+                                                min="0"
+                                                max="100"
+                                                className="bb-input"
+                                                value={sel.adsets?.[a.meta_adset_id]?.allocation_pct ?? ''}
+                                                onChange={(e) => updateAdsetAllocation(c.meta_campaign_id, a.meta_adset_id, e.target.value)}
+                                                style={{ width: 90 }}
+                                              />
+                                            </td>
+                                            <td className="num">${allocated.toFixed(0)}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                  <div style={{ textAlign: 'right', fontSize: 12, marginTop: 6 }}>
+                                    Total:{' '}
+                                    <span style={{
+                                      fontWeight: 700,
+                                      color: allocOk ? '#0f5132' : '#b45309',
+                                    }}>
+                                      {allocSum.toFixed(2)}%
+                                    </span>
+                                    {!allocOk && <span className="bb-muted"> — must be 100%</span>}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+
+                          return [mainRow, allocRow];
                         })}
                       </tbody>
                     </table>
