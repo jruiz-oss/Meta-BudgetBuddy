@@ -74,6 +74,16 @@ function AccountDashboard({ user, onLogout }) {
     }
   };
 
+  const handleRemoveCampaign = async (campaignId, campaignName) => {
+    if (!window.confirm(`Remove "${campaignName}" from pacing? You can re-add it via Import from Meta.`)) return;
+    try {
+      await axios.put(`/api/campaigns/${accountId}/${campaignId}`, { is_active: false });
+      fetchAll();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to remove campaign');
+    }
+  };
+
   const handleApplyAll = () => {
     if (!lastRun || !lastRun.recommendations) return;
     const adjustments = [];
@@ -633,7 +643,17 @@ function AccountDashboard({ user, onLogout }) {
                       </td>
                       <td>{lp ? <span className={pill.cls}>{pill.text}</span> : <span className="bb-muted">No data</span>}</td>
                       <td>
-                        <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-link">View →</Link>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-link">View →</Link>
+                          <button
+                            className="bb-btn bb-btn-danger"
+                            style={{ fontSize: 11, padding: '3px 8px' }}
+                            onClick={() => handleRemoveCampaign(c.id, c.campaign_name)}
+                            title="Remove from pacing"
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

@@ -54,8 +54,10 @@ def sync_campaigns(account_id):
         except MetaAPIError as e:
             return jsonify({'error': f'Meta API error: {e}'}), 502
 
-        # Normalize: convert cents → dollars, mark which are already tracked.
-        tracked_campaigns = Campaign.query.filter_by(account_id=account_id).all()
+        # Normalize: convert cents → dollars, mark which are actively tracked.
+        # Only is_active=True campaigns count as "already tracked" so inactive/removed
+        # campaigns don't show as pre-selected in the import modal.
+        tracked_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
         tracked_ids = {c.meta_campaign_id for c in tracked_campaigns}
         tracked_by_meta_id = {c.meta_campaign_id: c for c in tracked_campaigns}
 
@@ -314,7 +316,7 @@ def get_campaigns(account_id):
         if not account:
             return jsonify({'error': 'Account not found'}), 404
 
-        campaigns = Campaign.query.filter_by(account_id=account_id).all()
+        campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
 
         campaigns_data = []
         for campaign in campaigns:

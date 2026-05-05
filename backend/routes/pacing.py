@@ -81,12 +81,15 @@ def _compute_recommendation(
     days_in_month,
     days_elapsed,
     settings,
+    actual_current_daily=None,
 ):
     """
     Core pacing math. Returns:
       (daily_target, expected_mtd, pace_ratio, recommended_daily, change_pct, action)
 
-    All inputs are floats / ints. settings is an AccountSettings row.
+    actual_current_daily: the real daily budget currently set in Meta (pass for ABO ad sets).
+      When provided it is used as the reference for the ±cap and for change_pct so the
+      output tells the user "your Meta budget changes by X%". Falls back to daily_target.
     """
     days_in_month = max(1, days_in_month)
     days_elapsed = max(1, min(days_in_month, days_elapsed))
@@ -98,38 +101,42 @@ def _compute_recommendation(
 
     tolerance = float(getattr(settings, 'pace_tolerance_percent', 5.0) or 5.0)
     max_change = float(getattr(settings, 'max_daily_change_percent', 25.0) or 25.0)
-    min_daily = float(getattr(settings, 'min_daily_budget', 5.0) or 5.0)
+    min_daily  = float(getattr(settings, 'min_daily_budget', 5.0) or 5.0)
 
-    # If we're inside the tolerance band, no change.
+    # Use the actual Meta daily as the reference for cap / change_pct when provided.
+    # This ensures change_pct reflects what will actually change in Meta, not a comparison
+    # against an internal allocation target the user never set directly.
+    ref_daily = (actual_current_daily
+                 if (actual_current_daily is not None and actual_current_daily > 0)
+                 else daily_target)
+
+    # Inside tolerance band — no change.
     pct_off_pace = abs(pace_ratio - 1.0) * 100.0
     if pct_off_pace <= tolerance:
-        recommended = max(min_daily, daily_target)
-        change_pct = ((recommended - daily_target) / daily_target * 100.0) if daily_target > 0 else 0.0
-        return daily_target, expected_mtd, pace_ratio, recommended, change_pct, 'ON_PACE'
+        return daily_target, expected_mtd, pace_ratio, ref_daily, 0.0, 'ON_PACE'
 
-    # Outside tolerance: aim daily run-rate so MTD spend hits monthly_budget by month end.
+    # Outside tolerance: ideal run-rate to hit monthly_budget by month end.
     remaining_budget = max(0.0, monthly_budget - actual_spend)
     ideal_daily = remaining_budget / days_remaining if days_remaining > 0 else daily_target
 
-    # Cap the swing relative to daily_target so a single run can't go wild.
-    if daily_target > 0:
-        delta_pct = (ideal_daily - daily_target) / daily_target * 100.0
+    # Cap the swing relative to ref_daily so one run can't move budgets wildly.
+    if ref_daily > 0:
+        delta_pct = (ideal_daily - ref_daily) / ref_daily * 100.0
         capped_pct = max(-max_change, min(max_change, delta_pct))
-        recommended = daily_target * (1.0 + capped_pct / 100.0)
+        recommended = ref_daily * (1.0 + capped_pct / 100.0)
     else:
         recommended = ideal_daily
 
-    # Floor.
+    # Record direction BEFORE applying the floor so the floor can't flip a DECREASE
+    # recommendation into an INCREASE just because min_daily_budget > ideal_daily.
+    pre_floor = recommended
     recommended = max(min_daily, recommended)
 
-    if daily_target > 0:
-        change_pct = (recommended - daily_target) / daily_target * 100.0
-    else:
-        change_pct = 0.0
+    change_pct = (recommended - ref_daily) / ref_daily * 100.0 if ref_daily > 0 else 0.0
 
-    if change_pct > 0.5:
+    if pre_floor > ref_daily * 1.005:
         action = 'INCREASE'
-    elif change_pct < -0.5:
+    elif pre_floor < ref_daily * 0.995:
         action = 'DECREASE'
     else:
         action = 'ON_PACE'
@@ -207,10 +214,33 @@ def run_pacing(account_id):
                 })
                 continue
 
+            # Fetch actual daily budgets from Meta so we use real numbers as the
+            # reference point for cap/change_pct — not the internal allocation target.
+            live_daily_map = {}   # meta_adset_id → actual daily in dollars
+            try:
+                live_adsets = meta.list_adsets_for_campaign(
+                    campaign.meta_campaign_id, only_active=False
+                )
+                for la in live_adsets:
+                    raw = la.get('daily_budget')
+                    if raw is not None:
+                        try:
+                            live_daily_map[la['id']] = float(raw) / 100.0
+                        except (TypeError, ValueError):
+                            pass
+            except MetaAPIError as e:
+                logger.warning(
+                    "Could not fetch live adset budgets for campaign %s: %s",
+                    campaign.id, e,
+                )
+                # Non-fatal: fall back to allocation target as reference.
+
             adset_recs = []
             campaign_actual_total = 0.0
             for adset in active_adsets:
                 allocated_budget = campaign.monthly_budget * (adset.allocation_pct / 100.0)
+                actual_meta_daily = live_daily_map.get(adset.meta_adset_id)  # None if unavailable
+
                 try:
                     actual_spend = meta.get_adset_spend(
                         adset.meta_adset_id, since=month_start, until=spend_until,
@@ -235,7 +265,11 @@ def run_pacing(account_id):
                     days_in_month=days_in_month,
                     days_elapsed=days_elapsed,
                     settings=settings,
+                    actual_current_daily=actual_meta_daily,
                 )
+
+                # current_daily_budget in the response = actual Meta value when known.
+                display_current = actual_meta_daily if actual_meta_daily is not None else daily_target
 
                 adset_recs.append({
                     "adset_id": adset.id,
@@ -246,7 +280,7 @@ def run_pacing(account_id):
                     "actual_spend": round(actual_spend, 2),
                     "expected_spend": round(expected_mtd, 2),
                     "pace_ratio": round(pace_ratio, 3),
-                    "current_daily_budget": round(daily_target, 2),
+                    "current_daily_budget": round(display_current, 2),
                     "recommended_daily_budget": round(new_daily, 2),
                     "change_percent": round(change_pct, 1),
                     "action": action,
@@ -256,7 +290,7 @@ def run_pacing(account_id):
                     campaign_id=campaign.id,
                     adset_id=adset.id,
                     date=yesterday,
-                    current_daily_budget=daily_target,
+                    current_daily_budget=display_current,
                     actual_spend=actual_spend,
                     expected_spend=expected_mtd,
                     pace_ratio=pace_ratio,
