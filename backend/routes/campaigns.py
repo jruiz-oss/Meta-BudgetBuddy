@@ -523,3 +523,80 @@ def delete_campaign(account_id, campaign_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+
+@campaigns_bp.route('/<account_id>/<campaign_id>/adsets', methods=['PUT'])
+@login_required
+def update_adset_allocations(account_id, campaign_id):
+    """
+    Update allocation percentages for ad sets on an ABO campaign.
+
+    Body: { "adsets": [{ "id": <db_id>, "allocation_pct": <float> }, ...] }
+
+    Validation:
+    - Campaign must exist, belong to this account, and be ABO.
+    - Every adset id must belong to this campaign.
+    - Allocations must be >= 0 and sum to 100 ± 1.5.
+    """
+    ALLOC_TOLERANCE = 1.5
+
+    try:
+        user = _current_user()
+        if not user:
+            return jsonify({'error': 'Not authenticated'}), 401
+
+        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        if not account:
+            return jsonify({'error': 'Account not found'}), 404
+
+        campaign = Campaign.query.filter_by(id=campaign_id, account_id=account_id).first()
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+
+        if campaign.budget_mode != 'ABO':
+            return jsonify({'error': 'Allocation editing is only available for ABO campaigns'}), 400
+
+        payload = request.get_json(silent=True) or {}
+        incoming = payload.get('adsets', [])
+        if not incoming:
+            return jsonify({'error': 'No adsets provided'}), 400
+
+        # Build a map of active adsets that belong to this campaign.
+        campaign_adset_ids = {a.id for a in campaign.adsets if a.is_active}
+
+        # Validate all ids and percentages before touching the DB.
+        validated = []
+        total_pct = 0.0
+        for item in incoming:
+            adset_id = item.get('id')
+            if adset_id not in campaign_adset_ids:
+                return jsonify({'error': f'Ad set id {adset_id} does not belong to this campaign'}), 400
+            try:
+                pct = float(item.get('allocation_pct', 0))
+            except (TypeError, ValueError):
+                return jsonify({'error': f'allocation_pct must be a number for adset {adset_id}'}), 400
+            if pct < 0:
+                return jsonify({'error': f'allocation_pct must be >= 0 for adset {adset_id}'}), 400
+            total_pct += pct
+            validated.append({'id': adset_id, 'pct': pct})
+
+        if abs(total_pct - 100.0) > ALLOC_TOLERANCE:
+            return jsonify({
+                'error': f'Allocations must sum to ~100% (got {round(total_pct, 2)}%)'
+            }), 400
+
+        # All good — write.
+        adset_map = {a.id: a for a in campaign.adsets}
+        for item in validated:
+            adset_map[item['id']].allocation_pct = item['pct']
+
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Allocations updated',
+            'adsets': [a.to_dict() for a in campaign.adsets if a.is_active],
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500

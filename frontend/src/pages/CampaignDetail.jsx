@@ -13,6 +13,14 @@ function CampaignDetail({ user, onLogout }) {
   const [applying, setApplying]       = useState(false);
   const [applyResult, setApplyResult] = useState(null);
   const [rejected, setRejected]       = useState(false);
+
+  // Ad set allocation editing
+  const [editingAdsets, setEditingAdsets]   = useState(false);
+  const [adsetMode, setAdsetMode]           = useState('pct');   // 'pct' | 'daily'
+  const [adsetDrafts, setAdsetDrafts]       = useState({});      // { [adset_id]: string }
+  const [adsetSaving, setAdsetSaving]       = useState(false);
+  const [adsetError, setAdsetError]         = useState('');
+
   const navigate = useNavigate();
 
   const fetchData = useCallback(async () => {
@@ -93,6 +101,101 @@ function CampaignDetail({ user, onLogout }) {
       setError(err.response?.data?.error || 'Failed to apply recommendation');
     } finally {
       setApplying(false);
+    }
+  };
+
+  // ── adset allocation editing ─────────────────────────────
+  const enterEditMode = () => {
+    // Seed drafts from current allocation_pct values.
+    const drafts = {};
+    (campaign?.adsets || []).forEach((a) => {
+      drafts[a.id] = String((a.allocation_pct || 0).toFixed(2));
+    });
+    setAdsetDrafts(drafts);
+    setAdsetMode('pct');
+    setAdsetError('');
+    setEditingAdsets(true);
+  };
+
+  const cancelEditMode = () => {
+    setEditingAdsets(false);
+    setAdsetDrafts({});
+    setAdsetError('');
+  };
+
+  // Convert all drafts between % and $/day when toggling mode.
+  const toggleAdsetMode = (newMode) => {
+    if (newMode === adsetMode) return;
+    const monthly = campaign?.monthly_budget || 0;
+    const impliedDaily = monthly / 30;
+    const converted = {};
+    (campaign?.adsets || []).forEach((a) => {
+      const raw = parseFloat(adsetDrafts[a.id]);
+      if (!Number.isFinite(raw)) { converted[a.id] = ''; return; }
+      if (newMode === 'daily') {
+        // pct → $/day:  daily = monthly * pct/100 / 30
+        converted[a.id] = ((monthly * raw) / 100 / 30).toFixed(2);
+      } else {
+        // $/day → pct:  pct = daily * 30 / monthly * 100
+        converted[a.id] = impliedDaily > 0
+          ? ((raw * 30 / monthly) * 100).toFixed(2)
+          : '0';
+      }
+    });
+    setAdsetDrafts(converted);
+    setAdsetMode(newMode);
+    setAdsetError('');
+  };
+
+  const updateDraft = (id, val) => {
+    setAdsetDrafts((prev) => ({ ...prev, [id]: val }));
+    setAdsetError('');
+  };
+
+  // Compute live % sum (always in % terms, regardless of current input mode).
+  const liveAllocPcts = () => {
+    const monthly = campaign?.monthly_budget || 0;
+    return (campaign?.adsets || []).map((a) => {
+      const raw = parseFloat(adsetDrafts[a.id]);
+      if (!Number.isFinite(raw)) return 0;
+      if (adsetMode === 'daily') {
+        return monthly > 0 ? (raw * 30 / monthly) * 100 : 0;
+      }
+      return raw;
+    });
+  };
+
+  const allocSum = liveAllocPcts().reduce((s, v) => s + v, 0);
+  const allocOk  = Math.abs(allocSum - 100) <= 1.5;
+
+  const saveAdsetAllocations = async () => {
+    setAdsetError('');
+    const monthly = campaign?.monthly_budget || 0;
+    const adsets  = (campaign?.adsets || []).map((a) => {
+      const raw = parseFloat(adsetDrafts[a.id]);
+      let pct = Number.isFinite(raw) ? raw : 0;
+      if (adsetMode === 'daily') {
+        pct = monthly > 0 ? (raw * 30 / monthly) * 100 : 0;
+      }
+      return { id: a.id, allocation_pct: Math.round(pct * 100) / 100 };
+    });
+
+    const total = adsets.reduce((s, a) => s + a.allocation_pct, 0);
+    if (Math.abs(total - 100) > 1.5) {
+      setAdsetError(`Allocations sum to ${total.toFixed(2)}% — must be ~100%.`);
+      return;
+    }
+
+    setAdsetSaving(true);
+    try {
+      await axios.put(`/api/campaigns/${accountId}/${campaignId}/adsets`, { adsets });
+      await fetchData();   // refresh campaign so adsets reflect new allocations
+      setEditingAdsets(false);
+      setAdsetDrafts({});
+    } catch (err) {
+      setAdsetError(err.response?.data?.error || 'Failed to save allocations');
+    } finally {
+      setAdsetSaving(false);
     }
   };
 
@@ -319,29 +422,114 @@ function CampaignDetail({ user, onLogout }) {
               <div className="bb-section-head">
                 <div>
                   <div className="bb-section-title">Ad Sets ({campaign.adsets.length})</div>
-                  <div className="bb-section-meta">Pacing is calculated per ad set for ABO campaigns.</div>
+                  <div className="bb-section-meta">
+                    Pacing runs per ad set. Use <strong>Edit Allocations</strong> to adjust how the campaign budget is split.
+                  </div>
                 </div>
+                {!editingAdsets && (
+                  <button className="bb-btn bb-btn-secondary" onClick={enterEditMode}>
+                    Edit Allocations
+                  </button>
+                )}
               </div>
             </div>
+
+            {/* Edit-mode toolbar */}
+            {editingAdsets && (
+              <div className="cd-alloc-toolbar">
+                <div className="cd-alloc-toolbar-left">
+                  <span className="bb-muted" style={{ fontSize: 13 }}>
+                    Input mode:
+                  </span>
+                  <div className="bb-tabs" style={{ display: 'inline-flex', marginLeft: 8 }}>
+                    <button
+                      className={`bb-tab-btn${adsetMode === 'pct'   ? ' is-active' : ''}`}
+                      onClick={() => toggleAdsetMode('pct')}
+                    >% Allocation</button>
+                    <button
+                      className={`bb-tab-btn${adsetMode === 'daily' ? ' is-active' : ''}`}
+                      onClick={() => toggleAdsetMode('daily')}
+                    >$/day</button>
+                  </div>
+                  {adsetMode === 'daily' && (
+                    <span className="bb-muted" style={{ fontSize: 12, marginLeft: 12 }}>
+                      Campaign target: {fmt$(campaign.monthly_budget / 30, 2)}/day
+                    </span>
+                  )}
+                </div>
+                <div className="bb-row">
+                  <span
+                    className="cd-alloc-sum"
+                    style={{ color: allocOk ? '#10b981' : '#f59e0b' }}
+                  >
+                    Total: {allocSum.toFixed(1)}%{allocOk ? ' ✓' : ' — must equal 100%'}
+                  </span>
+                  <button
+                    className="bb-btn bb-btn-primary"
+                    onClick={saveAdsetAllocations}
+                    disabled={adsetSaving || !allocOk}
+                  >
+                    {adsetSaving ? 'Saving…' : 'Save'}
+                  </button>
+                  <button className="bb-btn" onClick={cancelEditMode} disabled={adsetSaving}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {adsetError && (
+              <div className="bb-alert bb-alert-error" style={{ margin: '0 0 0 0', borderRadius: 0 }}>
+                {adsetError}
+              </div>
+            )}
+
             <table className="bb-table">
               <thead>
                 <tr>
                   <th>Ad Set</th>
-                  <th>Allocation %</th>
+                  <th>{editingAdsets ? (adsetMode === 'pct' ? 'Allocation %' : '$/day target') : 'Allocation'}</th>
+                  <th>Monthly Budget</th>
                   <th>MTD Spend</th>
                   <th>Pace</th>
-                  <th>Recommended Daily</th>
+                  <th>Rec. Daily</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {campaign.adsets.map((a) => {
-                  const alp   = a.latest_pacing;
-                  const aPill = pillForStatus(alp?.action || alp?.status);
+                  const alp      = a.latest_pacing;
+                  const aPill    = pillForStatus(alp?.action || alp?.status);
+                  const adsetMonthly = campaign.monthly_budget * (a.allocation_pct / 100);
+
                   return (
                     <tr key={a.id}>
                       <td style={{ fontWeight: 600 }}>{a.adset_name}</td>
-                      <td className="num">{(a.allocation_pct || 0).toFixed(1)}%</td>
+                      <td>
+                        {editingAdsets ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            {adsetMode === 'daily' && <span className="bb-muted" style={{ fontSize: 13 }}>$</span>}
+                            <input
+                              type="number"
+                              min="0"
+                              step={adsetMode === 'pct' ? '0.5' : '1'}
+                              className="bb-input"
+                              style={{ width: 90 }}
+                              value={adsetDrafts[a.id] ?? ''}
+                              onChange={(e) => updateDraft(a.id, e.target.value)}
+                            />
+                            {adsetMode === 'pct' && <span className="bb-muted" style={{ fontSize: 13 }}>%</span>}
+                          </div>
+                        ) : (
+                          <span className="num">
+                            {(a.allocation_pct || 0).toFixed(1)}%
+                            <span className="bb-muted" style={{ fontSize: 11, marginLeft: 4 }}>
+                              ({fmt$(adsetMonthly / 30, 2)}/day)
+                            </span>
+                          </span>
+                        )}
+                      </td>
+                      <td className="num">{fmt$(adsetMonthly)}/mo</td>
                       <td className="num">{alp ? fmt$(alp.actual_spend, 2) : '—'}</td>
                       <td className="num">{alp ? `${(alp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
                       <td className="num">
