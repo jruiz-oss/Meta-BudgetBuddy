@@ -142,7 +142,6 @@ class MetaClient:
             "objective",
             "daily_budget",                  # cents; only set if campaign uses CBO
             "lifetime_budget",               # cents
-            "is_campaign_budget_optimized",  # True → CBO, False/absent → ABO
             "start_time",
             "stop_time",
         ]
@@ -174,7 +173,6 @@ class MetaClient:
             "status",
             "daily_budget",
             "lifetime_budget",
-            "is_campaign_budget_optimized",
             "start_time",
             "stop_time",
         ]
@@ -300,15 +298,13 @@ class MetaClient:
         except MetaAPIError as e:
             return {"strategy": "error", "error": str(e)}
 
-        cbo_flag = camp.get("is_campaign_budget_optimized")
-        if cbo_flag is not None:
-            has_cbo = bool(cbo_flag)
-        else:
-            raw_db = camp.get("daily_budget")
-            try:
-                has_cbo = int(raw_db or 0) > 0
-            except (TypeError, ValueError):
-                has_cbo = False
+        # CBO: campaign-level daily_budget in cents (>0). Do not use
+        # is_campaign_budget_optimized in fields — some API versions return (#100) for it.
+        raw_db = camp.get("daily_budget")
+        try:
+            has_cbo = int(raw_db or 0) > 0
+        except (TypeError, ValueError):
+            has_cbo = False
 
         if has_cbo:
             try:
