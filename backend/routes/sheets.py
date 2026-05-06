@@ -20,7 +20,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request, session
 
-from database import Account, AccountSettings, Campaign, db
+from database import Account, AccountSettings, Campaign, PacingData, db
 from routes.auth import login_required
 
 logger = logging.getLogger(__name__)
@@ -333,39 +333,52 @@ def sync_budgets(account_id):
     }), 200
 
 
-def _campaign_mtd_spend(c):
-    """Return the MTD spend for a campaign as Meta would report it.
+def _campaign_mtd_spend(campaign):
+    """Return the MTD spend for a campaign using direct DB queries.
 
-    - CBO: latest campaign-level row (adset_id IS NULL).
-    - ABO: sum of the latest-date adset rows so the sheet shows the campaign total
-           instead of one ad set's spend.
+    Uses explicit PacingData queries (not the ORM relationship) so that values
+    committed earlier in the same request are always visible — ORM identity-map
+    caching can mask newly-written rows when this is called right after a commit.
+
+    - CBO: most recent campaign-level row (adset_id IS NULL).
+    - ABO: sum of the highest-id row per active ad set on the latest date, so the
+           sheet shows the full campaign total instead of a single ad set's spend.
     """
-    rows = list(c.pacing_data or [])
-    if not rows:
-        return None
-    if c.budget_mode == 'ABO':
-        adset_rows = [p for p in rows if p.adset_id is not None]
-        if not adset_rows:
+    if campaign.budget_mode == 'ABO':
+        # Use the ORM relationship for ad set IDs (stable; not affected by the run).
+        active_adset_ids = [a.id for a in campaign.adsets if a.is_active]
+        if not active_adset_ids:
             return None
-        last_date = max((p.date for p in adset_rows if p.date), default=None)
-        if last_date is None:
+        rows = (
+            PacingData.query
+            .filter(
+                PacingData.campaign_id == campaign.id,
+                PacingData.adset_id.in_(active_adset_ids),
+            )
+            .order_by(PacingData.date.desc(), PacingData.id.desc())
+            .all()
+        )
+        if not rows:
             return None
-        # Keep the highest-id row per adset on the latest date so multiple same-day
-        # runs don't double-count.
+        last_date = rows[0].date
+        # Keep only the highest-id (most recently written) row per adset on the
+        # latest date so multiple same-day runs don't double-count.
         latest_per_adset = {}
-        for p in adset_rows:
+        for p in rows:
             if p.date != last_date:
-                continue
-            key = p.adset_id
-            if key not in latest_per_adset or p.id > latest_per_adset[key].id:
-                latest_per_adset[key] = p
+                break
+            if p.adset_id not in latest_per_adset:
+                latest_per_adset[p.adset_id] = p
         return sum(p.actual_spend or 0 for p in latest_per_adset.values())
-    # CBO
-    cbo_rows = sorted(
-        (p for p in rows if p.adset_id is None),
-        key=lambda r: (r.date or datetime.min.date(), r.id or 0),
+
+    # CBO: most recent campaign-level row
+    row = (
+        PacingData.query
+        .filter_by(campaign_id=campaign.id, adset_id=None)
+        .order_by(PacingData.date.desc(), PacingData.id.desc())
+        .first()
     )
-    return cbo_rows[-1].actual_spend if cbo_rows else None
+    return row.actual_spend if row else None
 
 
 def write_spend_for_account(account_id):
@@ -419,11 +432,46 @@ def write_spend_for_account(account_id):
             "sheet_name": row["name"],
             "mtd_spend": mtd_spend,
             "last_paced": today_str,
+            "row_index": r,
             "match_type": _match_type_label(row["name"], campaign),
         })
 
     if cell_updates:
-        ws.batch_update(cell_updates)
+        # USER_ENTERED lets the Sheets API parse numeric strings correctly and
+        # avoids RAW-mode quirks where Google Sheets can misinterpret the value.
+        ws.batch_update(cell_updates, value_input_option="USER_ENTERED")
+
+        # Stamp column-C spend cells with an explicit 2-decimal number format so
+        # that existing integer-formatted cells don't truncate e.g. 80.41 → 80.
+        if written:
+            format_requests = [
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": ws.id,
+                            "startRowIndex": w["row_index"] - 1,  # 0-based
+                            "endRowIndex": w["row_index"],
+                            "startColumnIndex": 2,  # column C (0-based)
+                            "endColumnIndex": 3,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {
+                                    "type": "NUMBER",
+                                    "pattern": "0.00",
+                                }
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
+                    }
+                }
+                for w in written
+            ]
+            try:
+                ws.spreadsheet.batch_update({"requests": format_requests})
+            except Exception as fmt_err:
+                # Formatting failure is non-fatal — the values are already written.
+                logger.warning("Could not apply number format to spend cells: %s", fmt_err)
 
     return {
         "sheet_tab": tab_name,
