@@ -113,6 +113,59 @@ function AccountDashboard({ user, onLogout }) {
     }
   };
 
+  /** After a successful Meta apply, align lastRun recommendations with new dailies (no /run needed). */
+  const mergeLastRunAfterApply = (results) => {
+    setLastRun((lr) => {
+      if (!lr?.recommendations?.length) return lr;
+      const adsetMap = new Map();
+      const campMap = new Map();
+      for (const r of results || []) {
+        if (r.error || r.skipped || r.applied_new_daily == null) continue;
+        if (r.level === 'adset' && r.campaign_id != null && r.adset_id != null) {
+          adsetMap.set(`${r.campaign_id}:${r.adset_id}`, r.applied_new_daily);
+        } else if (r.level === 'campaign' && r.campaign_id != null) {
+          campMap.set(r.campaign_id, r.applied_new_daily);
+        }
+      }
+      if (!adsetMap.size && !campMap.size) return lr;
+      const recommendations = lr.recommendations.map((rec) => {
+        const cId = rec.campaign_id;
+        if ((rec.budget_mode || 'CBO') === 'ABO') {
+          const adset_level = (rec.adset_level || []).map((a) => {
+            const nv = adsetMap.get(`${cId}:${a.adset_id}`);
+            if (nv == null) return a;
+            return {
+              ...a,
+              current_daily_budget: nv,
+              recommended_daily_budget: nv,
+              change_percent: 0,
+              action: 'ON_PACE',
+            };
+          });
+          return { ...rec, adset_level };
+        }
+        const nv = campMap.get(cId);
+        if (nv == null) return rec;
+        return {
+          ...rec,
+          current_daily_budget: nv,
+          recommended_daily_budget: nv,
+          change_percent: 0,
+          action: 'ON_PACE',
+        };
+      });
+      let adjustments_needed = 0;
+      for (const rec of recommendations) {
+        if ((rec.budget_mode || 'CBO') === 'ABO') {
+          adjustments_needed += (rec.adset_level || []).filter((a) => a.action !== 'ON_PACE').length;
+        } else if (rec.action !== 'ON_PACE') {
+          adjustments_needed += 1;
+        }
+      }
+      return { ...lr, recommendations, adjustments_needed };
+    });
+  };
+
   const handleRunPacing = async () => {
     setPacingRunning(true);
     setError('');
@@ -241,20 +294,25 @@ function AccountDashboard({ user, onLogout }) {
         setError(msg);
         toast.error(msg, { title: 'Apply failed' });
       } else if (failures.length) {
+        if (applied > 0) mergeLastRunAfterApply(results);
+        invalidateCache(`dashboard-${accountId}`, 'home-data');
         toast.warn(
           `${applied} applied; ${failures.length} failed. ${failures[0].error || ''}`,
           { title: 'Partial apply' },
         );
-        fetchAll();
+        fetchAll(true);
       } else if (skipped.length && applied === 0) {
+        invalidateCache(`dashboard-${accountId}`, 'home-data');
         toast.info('No budget changes sent — items were already on pace or unchanged.', { title: 'Nothing to apply' });
-        fetchAll();
+        fetchAll(true);
       } else {
+        mergeLastRunAfterApply(results);
+        invalidateCache(`dashboard-${accountId}`, 'home-data');
         toast.success(
           `${applied} budget change${applied === 1 ? '' : 's'} pushed to Meta.`,
           { title: 'Applied' },
         );
-        fetchAll();
+        fetchAll(true);
       }
     } catch (err) {
       const data = err.response?.data;

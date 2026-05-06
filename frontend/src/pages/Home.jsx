@@ -141,18 +141,21 @@ function Home({ user, onLogout }) {
       } else if (failures.length) {
         setResults((p) => ({ ...p, [rowKey]: { ok: true, partial: true } }));
         toast.warn(failures[0].error || 'Partial apply', { title: 'Apply warning' });
-        fetchAll();
+        invalidateCache('home-data');
+        fetchAll(true);
       } else if (skipped.length && applied === 0) {
         setResults((p) => ({ ...p, [rowKey]: { ok: true, noop: true } }));
         toast.info('No change sent — already on pace or unchanged.', { title: 'Apply' });
-        fetchAll();
+        invalidateCache('home-data');
+        fetchAll(true);
       } else {
         setResults((p) => ({ ...p, [rowKey]: { ok: true } }));
         toast.success(
           `Pushed new daily of $${(adjustment.recommended_daily_budget || 0).toFixed(2)} to Meta.`,
           { title: 'Applied' },
         );
-        fetchAll();
+        invalidateCache('home-data');
+        fetchAll(true);
       }
     } catch (err) {
       const d = err.response?.data;

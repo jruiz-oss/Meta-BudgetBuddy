@@ -68,6 +68,22 @@ def _month_bounds(today):
     return month_start, month_end
 
 
+def _patch_latest_pacing_after_apply(campaign_id: int, adset_local_id, new_daily: float) -> None:
+    """Sync the newest PacingData snapshot to Meta so the UI updates without re-running /run."""
+    q = PacingData.query.filter_by(campaign_id=campaign_id)
+    if adset_local_id is not None:
+        q = q.filter_by(adset_id=adset_local_id)
+    else:
+        q = q.filter(PacingData.adset_id.is_(None))
+    row = q.order_by(PacingData.date.desc(), PacingData.id.desc()).first()
+    if row is None:
+        return
+    row.current_daily_budget = float(new_daily)
+    row.recommended_daily_budget = float(new_daily)
+    row.status = "ON_PACE"
+    row.change_percent = 0.0
+
+
 def _campaign_should_run_today(campaign, today):
     """Apply ALWAYS_ON / LIMITED flight logic."""
     if campaign.flight_type == "ALWAYS_ON":
@@ -682,6 +698,7 @@ def apply_recommendations(account_id):
                 reason=adj.get("action", "ADJUST"),
                 applied_by=user.email,
             ))
+            _patch_latest_pacing_after_apply(owning_campaign.id, adset.id, new_daily)
 
             results.append({
                 "level": "adset",
@@ -751,6 +768,7 @@ def apply_recommendations(account_id):
             reason=adj.get("action", "ADJUST"),
             applied_by=user.email,
         ))
+        _patch_latest_pacing_after_apply(campaign.id, None, new_daily)
 
         results.append({
             "level": "campaign",
