@@ -343,6 +343,9 @@ class AccountSettings(db.Model):
     pace_tolerance_percent = db.Column(db.Float, default=5.0)
     auto_adjust_enabled = db.Column(db.Boolean, default=False)
     google_sheet_id = db.Column(db.String(500), nullable=True)
+    # Send the user a digest email after each automated pacing run for this account.
+    # Default off — opt-in only, since SMTP credentials are also opt-in on the server.
+    daily_digest_enabled = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -354,5 +357,6 @@ class AccountSettings(db.Model):
             'pace_tolerance_percent': self.pace_tolerance_percent,
             'auto_adjust_enabled': self.auto_adjust_enabled,
             'google_sheet_id': self.google_sheet_id or '',
+            'daily_digest_enabled': bool(self.daily_digest_enabled),
             'created_at': self.created_at.isoformat()
         }

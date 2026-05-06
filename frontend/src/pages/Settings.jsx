@@ -1,11 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
+import {
+  LogOut, Save, Eye, ArrowDownToLine, ArrowUpFromLine, Loader2,
+  SlidersHorizontal, Calendar, FileSpreadsheet, Mail, Inbox,
+} from 'lucide-react';
 import Sidebar from '../components/Sidebar';
+import { SkeletonCard } from '../components/Skeleton';
+import { EmptyState } from '../components/EmptyState';
+import { useToast } from '../components/Toast';
 
 function Settings({ user, onLogout }) {
   const { accountId } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [accounts, setAccounts] = useState([]);
   const [activeTab, setActiveTab] = useState('pacing');
@@ -13,17 +21,13 @@ function Settings({ user, onLogout }) {
   const [flights, setFlights] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
 
-  // Google Sheets state
   const [sheetUrl, setSheetUrl] = useState('');
   const [sheetSaving, setSheetSaving] = useState(false);
   const [sheetPreview, setSheetPreview] = useState(null);
   const [sheetPreviewLoading, setSheetPreviewLoading] = useState(false);
   const [sheetSyncLoading, setSheetSyncLoading] = useState(false);
   const [sheetWriteLoading, setSheetWriteLoading] = useState(false);
-
-  // ── Data loading ─────────────────────────────────────────────────────────
 
   const fetchData = useCallback(async () => {
     try {
@@ -47,36 +51,33 @@ function Settings({ user, onLogout }) {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // ── Pacing settings ───────────────────────────────────────────────────────
-
   const handleSettingsChange = (field, value) => {
     setSettings({ ...settings, [field]: value });
   };
 
   const handleSaveSettings = async () => {
-    setError(''); setSuccess('');
+    setError('');
     try {
-      // auto_adjust_enabled was never wired to any apply path, so the toggle was misleading.
-      // The app applies recommendations manually only — see the dashboard's Apply button.
       await axios.put(`/api/settings/${accountId}`, {
         min_daily_budget: parseFloat(settings.min_daily_budget),
         max_daily_change_percent: parseFloat(settings.max_daily_change_percent),
         pace_tolerance_percent: parseFloat(settings.pace_tolerance_percent),
+        daily_digest_enabled: !!settings.daily_digest_enabled,
       });
-      setSuccess('Settings saved.');
+      toast.success('Settings saved.');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save settings');
+      const msg = err.response?.data?.error || 'Failed to save settings';
+      setError(msg);
+      toast.error(msg);
     }
   };
-
-  // ── Flight settings ───────────────────────────────────────────────────────
 
   const handleFlightChange = (flightId, field, value) => {
     setFlights(flights.map((f) => (f.id === flightId ? { ...f, [field]: value } : f)));
   };
 
   const handleSaveFlights = async () => {
-    setError(''); setSuccess('');
+    setError('');
     try {
       const updates = flights.map((f) => ({
         id: f.id,
@@ -85,79 +86,83 @@ function Settings({ user, onLogout }) {
         flight_end_date: f.flight_end_date,
       }));
       await axios.put(`/api/settings/${accountId}/flights/batch`, { updates });
-      setSuccess('Flight settings updated.');
+      toast.success('Flight settings updated.');
       fetchData();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update flights');
+      const msg = err.response?.data?.error || 'Failed to update flights';
+      setError(msg);
+      toast.error(msg);
     }
   };
 
-  // ── Google Sheets handlers ────────────────────────────────────────────────
-
   const handleSaveSheetUrl = async () => {
-    setError(''); setSuccess('');
+    setError('');
     setSheetSaving(true);
     try {
       await axios.put(`/api/sheets/${accountId}/config`, { google_sheet_id: sheetUrl });
-      setSuccess('Sheet URL saved.');
+      toast.success('Sheet URL saved.');
       setSheetPreview(null);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save Sheet URL');
+      const msg = err.response?.data?.error || 'Failed to save Sheet URL';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSheetSaving(false);
     }
   };
 
   const handlePreviewSheet = async () => {
-    setError(''); setSuccess('');
+    setError('');
     setSheetPreviewLoading(true);
     setSheetPreview(null);
     try {
       const res = await axios.get(`/api/sheets/${accountId}/preview`);
       setSheetPreview(res.data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to preview sheet');
+      const msg = err.response?.data?.error || 'Failed to preview sheet';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSheetPreviewLoading(false);
     }
   };
 
   const handleSyncBudgets = async () => {
-    setError(''); setSuccess('');
+    setError('');
     setSheetSyncLoading(true);
     try {
       const res = await axios.post(`/api/sheets/${accountId}/sync-budgets`);
-      setSuccess(`${res.data.message} (${res.data.skipped_count} skipped).`);
+      toast.success(`${res.data.message} (${res.data.skipped_count} skipped).`);
       setSheetPreview(null);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to sync budgets');
+      const msg = err.response?.data?.error || 'Failed to sync budgets';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSheetSyncLoading(false);
     }
   };
 
   const handleWriteSpend = async () => {
-    setError(''); setSuccess('');
+    setError('');
     setSheetWriteLoading(true);
     try {
       const res = await axios.post(`/api/sheets/${accountId}/write-spend`);
-      setSuccess(`${res.data.message} (${res.data.skipped_count} skipped).`);
+      toast.success(`${res.data.message} (${res.data.skipped_count} skipped).`);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to write spend to sheet');
+      const msg = err.response?.data?.error || 'Failed to write spend to sheet';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSheetWriteLoading(false);
     }
   };
 
-  // ── Auth ──────────────────────────────────────────────────────────────────
-
   const handleLogout = async () => {
-    try { await axios.post('/api/auth/logout'); } catch { /* ignore */ }
+    try { await axios.post('/api/auth/logout'); } catch {}
     onLogout();
     navigate('/login');
   };
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
 
   const flightStatusPill = (status) => {
     const s = (status || '').toLowerCase();
@@ -174,50 +179,43 @@ function Settings({ user, onLogout }) {
     return <span className="bb-pill bb-pill-down">No match</span>;
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
   return (
     <div className="bb-app">
       <Sidebar user={user} accounts={accounts} />
 
       <main className="bb-main">
-        {/* Breadcrumb */}
         <div className="bb-breadcrumb">
           <Link to="/">Home</Link>{' / '}
           <Link to={`/account/${accountId}`}>Dashboard</Link>{' / Settings'}
         </div>
 
-        {/* Page header */}
         <div className="bb-row-between" style={{ marginBottom: 18 }}>
           <div>
             <div className="bb-page-title">Account Settings</div>
             <div className="bb-page-subtitle">Pacing parameters, campaign flights, and Google Sheets sync.</div>
           </div>
-          <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>Log out</button>
+          <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
+            <LogOut size={14} aria-hidden="true" /> Log out
+          </button>
         </div>
 
-        {/* Alerts */}
-        {error   && <div className="bb-alert bb-alert-error">{error}</div>}
-        {success && <div className="bb-alert bb-alert-success">{success}</div>}
+        {error && <div className="bb-alert bb-alert-error">{error}</div>}
 
-        {/* Tabs */}
         <div className="bb-tabs">
           <button className={`bb-tab-btn ${activeTab === 'pacing'  ? 'is-active' : ''}`} onClick={() => setActiveTab('pacing')}>
-            Pacing Parameters
+            <SlidersHorizontal size={14} aria-hidden="true" /> Pacing Parameters
           </button>
           <button className={`bb-tab-btn ${activeTab === 'flights' ? 'is-active' : ''}`} onClick={() => setActiveTab('flights')}>
-            Campaign Flights
+            <Calendar size={14} aria-hidden="true" /> Campaign Flights
           </button>
           <button className={`bb-tab-btn ${activeTab === 'sheets'  ? 'is-active' : ''}`} onClick={() => setActiveTab('sheets')}>
-            Google Sheets
+            <FileSpreadsheet size={14} aria-hidden="true" /> Google Sheets
           </button>
         </div>
 
-        {/* ── Tab: loading ── */}
         {loading ? (
-          <div className="bb-card bb-section bb-muted">Loading…</div>
+          <SkeletonCard height={320} />
 
-        /* ── Tab: Pacing Parameters ── */
         ) : activeTab === 'pacing' && settings ? (
           <div className="bb-card">
             <div className="bb-section">
@@ -232,8 +230,7 @@ function Settings({ user, onLogout }) {
                 <div className="bb-form-group">
                   <label className="bb-form-label">Minimum Daily Budget</label>
                   <input
-                    type="number"
-                    className="bb-input"
+                    type="number" className="bb-input"
                     value={settings.min_daily_budget ?? 0}
                     onChange={(e) => handleSettingsChange('min_daily_budget', e.target.value)}
                     step="0.01" min="0"
@@ -244,8 +241,7 @@ function Settings({ user, onLogout }) {
                 <div className="bb-form-group">
                   <label className="bb-form-label">Max Daily Change (%)</label>
                   <input
-                    type="number"
-                    className="bb-input"
+                    type="number" className="bb-input"
                     value={settings.max_daily_change_percent ?? 25}
                     onChange={(e) => handleSettingsChange('max_daily_change_percent', e.target.value)}
                     step="0.1" min="0" max="100"
@@ -256,13 +252,31 @@ function Settings({ user, onLogout }) {
                 <div className="bb-form-group">
                   <label className="bb-form-label">Pace Tolerance (%)</label>
                   <input
-                    type="number"
-                    className="bb-input"
+                    type="number" className="bb-input"
                     value={settings.pace_tolerance_percent ?? 5}
                     onChange={(e) => handleSettingsChange('pace_tolerance_percent', e.target.value)}
                     step="0.1" min="0" max="100"
                   />
                   <span className="bb-form-help">Campaigns within ±X% of ideal pace are "on pace".</span>
+                </div>
+              </div>
+
+              {/* Daily digest toggle — works only when SMTP env vars are set on the backend. */}
+              <div style={{ marginTop: 8, padding: '12px 14px', background: '#f9fafb', border: '1px solid var(--bb-border)', borderRadius: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!settings.daily_digest_enabled}
+                    onChange={(e) => handleSettingsChange('daily_digest_enabled', e.target.checked)}
+                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  />
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 13 }}>
+                    <Mail size={14} aria-hidden="true" /> Email me a daily pacing digest
+                  </span>
+                </label>
+                <div className="bb-muted" style={{ fontSize: 12, marginTop: 4, marginLeft: 26 }}>
+                  After each automated pacing run, send a summary to <strong>{user?.email}</strong> with
+                  campaigns that need adjusting. Requires SMTP to be configured on the server.
                 </div>
               </div>
 
@@ -273,13 +287,12 @@ function Settings({ user, onLogout }) {
 
               <div style={{ marginTop: 16 }}>
                 <button className="bb-btn bb-btn-primary" onClick={handleSaveSettings}>
-                  Save settings
+                  <Save size={14} aria-hidden="true" /> Save settings
                 </button>
               </div>
             </div>
           </div>
 
-        /* ── Tab: Campaign Flights ── */
         ) : activeTab === 'flights' ? (
           <div className="bb-card">
             <div className="bb-section">
@@ -291,7 +304,11 @@ function Settings({ user, onLogout }) {
               </div>
 
               {flights.length === 0 ? (
-                <div className="bb-muted">No campaigns to configure yet. Import some from the dashboard first.</div>
+                <EmptyState
+                  icon={Inbox}
+                  title="No campaigns to configure yet"
+                  body="Import some campaigns from the dashboard first."
+                />
               ) : (
                 <table className="bb-table">
                   <thead>
@@ -348,18 +365,15 @@ function Settings({ user, onLogout }) {
               {flights.length > 0 && (
                 <div style={{ marginTop: 16 }}>
                   <button className="bb-btn bb-btn-primary" onClick={handleSaveFlights}>
-                    Save flight settings
+                    <Save size={14} aria-hidden="true" /> Save flight settings
                   </button>
                 </div>
               )}
             </div>
           </div>
 
-        /* ── Tab: Google Sheets ── */
         ) : activeTab === 'sheets' ? (
           <div className="bb-card">
-
-            {/* Setup section */}
             <div className="bb-section">
               <div style={{ marginBottom: 16 }}>
                 <div className="bb-section-title">Google Sheets Connection</div>
@@ -368,14 +382,12 @@ function Settings({ user, onLogout }) {
                 </div>
               </div>
 
-              {/* Info callout */}
               <div className="bb-alert bb-alert-info" style={{ marginBottom: 16 }}>
                 <strong>Before you start:</strong> Make sure the service account email from your Google Cloud credentials
                 has been added as an <strong>Editor</strong> on the sheet, and that
                 {' '}<code>GOOGLE_CREDENTIALS_JSON</code> is set as an environment variable on Railway.
               </div>
 
-              {/* Sheet URL input + buttons */}
               <div className="bb-form-group" style={{ maxWidth: 580 }}>
                 <label className="bb-form-label">Sheet URL or ID</label>
                 <input
@@ -396,6 +408,7 @@ function Settings({ user, onLogout }) {
                   onClick={handleSaveSheetUrl}
                   disabled={sheetSaving || !sheetUrl.trim()}
                 >
+                  {sheetSaving ? <Loader2 size={14} className="bb-i" /> : <Save size={14} aria-hidden="true" />}
                   {sheetSaving ? 'Saving…' : 'Save URL'}
                 </button>
                 <button
@@ -403,15 +416,14 @@ function Settings({ user, onLogout }) {
                   onClick={handlePreviewSheet}
                   disabled={sheetPreviewLoading || !sheetUrl.trim()}
                 >
+                  {sheetPreviewLoading ? <Loader2 size={14} className="bb-i" /> : <Eye size={14} aria-hidden="true" />}
                   {sheetPreviewLoading ? 'Loading…' : 'Preview Matches'}
                 </button>
               </div>
             </div>
 
-            {/* Preview table — only shown after a successful preview */}
             {sheetPreview && (
               <div className="bb-section" style={{ borderTop: '1px solid var(--bb-divider)' }}>
-                {/* Summary row */}
                 <div className="bb-row-between" style={{ marginBottom: 14 }}>
                   <div>
                     <div className="bb-section-title">Match Preview — {sheetPreview.sheet_tab}</div>
@@ -425,7 +437,6 @@ function Settings({ user, onLogout }) {
                     </div>
                   </div>
 
-                  {/* Action buttons sit top-right of the preview block */}
                   <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                     <button
                       className="bb-btn bb-btn-primary"
@@ -433,7 +444,8 @@ function Settings({ user, onLogout }) {
                       disabled={sheetSyncLoading}
                       title="Read column B budgets from sheet → update DB campaigns"
                     >
-                      {sheetSyncLoading ? 'Syncing…' : '↓ Sync Budgets'}
+                      {sheetSyncLoading ? <Loader2 size={14} className="bb-i" /> : <ArrowDownToLine size={14} aria-hidden="true" />}
+                      {sheetSyncLoading ? 'Syncing…' : 'Sync Budgets'}
                     </button>
                     <button
                       className="bb-btn bb-btn-secondary"
@@ -441,7 +453,8 @@ function Settings({ user, onLogout }) {
                       disabled={sheetWriteLoading}
                       title="Write MTD spend to col C and today's date to col G"
                     >
-                      {sheetWriteLoading ? 'Writing…' : '↑ Write Spend'}
+                      {sheetWriteLoading ? <Loader2 size={14} className="bb-i" /> : <ArrowUpFromLine size={14} aria-hidden="true" />}
+                      {sheetWriteLoading ? 'Writing…' : 'Write Spend'}
                     </button>
                   </div>
                 </div>

@@ -1,7 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from sqlalchemy import text
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -110,6 +110,35 @@ def unauthorized(error):
 def health():
     return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()}), 200
 
+
+@app.route('/api/cron/run-all-accounts', methods=['POST'])
+def cron_run_all_accounts():
+    """Manual trigger for the same job APScheduler runs on a schedule.
+
+    Protected by a shared-secret header — set CRON_SECRET on Railway and pass
+    it via X-Cron-Secret in the cron job request. Useful when:
+      - APScheduler isn't running (eg. on a platform that hibernates the dyno)
+      - You want to run pacing + send digests on demand
+      - You're using Railway cron / GitHub Actions / Vercel cron / cron-job.org
+
+    Returns 200 once the job finishes (synchronous, may take a while). The job
+    itself acquires a Postgres advisory lock so concurrent requests are safe —
+    later callers see "another worker holds the lock" and exit immediately.
+    """
+    expected = os.getenv('CRON_SECRET')
+    if not expected:
+        return jsonify({'error': 'CRON_SECRET not configured on the server'}), 503
+    provided = request.headers.get('X-Cron-Secret') or request.args.get('secret')
+    if provided != expected:
+        return jsonify({'error': 'forbidden'}), 403
+
+    try:
+        _scheduled_pacing_job()
+    except Exception as e:
+        logging.exception("Manual cron trigger failed")
+        return jsonify({'error': 'job failed', 'detail': str(e)}), 500
+    return jsonify({'status': 'ok', 'ran_at': datetime.utcnow().isoformat()}), 200
+
 # Create tables on startup.
 # Uses a PostgreSQL advisory lock so only one gunicorn worker runs create_all —
 # otherwise two workers boot simultaneously, both try to CREATE TABLE, and one
@@ -155,7 +184,7 @@ def _scheduled_pacing_job():
 
         try:
             from database import (
-                Account, AccountSettings, Campaign, AdSet,
+                Account, AccountSettings, Campaign, AdSet, User,
                 PacingData, PacingRun,
             )
             from meta_client import MetaClient, MetaAPIError
@@ -173,6 +202,9 @@ def _scheduled_pacing_job():
             # run would store rows dated to the last day of the previous month).
             snapshot_date = max(month_start, yesterday)
 
+            # Per-user digest accumulator: { user_id: [account_summary, ...] }
+            digest_buckets = {}
+
             accounts = Account.query.all()
             for account in accounts:
                 settings = AccountSettings.query.filter_by(account_id=account.id).first()
@@ -189,6 +221,9 @@ def _scheduled_pacing_job():
                 campaigns = Campaign.query.filter_by(account_id=account.id, is_active=True).all()
                 included = [c for c in campaigns if _campaign_should_run_today(c, today)]
                 adjustments_needed = 0
+                # Off-pace items for the digest (only collected if this account has
+                # daily_digest_enabled, but we always build the list — the send happens later).
+                off_pace_items = []
 
                 for campaign in included:
                     if not campaign.meta_campaign_id:
@@ -240,6 +275,18 @@ def _scheduled_pacing_job():
                             ))
                             if action != 'ON_PACE':
                                 adjustments_needed += 1
+                                off_pace_items.append({
+                                    "campaign_name": campaign.campaign_name,
+                                    "adset_name": adset.adset_name,
+                                    "level": "ad set",
+                                    "actual_spend": actual_spend,
+                                    "expected_spend": expected_mtd,
+                                    "pace_ratio": pace_ratio,
+                                    "current_daily": display_current,
+                                    "recommended_daily": new_daily,
+                                    "change_percent": change_pct,
+                                    "action": action,
+                                })
                     else:
                         try:
                             actual_spend = meta.get_campaign_spend(
@@ -283,6 +330,18 @@ def _scheduled_pacing_job():
                         ))
                         if action != 'ON_PACE':
                             adjustments_needed += 1
+                            off_pace_items.append({
+                                "campaign_name": campaign.campaign_name,
+                                "adset_name": None,
+                                "level": "campaign",
+                                "actual_spend": actual_spend,
+                                "expected_spend": expected_mtd,
+                                "pace_ratio": pace_ratio,
+                                "current_daily": cbo_display_current,
+                                "recommended_daily": new_daily,
+                                "change_percent": change_pct,
+                                "action": action,
+                            })
 
                 db.session.add(PacingRun(
                     account_id=account.id,
@@ -293,8 +352,43 @@ def _scheduled_pacing_job():
                     status='COMPLETED',
                 ))
 
+                # If this account has the digest enabled, accumulate into the user's bucket.
+                if settings.daily_digest_enabled:
+                    digest_buckets.setdefault(account.user_id, []).append({
+                        "account_name": account.account_name,
+                        "campaigns_processed": len(included),
+                        "adjustments_needed": adjustments_needed,
+                        "off_pace": off_pace_items,
+                    })
+
             db.session.commit()
             logging.info("Scheduled pacing run completed at %s UTC", datetime.utcnow().isoformat())
+
+            # ── Send digest emails ──
+            # Best-effort: a single bad recipient must not block the next user's email
+            # or the Sheets write-back step that follows.
+            try:
+                from email_service import build_digest, send_digest, smtp_configured
+                if not smtp_configured():
+                    if digest_buckets:
+                        logging.info(
+                            "Daily digest skipped — SMTP not configured (would have emailed %s users).",
+                            len(digest_buckets),
+                        )
+                else:
+                    for user_id, account_summaries in digest_buckets.items():
+                        user = User.query.get(user_id)
+                        if not user or not user.email:
+                            continue
+                        subject, html, text_body = build_digest(user.email, account_summaries)
+                        if subject is None:
+                            continue  # nothing to report
+                        try:
+                            send_digest(user.email, subject, html, text_body)
+                        except Exception:
+                            logging.exception("Digest send failed for user %s", user_id)
+            except Exception:
+                logging.exception("Digest email step crashed; continuing.")
 
             # After pacing data is committed, push MTD spend back to each account's
             # Google Sheet. Best-effort per account so a single bad sheet doesn't break

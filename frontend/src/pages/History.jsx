@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
+import {
+  LogOut, History as HistoryIcon, ListChecks, TrendingUp, TrendingDown, Minus, Inbox,
+} from 'lucide-react';
 import Sidebar from '../components/Sidebar';
+import { SkeletonStatTile, SkeletonTable } from '../components/Skeleton';
+import { EmptyState } from '../components/EmptyState';
 
 function History({ user, onLogout }) {
   const { accountId } = useParams();
@@ -15,7 +20,6 @@ function History({ user, onLogout }) {
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState('');
 
-  // Filters
   const [runTypeFilter, setRunTypeFilter] = useState('all');
 
   const fetchData = useCallback(async () => {
@@ -45,12 +49,10 @@ function History({ user, onLogout }) {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleLogout = async () => {
-    try { await axios.post('/api/auth/logout'); } catch { /* ignore */ }
+    try { await axios.post('/api/auth/logout'); } catch {}
     onLogout();
     navigate('/login');
   };
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
 
   const formatDate = (iso) => {
     if (!iso) return '—';
@@ -74,39 +76,38 @@ function History({ user, onLogout }) {
     return <span className="bb-pill bb-pill-muted">{status || '—'}</span>;
   };
 
-  // ── Derived data ──────────────────────────────────────────────────────────
-
   const filteredRuns = runs.filter((r) => {
     if (runTypeFilter === 'all') return true;
     return (r.run_type || '').toUpperCase() === runTypeFilter;
   });
-
-  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="bb-app">
       <Sidebar user={user} accounts={accounts} />
 
       <main className="bb-main">
-        {/* Breadcrumb */}
         <div className="bb-breadcrumb">
           <Link to="/">Home</Link>{' / '}
           <Link to={`/account/${accountId}`}>Dashboard</Link>{' / History'}
         </div>
 
-        {/* Page header */}
         <div className="bb-row-between" style={{ marginBottom: 18 }}>
           <div>
             <div className="bb-page-title">Activity History</div>
             <div className="bb-page-subtitle">Pacing runs and budget adjustments for this account.</div>
           </div>
-          <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>Log out</button>
+          <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
+            <LogOut size={14} aria-hidden="true" /> Log out
+          </button>
         </div>
 
         {error && <div className="bb-alert bb-alert-error">{error}</div>}
 
-        {/* Summary stat tiles */}
-        {summary && (
+        {loading && !summary ? (
+          <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
+            <SkeletonStatTile /><SkeletonStatTile /><SkeletonStatTile /><SkeletonStatTile />
+          </div>
+        ) : summary && (
           <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
             <div className="bb-stat">
               <span className="bb-stat-label">Total Runs</span>
@@ -127,32 +128,29 @@ function History({ user, onLogout }) {
           </div>
         )}
 
-        {/* Tabs */}
         <div className="bb-tabs">
           <button
             className={`bb-tab-btn ${activeTab === 'runs' ? 'is-active' : ''}`}
             onClick={() => setActiveTab('runs')}
           >
-            Pacing Runs
+            <HistoryIcon size={14} aria-hidden="true" /> Pacing Runs
           </button>
           <button
             className={`bb-tab-btn ${activeTab === 'adjustments' ? 'is-active' : ''}`}
             onClick={() => setActiveTab('adjustments')}
           >
-            Budget Adjustments
+            <ListChecks size={14} aria-hidden="true" /> Budget Adjustments
           </button>
         </div>
 
         {loading ? (
-          <div className="bb-card bb-section bb-muted">Loading…</div>
+          <SkeletonTable rows={6} cols={6} />
 
-        /* ── Pacing Runs tab ── */
         ) : activeTab === 'runs' ? (
           <div className="bb-card">
             <div className="bb-section" style={{ paddingBottom: 0 }}>
               <div className="bb-row-between" style={{ marginBottom: 12 }}>
                 <div className="bb-section-title">Pacing Run History</div>
-                {/* Filter pills */}
                 <div className="bb-row" style={{ gap: 6 }}>
                   {[['all', 'All'], ['MANUAL', 'Manual'], ['AUTO', 'Auto']].map(([val, label]) => (
                     <button
@@ -168,7 +166,11 @@ function History({ user, onLogout }) {
             </div>
 
             {filteredRuns.length === 0 ? (
-              <div className="bb-section bb-muted" style={{ paddingTop: 0 }}>No pacing runs yet.</div>
+              <EmptyState
+                icon={Inbox}
+                title="No pacing runs yet"
+                body="Run pacing from the dashboard to populate this history."
+              />
             ) : (
               <table className="bb-table">
                 <thead>
@@ -197,7 +199,6 @@ function History({ user, onLogout }) {
             )}
           </div>
 
-        /* ── Budget Adjustments tab ── */
         ) : (
           <div className="bb-card">
             <div className="bb-section" style={{ paddingBottom: 0 }}>
@@ -205,7 +206,11 @@ function History({ user, onLogout }) {
             </div>
 
             {adjustments.length === 0 ? (
-              <div className="bb-section bb-muted" style={{ paddingTop: 0 }}>No adjustments yet.</div>
+              <EmptyState
+                icon={Inbox}
+                title="No budget adjustments yet"
+                body="When you apply a recommendation, it will be logged here."
+              />
             ) : (
               <table className="bb-table">
                 <thead>
@@ -223,6 +228,7 @@ function History({ user, onLogout }) {
                   {adjustments.map((adj) => {
                     const up   = adj.change_percent > 0;
                     const flat = Math.abs(adj.change_percent || 0) < 0.5;
+                    const Icon = flat ? Minus : up ? TrendingUp : TrendingDown;
                     return (
                       <tr
                         key={adj.id}
@@ -234,7 +240,8 @@ function History({ user, onLogout }) {
                         <td className="num">${(adj.new_budget || 0).toFixed(2)}</td>
                         <td>
                           <span className={`bb-change ${flat ? 'bb-change-flat' : up ? 'bb-change-up' : 'bb-change-down'}`}>
-                            {up ? '↗ +' : flat ? '' : '↘ '}{(adj.change_percent || 0).toFixed(1)}%
+                            <Icon size={11} aria-hidden="true" />
+                            {up ? '+' : ''}{(adj.change_percent || 0).toFixed(1)}%
                           </span>
                         </td>
                         <td className="bb-muted" style={{ fontSize: 12 }}>{adj.applied_by || '—'}</td>

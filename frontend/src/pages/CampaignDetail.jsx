@@ -1,30 +1,40 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
+import {
+  Play, Check, X, LogOut, ArrowLeft, Loader2, TrendingUp, TrendingDown,
+  Minus, RotateCcw,
+} from 'lucide-react';
 import Sidebar from '../components/Sidebar';
+import { SkeletonStatTile, SkeletonCard } from '../components/Skeleton';
+import SpendChart from '../components/SpendChart';
+import { useToast } from '../components/Toast';
 import './DetailPages.css';
 
 function CampaignDetail({ user, onLogout }) {
   const { campaignId, accountId } = useParams();
+  const toast = useToast();
+
   const [accounts, setAccounts]       = useState([]);
   const [campaign, setCampaign]       = useState(null);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState('');
   const [applying, setApplying]       = useState(false);
-  const [applyResult, setApplyResult] = useState(null);
   const [rejected, setRejected]       = useState(false);
   const [pacingRunning, setPacingRunning] = useState(false);
-  const [pacingResult,  setPacingResult]  = useState(null);
+
+  // Pacing history (for the spend chart)
+  const [history, setHistory] = useState([]);
 
   // Per-adset apply/reject (ABO only)
-  const [adsetApplying,  setAdsetApplying]  = useState({});  // { [adset_id]: bool }
-  const [adsetRejected,  setAdsetRejected]  = useState({});  // { [adset_id]: bool }
-  const [adsetResults,   setAdsetResults]   = useState({});  // { [adset_id]: {ok,msg} }
+  const [adsetApplying,  setAdsetApplying]  = useState({});
+  const [adsetRejected,  setAdsetRejected]  = useState({});
+  const [adsetResults,   setAdsetResults]   = useState({});
 
   // Ad set allocation editing
   const [editingAdsets, setEditingAdsets]   = useState(false);
-  const [adsetMode, setAdsetMode]           = useState('pct');   // 'pct' | 'daily'
-  const [adsetDrafts, setAdsetDrafts]       = useState({});      // { [adset_id]: string }
+  const [adsetMode, setAdsetMode]           = useState('pct');
+  const [adsetDrafts, setAdsetDrafts]       = useState({});
   const [adsetSaving, setAdsetSaving]       = useState(false);
   const [adsetError, setAdsetError]         = useState('');
 
@@ -33,14 +43,15 @@ function CampaignDetail({ user, onLogout }) {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [accountsRes, campaignRes] = await Promise.all([
+      const [accountsRes, campaignRes, historyRes] = await Promise.all([
         axios.get('/api/accounts'),
         axios.get(`/api/campaigns/${accountId}/${campaignId}`),
+        axios.get(`/api/campaigns/${accountId}/${campaignId}/pacing-history`).catch(() => ({ data: { history: [] } })),
       ]);
       setAccounts(accountsRes.data.accounts || accountsRes.data || []);
       setCampaign(campaignRes.data.campaign || campaignRes.data);
+      setHistory(historyRes.data?.history || []);
       setRejected(false);
-      setApplyResult(null);
     } catch {
       setError('Failed to load campaign data');
     } finally {
@@ -67,7 +78,6 @@ function CampaignDetail({ user, onLogout }) {
     if (mode === 'ABO') {
       (campaign.adsets || []).forEach((a) => {
         const alp = a.latest_pacing;
-        // AdSet.latest_pacing comes from PacingData.to_dict() which exposes `status`, not `action`.
         const aStatus = (alp?.status || '').toUpperCase();
         if (!alp || aStatus === 'ON_PACE') return;
         adjustments.push({
@@ -83,8 +93,6 @@ function CampaignDetail({ user, onLogout }) {
         });
       });
     } else {
-      // CBO: campaign.latest_pacing comes from Campaign.to_dict() → PacingData.to_dict(),
-      // which exposes the field as `status` (not `action`).
       const cboStatus = (lp.status || '').toUpperCase();
       if (cboStatus !== 'ON_PACE') {
         adjustments.push({
@@ -100,26 +108,29 @@ function CampaignDetail({ user, onLogout }) {
     }
 
     if (adjustments.length === 0) {
-      setApplyResult({ message: 'Already on pace — nothing to apply.' });
+      toast.info('Already on pace — nothing to apply.');
       setApplying(false);
       return;
     }
 
     try {
       const res = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments });
-      setApplyResult(res.data);
+      toast.success(
+        `${res.data.applied_count || adjustments.length} budget change${adjustments.length === 1 ? '' : 's'} pushed to Meta.`,
+        { title: 'Applied' }
+      );
       fetchData();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to apply recommendation');
+      const msg = err.response?.data?.error || 'Failed to apply recommendation';
+      setError(msg);
+      toast.error(msg, { title: 'Apply failed' });
     } finally {
       setApplying(false);
     }
   };
 
-  // ── run pacing for this campaign only ────────────────────
   const handleRunPacing = async () => {
     setPacingRunning(true);
-    setPacingResult(null);
     setAdsetApplying({});
     setAdsetRejected({});
     setAdsetResults({});
@@ -128,16 +139,15 @@ function CampaignDetail({ user, onLogout }) {
         run_type: 'MANUAL',
         campaign_id: campaignId,
       });
-      await fetchData();   // refresh ad set pacing data from DB
-      setPacingResult({ ok: true, msg: 'Pacing updated.' });
+      await fetchData();
+      toast.success('Pacing updated for this campaign.');
     } catch (err) {
-      setPacingResult({ ok: false, msg: err.response?.data?.error || 'Pacing run failed' });
+      toast.error(err.response?.data?.error || 'Pacing run failed');
     } finally {
       setPacingRunning(false);
     }
   };
 
-  // ── per-adset apply (ABO) ────────────────────────────────
   const handleApplyAdset = async (adset) => {
     const alp = adset.latest_pacing;
     if (!alp || adsetApplying[adset.id]) return;
@@ -160,23 +170,21 @@ function CampaignDetail({ user, onLogout }) {
     try {
       await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: [adjustment] });
       setAdsetResults((p) => ({ ...p, [adset.id]: { ok: true, msg: `Applied — new daily: $${(alp.recommended_daily_budget || 0).toFixed(2)}` } }));
+      toast.success(`${adset.adset_name}: pushed new daily of $${(alp.recommended_daily_budget || 0).toFixed(2)} to Meta.`);
       fetchData();
     } catch (err) {
-      setAdsetResults((p) => ({ ...p, [adset.id]: { ok: false, msg: err.response?.data?.error || 'Failed to apply' } }));
+      const msg = err.response?.data?.error || 'Failed to apply';
+      setAdsetResults((p) => ({ ...p, [adset.id]: { ok: false, msg } }));
+      toast.error(msg, { title: 'Apply failed' });
     } finally {
       setAdsetApplying((p) => ({ ...p, [adset.id]: false }));
     }
   };
 
-  const handleRejectAdset = (adsetId) =>
-    setAdsetRejected((p) => ({ ...p, [adsetId]: true }));
+  const handleRejectAdset = (adsetId) => setAdsetRejected((p) => ({ ...p, [adsetId]: true }));
+  const handleUndoRejectAdset = (adsetId) => setAdsetRejected((p) => ({ ...p, [adsetId]: false }));
 
-  const handleUndoRejectAdset = (adsetId) =>
-    setAdsetRejected((p) => ({ ...p, [adsetId]: false }));
-
-  // ── adset allocation editing ─────────────────────────────
   const enterEditMode = () => {
-    // Seed drafts from current allocation_pct values.
     const drafts = {};
     (campaign?.adsets || []).forEach((a) => {
       drafts[a.id] = String((a.allocation_pct || 0).toFixed(2));
@@ -193,7 +201,6 @@ function CampaignDetail({ user, onLogout }) {
     setAdsetError('');
   };
 
-  // Convert all drafts between % and $/day when toggling mode.
   const toggleAdsetMode = (newMode) => {
     if (newMode === adsetMode) return;
     const monthly = campaign?.monthly_budget || 0;
@@ -203,10 +210,8 @@ function CampaignDetail({ user, onLogout }) {
       const raw = parseFloat(adsetDrafts[a.id]);
       if (!Number.isFinite(raw)) { converted[a.id] = ''; return; }
       if (newMode === 'daily') {
-        // pct → $/day:  daily = monthly * pct/100 / 30
         converted[a.id] = ((monthly * raw) / 100 / 30).toFixed(2);
       } else {
-        // $/day → pct:  pct = daily * 30 / monthly * 100
         converted[a.id] = impliedDaily > 0
           ? ((raw * 30 / monthly) * 100).toFixed(2)
           : '0';
@@ -222,7 +227,6 @@ function CampaignDetail({ user, onLogout }) {
     setAdsetError('');
   };
 
-  // Compute live % sum (always in % terms, regardless of current input mode).
   const liveAllocPcts = () => {
     const monthly = campaign?.monthly_budget || 0;
     return (campaign?.adsets || []).map((a) => {
@@ -241,7 +245,7 @@ function CampaignDetail({ user, onLogout }) {
   const saveAdsetAllocations = async () => {
     setAdsetError('');
     const monthly = campaign?.monthly_budget || 0;
-    const adsets  = (campaign?.adsets || []).map((a) => {
+    const adsets = (campaign?.adsets || []).map((a) => {
       const raw = parseFloat(adsetDrafts[a.id]);
       let pct = Number.isFinite(raw) ? raw : 0;
       if (adsetMode === 'daily') {
@@ -259,17 +263,19 @@ function CampaignDetail({ user, onLogout }) {
     setAdsetSaving(true);
     try {
       await axios.put(`/api/campaigns/${accountId}/${campaignId}/adsets`, { adsets });
-      await fetchData();   // refresh campaign so adsets reflect new allocations
+      await fetchData();
       setEditingAdsets(false);
       setAdsetDrafts({});
+      toast.success('Ad set allocations saved.');
     } catch (err) {
-      setAdsetError(err.response?.data?.error || 'Failed to save allocations');
+      const msg = err.response?.data?.error || 'Failed to save allocations';
+      setAdsetError(msg);
+      toast.error(msg);
     } finally {
       setAdsetSaving(false);
     }
   };
 
-  // ── helpers ───────────────────────────────────────────────
   const pillForStatus = (status, paceRatio) => {
     const s = (status || '').toUpperCase();
     if (s === 'ON_PACE' || s === 'INCREASE' || s === 'DECREASE') {
@@ -277,20 +283,18 @@ function CampaignDetail({ user, onLogout }) {
       const pct   = Math.round(Math.abs((ratio - 1) * 100));
       const label = ratio >= 1 ? `${pct}% over` : `${pct}% under`;
       const cls   = s === 'ON_PACE' ? 'bb-pill bb-pill-on' : 'bb-pill bb-pill-off';
-      return { cls, label };
+      const Icon  = s === 'ON_PACE' ? Check : ratio >= 1 ? TrendingUp : TrendingDown;
+      return { cls, label, Icon };
     }
-    return { cls: 'bb-pill bb-pill-muted', label: '—' };
+    return { cls: 'bb-pill bb-pill-muted', label: '—', Icon: Minus };
   };
 
   const fmt$ = (n, dec = 0) =>
     `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
 
-  // ── derived values ────────────────────────────────────────
   const lp            = campaign?.latest_pacing;
   const mode          = campaign?.budget_mode || 'CBO';
   const hasPacing     = !!lp;
-  // `latest_pacing` comes from Campaign.to_dict(); the field is `status` (PacingData column),
-  // not `action`. Reading `action` here was the cause of the "Apply on ON_PACE campaigns" bug.
   const action        = (lp?.status || '').toUpperCase();
   const isOnPace      = action === 'ON_PACE';
 
@@ -316,12 +320,15 @@ function CampaignDetail({ user, onLogout }) {
 
   const showRec = hasPacing && !isOnPace && !rejected;
 
-  // ── loading / error guards ────────────────────────────────
   if (loading) return (
     <div className="bb-app">
       <Sidebar user={user} accounts={accounts} />
       <main className="bb-main">
-        <div className="bb-card bb-section bb-muted">Loading campaign…</div>
+        <div className="bb-page-title" style={{ marginBottom: 12 }}>Loading…</div>
+        <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
+          <SkeletonStatTile /><SkeletonStatTile /><SkeletonStatTile /><SkeletonStatTile />
+        </div>
+        <SkeletonCard height={300} />
       </main>
     </div>
   );
@@ -335,13 +342,11 @@ function CampaignDetail({ user, onLogout }) {
     </div>
   );
 
-  // ── render ────────────────────────────────────────────────
   return (
     <div className="bb-app">
       <Sidebar user={user} accounts={accounts} />
 
       <main className="bb-main">
-
         {/* Back + breadcrumb */}
         <div style={{ marginBottom: 16 }}>
           <button
@@ -349,7 +354,7 @@ function CampaignDetail({ user, onLogout }) {
             style={{ padding: '4px 10px', fontSize: 13, marginBottom: 6 }}
             onClick={() => navigate(`/account/${accountId}`)}
           >
-            ← Back to Dashboard
+            <ArrowLeft size={13} aria-hidden="true" /> Back to Dashboard
           </button>
           <div className="bb-breadcrumb">
             <Link to="/">Home</Link>
@@ -373,13 +378,14 @@ function CampaignDetail({ user, onLogout }) {
             </div>
           </div>
           <div className="bb-row">
-            {hasPacing && <span className={pill.cls}>{pill.label}</span>}
-            <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>Log out</button>
+            {hasPacing && <span className={pill.cls}><pill.Icon size={11} aria-hidden="true" /> {pill.label}</span>}
+            <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
+              <LogOut size={14} aria-hidden="true" /> Log out
+            </button>
           </div>
         </div>
 
-        {error       && <div className="bb-alert bb-alert-error"   style={{ marginBottom: 16 }}>{error}</div>}
-        {applyResult && <div className="bb-alert bb-alert-success" style={{ marginBottom: 16 }}>{applyResult.message || 'Applied successfully.'}</div>}
+        {error && <div className="bb-alert bb-alert-error" style={{ marginBottom: 16 }}>{error}</div>}
 
         {/* 4 stat tiles */}
         <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
@@ -411,11 +417,24 @@ function CampaignDetail({ user, onLogout }) {
           </div>
         </div>
 
-        {/* Pacing Breakdown + Recommended Action (CBO only for the action card) */}
+        {/* Spend-vs-target chart — full width, prominent */}
+        {campaign.monthly_budget > 0 && (
+          <div className="bb-card" style={{ marginBottom: 20 }}>
+            <div className="bb-section">
+              <SpendChart
+                monthlyBudget={campaign.monthly_budget}
+                history={history}
+                currentMtd={actualSpend}
+                title="Spend vs. target — current month"
+                height={280}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Pacing Breakdown + Recommended Action */}
         {hasPacing && (
           <div className="cd-two-col" style={{ marginBottom: 20 }}>
-
-            {/* LEFT — Pacing Breakdown */}
             <div className="bb-card">
               <div className="bb-section">
                 <div className="bb-section-title" style={{ marginBottom: 16 }}>Pacing Breakdown</div>
@@ -442,72 +461,14 @@ function CampaignDetail({ user, onLogout }) {
                 {summaryText() && (
                   <div className="cd-summary-text">{summaryText()}</div>
                 )}
-
-                {/* ── Spend progress chart ── */}
-                {campaign.monthly_budget > 0 && (() => {
-                  const budget      = campaign.monthly_budget;
-                  const monthPct    = Math.min(100, (daysElapsed / daysInMonth) * 100);
-                  const expectedPct = Math.min(100, (expectedSpend / budget) * 100);
-                  const actualPct   = Math.min(100, (actualSpend  / budget) * 100);
-                  const barColor    = paceRatio >= 1 ? '#10b981' : '#3b82f6';
-                  const barStyle    = { height: 10, background: 'var(--bb-border)', borderRadius: 999, overflow: 'hidden', marginTop: 4 };
-                  const fillStyle   = (pct, color) => ({ height: '100%', width: `${pct}%`, background: color, borderRadius: 999, transition: 'width 400ms ease' });
-                  const rowLabel    = { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--bb-text-muted)', marginBottom: 2 };
-                  return (
-                    <div style={{ marginTop: 20, borderTop: '1px solid var(--bb-divider)', paddingTop: 16 }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--bb-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-                        Budget Progress
-                      </div>
-
-                      {/* Month elapsed */}
-                      <div style={{ marginBottom: 12 }}>
-                        <div style={rowLabel}>
-                          <span>Month elapsed</span>
-                          <span>Day {daysElapsed} / {daysInMonth} ({monthPct.toFixed(0)}%)</span>
-                        </div>
-                        <div style={barStyle}>
-                          <div style={fillStyle(monthPct, '#94a3b8')} />
-                        </div>
-                      </div>
-
-                      {/* Expected spend */}
-                      <div style={{ marginBottom: 12 }}>
-                        <div style={rowLabel}>
-                          <span>Expected spend</span>
-                          <span>{fmt$(expectedSpend)} ({expectedPct.toFixed(0)}%)</span>
-                        </div>
-                        <div style={barStyle}>
-                          <div style={fillStyle(expectedPct, '#cbd5e1')} />
-                        </div>
-                      </div>
-
-                      {/* Actual spend */}
-                      <div style={{ marginBottom: 6 }}>
-                        <div style={{ ...rowLabel, color: barColor, fontWeight: 600 }}>
-                          <span>Actual spend</span>
-                          <span>{fmt$(actualSpend)} ({actualPct.toFixed(0)}%)</span>
-                        </div>
-                        <div style={barStyle}>
-                          <div style={fillStyle(actualPct, barColor)} />
-                        </div>
-                      </div>
-
-                      <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--bb-text-muted)' }}>
-                        of {fmt$(budget)} monthly budget
-                      </div>
-                    </div>
-                  );
-                })()}
               </div>
             </div>
 
-            {/* RIGHT — Recommended Action (CBO only; ABO handles this per-adset in the table below) */}
             <div className={`bb-card cd-recommendation${showRec && mode !== 'ABO' ? ' cd-recommendation-active' : ''}`}>
               <div className="bb-section">
                 <div className="bb-section-title" style={{ marginBottom: 16 }}>Recommended Action</div>
 
                 {mode === 'ABO' ? (
-                  // ABO: per-adset Apply/Reject are in the Ad Sets table below
                   <div style={{ fontSize: 13, color: 'var(--bb-text-muted)', lineHeight: 1.6 }}>
                     This is an <strong>ABO</strong> campaign — budgets are set per ad set.
                     Use the <strong>Apply</strong> / <strong>Reject</strong> buttons in the
@@ -520,7 +481,9 @@ function CampaignDetail({ user, onLogout }) {
                 ) : isOnPace ? (
                   <div className="cd-on-pace-msg">
                     <div className="cd-rec-label">Status</div>
-                    <div className="cd-rec-amount" style={{ color: '#10b981', fontSize: 32 }}>On Pace ✓</div>
+                    <div className="cd-rec-amount" style={{ color: '#10b981', fontSize: 32, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Check size={26} strokeWidth={3} aria-hidden="true" /> On Pace
+                    </div>
                     <div className="bb-muted" style={{ fontSize: 13, marginTop: 6 }}>No budget change needed.</div>
                   </div>
                 ) : (
@@ -542,14 +505,15 @@ function CampaignDetail({ user, onLogout }) {
                       onClick={handleApply}
                       disabled={applying}
                     >
-                      {applying ? 'Applying…' : '✓ Apply Recommendation'}
+                      {applying ? <Loader2 size={14} className="bb-i" /> : <Check size={14} aria-hidden="true" />}
+                      {applying ? 'Applying…' : 'Apply Recommendation'}
                     </button>
                     <button
                       className="bb-btn cd-reject-btn"
                       onClick={() => setRejected(true)}
                       disabled={applying}
                     >
-                      × Reject
+                      <X size={13} aria-hidden="true" /> Reject
                     </button>
                   </>
                 )}
@@ -576,6 +540,7 @@ function CampaignDetail({ user, onLogout }) {
                       onClick={handleRunPacing}
                       disabled={pacingRunning}
                     >
+                      {pacingRunning ? <Loader2 size={14} className="bb-i" /> : <Play size={14} aria-hidden="true" />}
                       {pacingRunning ? 'Running…' : 'Run Pacing'}
                     </button>
                     <button className="bb-btn bb-btn-secondary" onClick={enterEditMode}>
@@ -584,30 +549,17 @@ function CampaignDetail({ user, onLogout }) {
                   </div>
                 )}
               </div>
-              {pacingResult && (
-                <div className={`bb-alert ${pacingResult.ok ? 'bb-alert-success' : 'bb-alert-error'}`}
-                  style={{ margin: '8px 0 0' }}>
-                  {pacingResult.msg}
-                </div>
-              )}
             </div>
 
-            {/* Edit-mode toolbar */}
             {editingAdsets && (
               <div className="cd-alloc-toolbar">
                 <div className="cd-alloc-toolbar-left">
-                  <span className="bb-muted" style={{ fontSize: 13 }}>
-                    Input mode:
-                  </span>
+                  <span className="bb-muted" style={{ fontSize: 13 }}>Input mode:</span>
                   <div className="bb-tabs" style={{ display: 'inline-flex', marginLeft: 8 }}>
-                    <button
-                      className={`bb-tab-btn${adsetMode === 'pct'   ? ' is-active' : ''}`}
-                      onClick={() => toggleAdsetMode('pct')}
-                    >% Allocation</button>
-                    <button
-                      className={`bb-tab-btn${adsetMode === 'daily' ? ' is-active' : ''}`}
-                      onClick={() => toggleAdsetMode('daily')}
-                    >$/day</button>
+                    <button className={`bb-tab-btn${adsetMode === 'pct'   ? ' is-active' : ''}`}
+                      onClick={() => toggleAdsetMode('pct')}>% Allocation</button>
+                    <button className={`bb-tab-btn${adsetMode === 'daily' ? ' is-active' : ''}`}
+                      onClick={() => toggleAdsetMode('daily')}>$/day</button>
                   </div>
                   {adsetMode === 'daily' && (
                     <span className="bb-muted" style={{ fontSize: 12, marginLeft: 12 }}>
@@ -616,17 +568,14 @@ function CampaignDetail({ user, onLogout }) {
                   )}
                 </div>
                 <div className="bb-row">
-                  <span
-                    className="cd-alloc-sum"
-                    style={{ color: allocOk ? '#10b981' : '#f59e0b' }}
-                  >
+                  <span className="cd-alloc-sum"
+                    style={{ color: allocOk ? '#10b981' : '#f59e0b' }}>
                     Total: {allocSum.toFixed(1)}%{allocOk ? ' ✓' : ' — must equal 100%'}
                   </span>
-                  <button
-                    className="bb-btn bb-btn-primary"
+                  <button className="bb-btn bb-btn-primary"
                     onClick={saveAdsetAllocations}
-                    disabled={adsetSaving || !allocOk}
-                  >
+                    disabled={adsetSaving || !allocOk}>
+                    {adsetSaving ? <Loader2 size={14} className="bb-i" /> : <Check size={14} aria-hidden="true" />}
                     {adsetSaving ? 'Saving…' : 'Save'}
                   </button>
                   <button className="bb-btn" onClick={cancelEditMode} disabled={adsetSaving}>
@@ -637,7 +586,7 @@ function CampaignDetail({ user, onLogout }) {
             )}
 
             {adsetError && (
-              <div className="bb-alert bb-alert-error" style={{ margin: '0 0 0 0', borderRadius: 0 }}>
+              <div className="bb-alert bb-alert-error" style={{ borderRadius: 0 }}>
                 {adsetError}
               </div>
             )}
@@ -662,7 +611,7 @@ function CampaignDetail({ user, onLogout }) {
                   const alpAction    = (alp?.action || alp?.status || '').toUpperCase();
                   const aPill        = pillForStatus(alpAction, alp?.pace_ratio);
                   const adsetMonthly = campaign.monthly_budget * (a.allocation_pct / 100);
-                  const isApplying   = !!adsetApplying[a.id];
+                  const isApplyingA  = !!adsetApplying[a.id];
                   const isRejected   = !!adsetRejected[a.id];
                   const result       = adsetResults[a.id];
                   const needsAction  = alp && alpAction !== 'ON_PACE';
@@ -704,14 +653,14 @@ function CampaignDetail({ user, onLogout }) {
                         {alp?.recommended_daily_budget != null ? fmt$(alp.recommended_daily_budget, 2) : '—'}
                       </td>
                       <td>
-                        {alp
-                          ? <span className={aPill.cls}>{aPill.label}</span>
-                          : <span className="bb-muted">No data</span>}
+                        {alp ? <span className={aPill.cls}><aPill.Icon size={11} aria-hidden="true" /> {aPill.label}</span> : <span className="bb-muted">No data</span>}
                       </td>
                       {!editingAdsets && (
                         <td>
                           {result?.ok ? (
-                            <span style={{ color: '#10b981', fontSize: 12, fontWeight: 600 }}>✓ Applied</span>
+                            <span style={{ color: '#10b981', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              <Check size={12} aria-hidden="true" /> Applied
+                            </span>
                           ) : result && !result.ok ? (
                             <span style={{ color: '#ef4444', fontSize: 12 }}>{result.msg}</span>
                           ) : isRejected ? (
@@ -719,10 +668,10 @@ function CampaignDetail({ user, onLogout }) {
                               <span className="bb-muted">Skipped</span>
                               {' · '}
                               <button
-                                style={{ background: 'none', border: 'none', color: 'var(--bb-primary)', cursor: 'pointer', fontSize: 12, padding: 0 }}
+                                style={{ background: 'none', border: 'none', color: 'var(--bb-primary)', cursor: 'pointer', fontSize: 12, padding: 0, display: 'inline-flex', alignItems: 'center', gap: 3 }}
                                 onClick={() => handleUndoRejectAdset(a.id)}
                               >
-                                Undo
+                                <RotateCcw size={11} aria-hidden="true" /> Undo
                               </button>
                             </span>
                           ) : needsAction ? (
@@ -731,15 +680,16 @@ function CampaignDetail({ user, onLogout }) {
                                 className="bb-btn bb-btn-apply"
                                 style={{ fontSize: 11, padding: '3px 10px' }}
                                 onClick={() => handleApplyAdset(a)}
-                                disabled={isApplying}
+                                disabled={isApplyingA}
                               >
-                                {isApplying ? '…' : 'Apply'}
+                                {isApplyingA ? <Loader2 size={11} className="bb-i" /> : <Check size={11} aria-hidden="true" />}
+                                {isApplyingA ? '…' : 'Apply'}
                               </button>
                               <button
                                 className="bb-btn"
                                 style={{ fontSize: 11, padding: '3px 8px' }}
                                 onClick={() => handleRejectAdset(a.id)}
-                                disabled={isApplying}
+                                disabled={isApplyingA}
                               >
                                 Skip
                               </button>
@@ -796,7 +746,8 @@ function CampaignDetail({ user, onLogout }) {
                       <td className="num">{fmt$(adj.old_budget, 2)}/day</td>
                       <td className="num">{fmt$(adj.new_budget, 2)}/day</td>
                       <td>
-                        <span style={{ fontWeight: 600, color: up ? '#10b981' : '#f59e0b' }}>
+                        <span style={{ fontWeight: 600, color: up ? '#10b981' : '#f59e0b', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          {up ? <TrendingUp size={11} aria-hidden="true" /> : <TrendingDown size={11} aria-hidden="true" />}
                           {up ? '+' : ''}{(adj.change_percent || 0).toFixed(1)}%
                         </span>
                       </td>

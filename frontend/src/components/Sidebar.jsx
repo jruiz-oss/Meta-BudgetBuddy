@@ -1,5 +1,14 @@
 import React from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
+import {
+  Home as HomeIcon,
+  Building2,
+  LayoutDashboard,
+  History as HistoryIcon,
+  Settings as SettingsIcon,
+  Plus,
+  Activity,
+} from 'lucide-react';
 import './Sidebar.css';
 
 /**
@@ -16,7 +25,12 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
 
   return (
     <aside className="bb-sidebar">
-      <div className="bb-sidebar-brand">BudgetBuddy</div>
+      <div className="bb-sidebar-brand">
+        <span className="bb-brand-mark" aria-hidden="true">
+          <Activity size={16} strokeWidth={2.5} />
+        </span>
+        <span>BudgetBuddy</span>
+      </div>
 
       {/* ACCOUNTS — always visible */}
       <div className="bb-sidebar-section">
@@ -29,7 +43,8 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
                 className={`bb-sidebar-item ${String(acc.id) === String(accountId) ? 'is-active' : ''}`}
                 onClick={() => navigate(`/account/${acc.id}`)}
               >
-                {acc.account_name}
+                <Building2 size={15} aria-hidden="true" />
+                <span>{acc.account_name}</span>
               </button>
             </li>
           ))}
@@ -39,7 +54,8 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
               className="bb-sidebar-add"
               onClick={onAddAccount || (() => navigate('/accounts'))}
             >
-              + Add Account
+              <Plus size={13} aria-hidden="true" style={{ marginRight: 4, verticalAlign: -2 }} />
+              Add Account
             </button>
           </li>
         </ul>
@@ -55,7 +71,8 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
               end
               className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
             >
-              Home
+              <HomeIcon size={15} aria-hidden="true" />
+              <span>Home</span>
             </NavLink>
           </li>
           <li>
@@ -63,7 +80,8 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
               to="/accounts"
               className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
             >
-              Accounts
+              <Building2 size={15} aria-hidden="true" />
+              <span>Accounts</span>
             </NavLink>
           </li>
           <li>
@@ -73,11 +91,13 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
                 end
                 className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
               >
-                Dashboard
+                <LayoutDashboard size={15} aria-hidden="true" />
+                <span>Dashboard</span>
               </NavLink>
             ) : (
               <span className="bb-sidebar-item bb-sidebar-item-dim" title="Select an account first">
-                Dashboard
+                <LayoutDashboard size={15} aria-hidden="true" />
+                <span>Dashboard</span>
               </span>
             )}
           </li>
@@ -87,11 +107,13 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
                 to={`/account/${accountId}/history`}
                 className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
               >
-                History
+                <HistoryIcon size={15} aria-hidden="true" />
+                <span>History</span>
               </NavLink>
             ) : (
               <span className="bb-sidebar-item bb-sidebar-item-dim" title="Select an account first">
-                History
+                <HistoryIcon size={15} aria-hidden="true" />
+                <span>History</span>
               </span>
             )}
           </li>
@@ -101,11 +123,13 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
                 to={`/account/${accountId}/settings`}
                 className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
               >
-                Settings
+                <SettingsIcon size={15} aria-hidden="true" />
+                <span>Settings</span>
               </NavLink>
             ) : (
               <span className="bb-sidebar-item bb-sidebar-item-dim" title="Select an account first">
-                Settings
+                <SettingsIcon size={15} aria-hidden="true" />
+                <span>Settings</span>
               </span>
             )}
           </li>

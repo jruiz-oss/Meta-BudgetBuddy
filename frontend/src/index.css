@@ -649,3 +649,235 @@ a {
 
 /* ABO parent row in the recommendations table — quieter so the per-adset rows pop */
 .bb-row-abo-parent td { background: #fcfcfd; }
+
+/* ============ Lucide icon defaults ============ */
+/* Lucide icons inherit currentColor, but they don't shrink unless we tell them. */
+.bb-btn svg, .bb-tab-btn svg, .bb-sidebar-item svg, .bb-pill svg, .bb-link svg, .bb-icon-btn svg {
+  flex-shrink: 0;
+}
+.bb-pill { gap: 4px; }
+.bb-btn { display: inline-flex; }
+
+/* Inline icon helper (eg. inside text spans) */
+.bb-i {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -2px;
+}
+
+/* ============ Toast notifications ============ */
+
+.bb-toast-stack {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+@keyframes bb-toast-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes bb-toast-out {
+  to { opacity: 0; transform: translateY(-6px) scale(0.97); }
+}
+
+.bb-toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--bb-border);
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12), 0 1px 2px rgba(15, 23, 42, 0.05);
+  animation: bb-toast-in 180ms ease-out;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.bb-toast.is-leaving {
+  animation: bb-toast-out 180ms ease-in forwards;
+}
+.bb-toast-icon { margin-top: 1px; }
+.bb-toast-body { min-width: 0; }
+.bb-toast-title { font-weight: 700; margin-bottom: 2px; }
+.bb-toast-msg { color: var(--bb-text); word-wrap: break-word; }
+.bb-toast-close {
+  background: transparent;
+  border: none;
+  color: var(--bb-text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.bb-toast-close:hover { background: #f3f4f6; color: var(--bb-text); }
+
+.bb-toast-success { border-left: 3px solid #10b981; }
+.bb-toast-success .bb-toast-icon { color: #10b981; }
+.bb-toast-error   { border-left: 3px solid #ef4444; }
+.bb-toast-error .bb-toast-icon   { color: #ef4444; }
+.bb-toast-warn    { border-left: 3px solid #f59e0b; }
+.bb-toast-warn .bb-toast-icon    { color: #f59e0b; }
+.bb-toast-info    { border-left: 3px solid #3b82f6; }
+.bb-toast-info .bb-toast-icon    { color: #3b82f6; }
+
+/* ============ Skeleton loaders ============ */
+
+@keyframes bb-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.bb-skeleton {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.06) 0%,
+    rgba(0, 0, 0, 0.10) 50%,
+    rgba(0, 0, 0, 0.06) 100%
+  );
+  background-size: 200% 100%;
+  animation: bb-shimmer 1.4s ease-in-out infinite;
+  border-radius: 6px;
+  min-height: 8px;
+}
+
+/* When a skeleton lives inside a th, dim the header background a touch so the
+   shimmer still reads. */
+.bb-table thead th .bb-skeleton { background-color: rgba(0,0,0,0.05); }
+
+/* ============ Empty states ============ */
+
+.bb-empty {
+  padding: 36px 24px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.bb-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #e8f0f3 0%, #d3e0e6 100%);
+  color: var(--bb-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+  box-shadow: 0 1px 2px rgba(0, 67, 89, 0.08);
+}
+.bb-empty-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--bb-text);
+  letter-spacing: -0.01em;
+}
+.bb-empty-body {
+  font-size: 13px;
+  color: var(--bb-text-muted);
+  max-width: 380px;
+  line-height: 1.55;
+}
+.bb-empty-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ============ Spend chart ============ */
+
+.bb-chart-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--bb-text-muted);
+  margin-bottom: 8px;
+}
+.bb-chart-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 36px 16px;
+  color: var(--bb-text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.bb-chart-empty-msg { max-width: 280px; }
+
+/* ============ Brand mark ============ */
+
+.bb-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--bb-primary) 0%, var(--bb-primary-light) 100%);
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(0, 67, 89, 0.20);
+}
+
+/* Sidebar nav items now show icon + label */
+.bb-sidebar-item {
+  display: flex !important;
+  align-items: center;
+  gap: 9px;
+}
+.bb-sidebar-item svg { flex-shrink: 0; opacity: 0.85; }
+.bb-sidebar-item.is-active svg { opacity: 1; }
+
+.bb-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* ============ Compact stat tile (used on Home rollup row) ============ */
+
+.bb-stat-compact {
+  padding: 10px 14px !important;
+  gap: 2px !important;
+}
+.bb-stat-compact .bb-stat-label { font-size: 10px; }
+.bb-stat-compact .bb-stat-value { font-size: 20px; }
+.bb-stat-compact .bb-stat-sub   { font-size: 11px; }
+
+/* Allow click-target style on the section search bar's clear button to align */
+.bb-search-wrap { position: relative; }
+.bb-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--bb-text-muted);
+  pointer-events: none;
+  display: inline-flex;
+}
+.bb-search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+}

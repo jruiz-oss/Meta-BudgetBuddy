@@ -9,7 +9,8 @@
     "react-router-dom": "^6.15.0",
     "axios": "^1.5.0",
     "chart.js": "^4.4.0",
-    "react-chartjs-2": "^5.2.0"
+    "react-chartjs-2": "^5.2.0",
+    "lucide-react": "^0.379.0"
   },
   "scripts": {
     "start": "react-scripts start",

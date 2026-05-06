@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
+import { Activity, Loader2, UserPlus } from 'lucide-react';
 
 function Register({ onRegisterSuccess }) {
   const [email, setEmail] = useState('');
@@ -40,6 +41,11 @@ function Register({ onRegisterSuccess }) {
   return (
     <div className="bb-auth-shell">
       <div className="bb-auth-card">
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+          <span className="bb-brand-mark" style={{ width: 44, height: 44, borderRadius: 12 }} aria-hidden="true">
+            <Activity size={22} strokeWidth={2.5} />
+          </span>
+        </div>
         <div className="bb-auth-title">Create Account</div>
         <div className="bb-auth-subtitle">Join BudgetBuddy</div>
 
@@ -89,7 +95,8 @@ function Register({ onRegisterSuccess }) {
             style={{ width: '100%', justifyContent: 'center', padding: '11px', fontSize: '14px' }}
             disabled={loading}
           >
-            {loading ? 'Creating account...' : 'Register'}
+            {loading ? <Loader2 size={14} className="bb-i" /> : <UserPlus size={14} aria-hidden="true" />}
+            {loading ? 'Creating account…' : 'Register'}
           </button>
         </form>
 

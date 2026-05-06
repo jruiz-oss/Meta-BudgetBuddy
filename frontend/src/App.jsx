@@ -3,6 +3,9 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import axios from 'axios';
 import './App.css';
 
+// Toast provider
+import { ToastProvider } from './components/Toast';
+
 // Pages
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -38,27 +41,29 @@ function App() {
   if (loading) return <div className="loading">Loading...</div>;
 
   return (
-    <Router>
-      <Routes>
-        {!user ? (
-          <>
-            <Route path="/login"    element={<Login    onLoginSuccess={checkAuth} />} />
-            <Route path="/register" element={<Register onRegisterSuccess={checkAuth} />} />
-            <Route path="*"         element={<Navigate to="/login" />} />
-          </>
-        ) : (
-          <>
-            <Route path="/"         element={<Home     user={user} onLogout={handleLogout} />} />
-            <Route path="/accounts" element={<Accounts user={user} onLogout={handleLogout} />} />
-            <Route path="/account/:accountId"                                  element={<AccountDashboard user={user} onLogout={handleLogout} />} />
-            <Route path="/account/:accountId/campaign/:campaignId"             element={<CampaignDetail   user={user} onLogout={handleLogout} />} />
-            <Route path="/account/:accountId/settings"                         element={<Settings         user={user} onLogout={handleLogout} />} />
-            <Route path="/account/:accountId/history"                          element={<History          user={user} onLogout={handleLogout} />} />
-            <Route path="*"         element={<Navigate to="/" />} />
-          </>
-        )}
-      </Routes>
-    </Router>
+    <ToastProvider>
+      <Router>
+        <Routes>
+          {!user ? (
+            <>
+              <Route path="/login"    element={<Login    onLoginSuccess={checkAuth} />} />
+              <Route path="/register" element={<Register onRegisterSuccess={checkAuth} />} />
+              <Route path="*"         element={<Navigate to="/login" />} />
+            </>
+          ) : (
+            <>
+              <Route path="/"         element={<Home     user={user} onLogout={handleLogout} />} />
+              <Route path="/accounts" element={<Accounts user={user} onLogout={handleLogout} />} />
+              <Route path="/account/:accountId"                                  element={<AccountDashboard user={user} onLogout={handleLogout} />} />
+              <Route path="/account/:accountId/campaign/:campaignId"             element={<CampaignDetail   user={user} onLogout={handleLogout} />} />
+              <Route path="/account/:accountId/settings"                         element={<Settings         user={user} onLogout={handleLogout} />} />
+              <Route path="/account/:accountId/history"                          element={<History          user={user} onLogout={handleLogout} />} />
+              <Route path="*"         element={<Navigate to="/" />} />
+            </>
+          )}
+        </Routes>
+      </Router>
+    </ToastProvider>
   );
 }
 

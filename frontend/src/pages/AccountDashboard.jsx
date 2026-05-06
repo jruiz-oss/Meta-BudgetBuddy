@@ -2,19 +2,30 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
+import {
+  Play, Check, X, LogOut, Download, Plus, Inbox, Loader2,
+  TrendingUp, TrendingDown, Minus,
+  History as HistoryIcon, Settings as SettingsIcon, DownloadCloud,
+} from 'lucide-react';
 import Sidebar from '../components/Sidebar';
+import { SkeletonStatTile, SkeletonTable } from '../components/Skeleton';
+import { EmptyState } from '../components/EmptyState';
+import SpendChart from '../components/SpendChart';
+import { useToast } from '../components/Toast';
 
 /**
  * Single-account dashboard.
  *
- * Top: 4 stat tiles (On Pace / Need Increase / Need Decrease / Total Spend)
+ * Top:    4 stat tiles (On Pace / Need Increase / Need Decrease / Total Spend)
+ * Then:   Spend-vs-target chart for the whole account
  * Middle: latest pacing run summary (when present) with Apply All button
  * Bottom: tracked campaigns table with current daily, recommended daily, and change indicator
- * Modal: Import campaigns from Meta
+ * Modal:  Import campaigns from Meta
  */
 function AccountDashboard({ user, onLogout }) {
   const { accountId } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [accounts, setAccounts] = useState([]);
   const [account, setAccount] = useState(null);
@@ -22,12 +33,17 @@ function AccountDashboard({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Aggregated pacing history for the spend chart (sum of MTD-actual across this account's campaigns)
+  const [accountHistory, setAccountHistory] = useState([]);
+
   const [pacingRunning, setPacingRunning] = useState(false);
   const [lastRun, setLastRun] = useState(null);
   const [applying, setApplying] = useState(false);
-  const [applyResult, setApplyResult] = useState(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingAdjustments, setPendingAdjustments] = useState([]);
+
+  // Remove-campaign confirmation modal (replaces window.confirm)
+  const [removeTarget, setRemoveTarget] = useState(null);
 
   // Import-from-Meta modal state
   const [showImport, setShowImport] = useState(false);
@@ -37,9 +53,7 @@ function AccountDashboard({ user, onLogout }) {
   const [metaCampaigns, setMetaCampaigns] = useState([]);
   const [importSelections, setImportSelections] = useState({});
 
-  useEffect(() => {
-    fetchAll();
-  }, [accountId]);
+  useEffect(() => { fetchAll(); }, [accountId]);
 
   const fetchAll = async () => {
     try {
@@ -51,7 +65,47 @@ function AccountDashboard({ user, onLogout }) {
       ]);
       setAccounts(accountsRes.data.accounts || accountsRes.data || []);
       setAccount(accountRes.data.account || accountRes.data);
-      setCampaigns(campaignsRes.data.campaigns || []);
+      const camps = campaignsRes.data.campaigns || [];
+      setCampaigns(camps);
+
+      // Aggregate per-day actual spend across all campaigns/adsets in this account.
+      // We pull pacing-history per campaign and sum by date.
+      try {
+        const histResponses = await Promise.all(
+          camps.map((c) => axios.get(`/api/campaigns/${accountId}/${c.id}/pacing-history`).catch(() => null))
+        );
+        const byDate = new Map(); // date string → summed actual_spend
+        histResponses.forEach((res) => {
+          if (!res?.data?.history) return;
+          // For ABO, history rows are per-adset and we want to sum them per-day.
+          // For CBO, there's one row per day (adset_id null).
+          // Simplest: sum every row by date — same-day duplicate adsets sum naturally,
+          // and we keep the highest CBO row per date (most recent run).
+          const cboPerDate = new Map(); // date → highest-id CBO row
+          res.data.history.forEach((row) => {
+            if (!row?.date) return;
+            if (row.adset_id == null) {
+              const prev = cboPerDate.get(row.date);
+              if (!prev || (row.id || 0) > (prev.id || 0)) {
+                cboPerDate.set(row.date, row);
+              }
+            } else {
+              const v = byDate.get(row.date) || 0;
+              byDate.set(row.date, v + (Number(row.actual_spend) || 0));
+            }
+          });
+          cboPerDate.forEach((row, date) => {
+            const v = byDate.get(date) || 0;
+            byDate.set(date, v + (Number(row.actual_spend) || 0));
+          });
+        });
+        const aggregated = Array.from(byDate.entries())
+          .map(([date, actual_spend]) => ({ date, actual_spend }))
+          .sort((a, b) => a.date.localeCompare(b.date));
+        setAccountHistory(aggregated);
+      } catch {
+        setAccountHistory([]);
+      }
     } catch (err) {
       setError('Failed to load account data');
     } finally {
@@ -62,25 +116,36 @@ function AccountDashboard({ user, onLogout }) {
   const handleRunPacing = async () => {
     setPacingRunning(true);
     setError('');
-    setApplyResult(null);
     try {
       const response = await axios.post(`/api/pacing/${accountId}/run`, { run_type: 'MANUAL' });
       setLastRun(response.data);
+      toast.success(
+        `${response.data.campaigns_processed || 0} campaigns processed, ${response.data.adjustments_needed || 0} need adjusting.`,
+        { title: 'Pacing complete' }
+      );
+      if (response.data.failures && response.data.failures.length > 0) {
+        toast.warn(`${response.data.failures.length} campaign(s) had errors.`);
+      }
       fetchAll();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to run pacing calculations');
+      const msg = err.response?.data?.error || 'Failed to run pacing calculations';
+      setError(msg);
+      toast.error(msg, { title: 'Pacing failed' });
     } finally {
       setPacingRunning(false);
     }
   };
 
-  const handleRemoveCampaign = async (campaignId, campaignName) => {
-    if (!window.confirm(`Remove "${campaignName}" from pacing? You can re-add it via Import from Meta.`)) return;
+  const handleRemoveCampaign = async () => {
+    if (!removeTarget) return;
+    const { id, name } = removeTarget;
+    setRemoveTarget(null);
     try {
-      await axios.put(`/api/campaigns/${accountId}/${campaignId}`, { is_active: false });
+      await axios.put(`/api/campaigns/${accountId}/${id}`, { is_active: false });
+      toast.success(`Removed "${name}" from pacing.`);
       fetchAll();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to remove campaign');
+      toast.error(err.response?.data?.error || 'Failed to remove campaign');
     }
   };
 
@@ -89,7 +154,6 @@ function AccountDashboard({ user, onLogout }) {
     const adjustments = [];
     lastRun.recommendations.forEach((r) => {
       if ((r.budget_mode || 'CBO') === 'ABO') {
-        // ABO: emit one adjustment per ad set that needs a change
         (r.adset_level || []).forEach((a) => {
           if (a.action === 'ON_PACE') return;
           adjustments.push({
@@ -105,7 +169,6 @@ function AccountDashboard({ user, onLogout }) {
           });
         });
       } else {
-        // CBO
         if (r.action === 'ON_PACE') return;
         adjustments.push({
           level: 'campaign',
@@ -120,10 +183,9 @@ function AccountDashboard({ user, onLogout }) {
     });
 
     if (adjustments.length === 0) {
-      setApplyResult({ message: 'Nothing to apply — everything is on pace.' });
+      toast.info('Nothing to apply — everything is on pace.');
       return;
     }
-
     setPendingAdjustments(adjustments);
     setShowConfirm(true);
   };
@@ -134,10 +196,15 @@ function AccountDashboard({ user, onLogout }) {
     setError('');
     try {
       const response = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: pendingAdjustments });
-      setApplyResult(response.data);
+      toast.success(
+        `${response.data.applied_count || pendingAdjustments.length} budget change${pendingAdjustments.length === 1 ? '' : 's'} pushed to Meta.`,
+        { title: 'Applied' }
+      );
       fetchAll();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to apply recommendations');
+      const msg = err.response?.data?.error || 'Failed to apply recommendations';
+      setError(msg);
+      toast.error(msg, { title: 'Apply failed' });
     } finally {
       setApplying(false);
       setPendingAdjustments([]);
@@ -156,7 +223,6 @@ function AccountDashboard({ user, onLogout }) {
       setMetaCampaigns(list);
       const seed = {};
       list.forEach((c) => {
-        // Seed allocation map for ABO campaigns from the response (server returns even split or saved values).
         const adsetSeed = {};
         (c.adsets || []).forEach((a) => {
           adsetSeed[a.meta_adset_id] = {
@@ -167,9 +233,6 @@ function AccountDashboard({ user, onLogout }) {
         });
         seed[c.meta_campaign_id] = {
           selected: !!c.already_tracked,
-          // Prefer the saved monthly budget from the DB (covers ABO campaigns which have
-          // no campaign-level daily budget, so current_daily_budget is null for them).
-          // Fall back to current_daily_budget * 30 for CBO campaigns not yet tracked.
           monthly_budget: c.saved_monthly_budget != null
             ? c.saved_monthly_budget
             : (c.current_daily_budget ? Math.round(c.current_daily_budget * 30) : ''),
@@ -187,10 +250,7 @@ function AccountDashboard({ user, onLogout }) {
     }
   };
 
-  const closeImport = () => {
-    setShowImport(false);
-    setImportError('');
-  };
+  const closeImport = () => { setShowImport(false); setImportError(''); };
 
   const toggleImportSelection = (metaId) => {
     setImportSelections((prev) => ({
@@ -231,7 +291,6 @@ function AccountDashboard({ user, onLogout }) {
       const keys = Object.keys(adsets);
       if (keys.length === 0) return prev;
       const even = Math.round((100 / keys.length) * 100) / 100;
-      // Distribute remainder onto first row so sum is exactly 100
       const remainder = 100 - even * keys.length;
       keys.forEach((k, i) => {
         adsets[k] = { ...adsets[k], allocation_pct: i === 0 ? +(even + remainder).toFixed(2) : even };
@@ -241,7 +300,6 @@ function AccountDashboard({ user, onLogout }) {
   };
 
   const saveImport = async () => {
-    // Build the chosen list, validate ABO allocations sum to ~100.
     const chosen = [];
     const validationErrors = [];
     metaCampaigns.forEach((c) => {
@@ -302,14 +360,9 @@ function AccountDashboard({ user, onLogout }) {
     setImportSaving(true);
     setImportError('');
     try {
-      // Tell the server every campaign the modal *showed* the user, so it can deactivate
-      // tracked campaigns the user explicitly unchecked. Without this, unchecking a tracked
-      // campaign in the modal would leave it lingering as is_active=true in the DB.
       const seen_meta_ids = metaCampaigns.map((c) => c.meta_campaign_id);
-      await axios.post(`/api/campaigns/${accountId}/sync`, {
-        campaigns: chosen,
-        seen_meta_ids,
-      });
+      await axios.post(`/api/campaigns/${accountId}/sync`, { campaigns: chosen, seen_meta_ids });
+      toast.success(`Imported ${chosen.length} campaign${chosen.length === 1 ? '' : 's'}.`, { title: 'Saved' });
       closeImport();
       fetchAll();
     } catch (err) {
@@ -326,14 +379,12 @@ function AccountDashboard({ user, onLogout }) {
   };
 
   const handleLogout = async () => {
-    try {
-      await axios.post('/api/auth/logout');
-    } catch { /* ignore */ }
+    try { await axios.post('/api/auth/logout'); } catch {}
     onLogout();
     navigate('/login');
   };
 
-  // ---- Derived stats ----
+  // Derived stats
   const stats = useMemo(() => {
     const s = { onPace: 0, needIncrease: 0, needDecrease: 0, totalSpend: 0, monthlyBudget: 0 };
     campaigns.forEach((c) => {
@@ -356,22 +407,16 @@ function AccountDashboard({ user, onLogout }) {
       const pct   = Math.round(Math.abs((ratio - 1) * 100));
       const text  = ratio >= 1 ? `${pct}% over` : `${pct}% under`;
       const cls   = s === 'ON_PACE' ? 'bb-pill bb-pill-on' : 'bb-pill bb-pill-off';
-      return { cls, text };
+      const Icon  = s === 'ON_PACE' ? Check : ratio >= 1 ? TrendingUp : TrendingDown;
+      return { cls, text, Icon };
     }
-    return { cls: 'bb-pill bb-pill-muted', text: '—' };
+    return { cls: 'bb-pill bb-pill-muted', text: '—', Icon: Minus };
   };
 
-  const changeIndicator = (changePct) => {
-    if (changePct === undefined || changePct === null) {
-      return <span className="bb-change bb-change-flat">No change</span>;
-    }
-    if (Math.abs(changePct) < 0.5) {
-      return <span className="bb-change bb-change-flat">No change</span>;
-    }
-    if (changePct > 0) {
-      return <span className="bb-change bb-change-up">↗ +{changePct.toFixed(1)}%</span>;
-    }
-    return <span className="bb-change bb-change-down">↘ {changePct.toFixed(1)}%</span>;
+  const ChangeBadge = ({ pct }) => {
+    if (pct == null || Math.abs(pct) < 0.5) return <span className="bb-change bb-change-flat"><Minus size={10} aria-hidden="true" /> No change</span>;
+    if (pct > 0) return <span className="bb-change bb-change-up"><TrendingUp size={10} aria-hidden="true" /> +{pct.toFixed(1)}%</span>;
+    return <span className="bb-change bb-change-down"><TrendingDown size={10} aria-hidden="true" /> {pct.toFixed(1)}%</span>;
   };
 
   if (loading) {
@@ -379,7 +424,15 @@ function AccountDashboard({ user, onLogout }) {
       <div className="bb-app">
         <Sidebar user={user} accounts={accounts} />
         <main className="bb-main">
-          <div className="bb-card bb-section bb-muted">Loading account...</div>
+          <div className="bb-row-between" style={{ marginBottom: 18 }}>
+            <div>
+              <div className="bb-page-title">Loading…</div>
+            </div>
+          </div>
+          <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
+            <SkeletonStatTile /><SkeletonStatTile /><SkeletonStatTile /><SkeletonStatTile />
+          </div>
+          <SkeletonTable rows={5} cols={8} />
         </main>
       </div>
     );
@@ -413,17 +466,26 @@ function AccountDashboard({ user, onLogout }) {
             <div className="bb-page-subtitle">Meta account ID: {account.meta_account_id || '—'}</div>
           </div>
           <div className="bb-row">
-            <button className="bb-btn" onClick={openImport}>Import from Meta</button>
-            <Link to={`/account/${accountId}/history`} className="bb-btn">History</Link>
-            <Link to={`/account/${accountId}/settings`} className="bb-btn">Settings</Link>
+            <button className="bb-btn" onClick={openImport}>
+              <DownloadCloud size={14} aria-hidden="true" /> Import from Meta
+            </button>
+            <Link to={`/account/${accountId}/history`} className="bb-btn">
+              <HistoryIcon size={14} aria-hidden="true" /> History
+            </Link>
+            <Link to={`/account/${accountId}/settings`} className="bb-btn">
+              <SettingsIcon size={14} aria-hidden="true" /> Settings
+            </Link>
             <button
               className="bb-btn bb-btn-primary"
               onClick={handleRunPacing}
               disabled={pacingRunning}
             >
-              {pacingRunning ? 'Running...' : 'Run Pacing'}
+              {pacingRunning ? <Loader2 size={14} className="bb-i" /> : <Play size={14} aria-hidden="true" />}
+              {pacingRunning ? 'Running…' : 'Run Pacing'}
             </button>
-            <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>Log out</button>
+            <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
+              <LogOut size={14} aria-hidden="true" /> Log out
+            </button>
           </div>
         </div>
 
@@ -431,16 +493,22 @@ function AccountDashboard({ user, onLogout }) {
 
         {/* 4 stat tiles */}
         <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
-          <div className="bb-stat">
-            <span className="bb-stat-label">On Pace</span>
+          <div className="bb-stat bb-stat-on">
+            <span className="bb-stat-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <Check size={11} aria-hidden="true" /> On Pace
+            </span>
             <span className="bb-stat-value">{stats.onPace}</span>
           </div>
-          <div className="bb-stat">
-            <span className="bb-stat-label">Need Increase</span>
+          <div className="bb-stat bb-stat-under">
+            <span className="bb-stat-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <TrendingUp size={11} aria-hidden="true" /> Need Increase
+            </span>
             <span className="bb-stat-value">{stats.needIncrease}</span>
           </div>
-          <div className="bb-stat">
-            <span className="bb-stat-label">Need Decrease</span>
+          <div className="bb-stat bb-stat-over">
+            <span className="bb-stat-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <TrendingDown size={11} aria-hidden="true" /> Need Decrease
+            </span>
             <span className="bb-stat-value">{stats.needDecrease}</span>
           </div>
           <div className="bb-stat">
@@ -449,6 +517,21 @@ function AccountDashboard({ user, onLogout }) {
             <span className="bb-stat-sub">of ${stats.monthlyBudget.toFixed(0)} monthly</span>
           </div>
         </div>
+
+        {/* Spend chart */}
+        {stats.monthlyBudget > 0 && (
+          <div className="bb-card" style={{ marginBottom: 20 }}>
+            <div className="bb-section">
+              <SpendChart
+                monthlyBudget={stats.monthlyBudget}
+                history={accountHistory}
+                currentMtd={stats.totalSpend}
+                title="Account spend vs. target"
+                height={260}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Latest run summary */}
         {lastRun && (
@@ -465,7 +548,7 @@ function AccountDashboard({ user, onLogout }) {
                 <div className="bb-row">
                   <button
                     className="bb-btn bb-btn-secondary"
-                    title="Download full run data as JSON for debugging"
+                    title="Download full run data as JSON"
                     onClick={() => {
                       const blob = new Blob([JSON.stringify(lastRun, null, 2)], { type: 'application/json' });
                       const url = URL.createObjectURL(blob);
@@ -476,14 +559,15 @@ function AccountDashboard({ user, onLogout }) {
                       URL.revokeObjectURL(url);
                     }}
                   >
-                    ↓ Download Run Log
+                    <Download size={13} aria-hidden="true" /> Download Run Log
                   </button>
                   <button
                     className="bb-btn bb-btn-apply"
                     onClick={handleApplyAll}
                     disabled={applying || lastRun.adjustments_needed === 0}
                   >
-                    {applying ? 'Applying...' : 'Apply all to Meta'}
+                    {applying ? <Loader2 size={14} className="bb-i" /> : <Check size={14} aria-hidden="true" />}
+                    {applying ? 'Applying…' : 'Apply all to Meta'}
                   </button>
                 </div>
               </div>
@@ -493,9 +577,6 @@ function AccountDashboard({ user, onLogout }) {
                   {lastRun.failures.length} campaign(s) failed:&nbsp;
                   {lastRun.failures.map((f) => `${f.campaign_name}: ${f.error}`).join(' — ')}
                 </div>
-              )}
-              {applyResult && (
-                <div className="bb-alert bb-alert-success">{applyResult.message || 'Applied to Meta.'}</div>
               )}
             </div>
 
@@ -517,7 +598,6 @@ function AccountDashboard({ user, onLogout }) {
                   {lastRun.recommendations.flatMap((r) => {
                     const mode = r.budget_mode || 'CBO';
                     if (mode === 'ABO') {
-                      // Parent (campaign rollup) row + one sub-row per ad set
                       const parentRow = (
                         <tr key={`c-${r.campaign_id}`} className="bb-row-abo-parent">
                           <td style={{ fontWeight: 600 }}>{r.campaign_name}</td>
@@ -535,6 +615,7 @@ function AccountDashboard({ user, onLogout }) {
                         const tint =
                           action === 'INCREASE' ? 'bb-table-row-tint-up' :
                           action === 'DECREASE' ? 'bb-table-row-tint-down' : '';
+                        const pill = pillForStatus(action, a.pace_ratio);
                         return (
                           <tr key={`a-${a.adset_id}`} className={tint}>
                             <td style={{ paddingLeft: 32, color: 'var(--bb-text-muted)' }}>
@@ -547,19 +628,19 @@ function AccountDashboard({ user, onLogout }) {
                             <td className="num">${(a.current_daily_budget || 0).toFixed(2)}</td>
                             <td className="num">
                               ${(a.recommended_daily_budget || 0).toFixed(2)}
-                              <div>{changeIndicator(a.change_percent)}</div>
+                              <div><ChangeBadge pct={a.change_percent} /></div>
                             </td>
-                            <td><span className={pillForStatus(action, a.pace_ratio).cls}>{pillForStatus(action, a.pace_ratio).text}</span></td>
+                            <td><span className={pill.cls}><pill.Icon size={11} aria-hidden="true" /> {pill.text}</span></td>
                           </tr>
                         );
                       });
                       return [parentRow, ...adsetRows];
                     }
-                    // CBO
                     const action = (r.action || '').toUpperCase();
                     const rowTint =
                       action === 'INCREASE' ? 'bb-table-row-tint-up' :
                       action === 'DECREASE' ? 'bb-table-row-tint-down' : '';
+                    const pill = pillForStatus(action, r.pace_ratio);
                     return [(
                       <tr key={`c-${r.campaign_id}`} className={rowTint}>
                         <td style={{ fontWeight: 600 }}>{r.campaign_name}</td>
@@ -570,9 +651,9 @@ function AccountDashboard({ user, onLogout }) {
                         <td className="num">${(r.current_daily_budget || 0).toFixed(2)}</td>
                         <td className="num">
                           ${(r.recommended_daily_budget || 0).toFixed(2)}
-                          <div>{changeIndicator(r.change_percent)}</div>
+                          <div><ChangeBadge pct={r.change_percent} /></div>
                         </td>
-                        <td><span className={pillForStatus(action, r.pace_ratio).cls}>{pillForStatus(action, r.pace_ratio).text}</span></td>
+                        <td><span className={pill.cls}><pill.Icon size={11} aria-hidden="true" /> {pill.text}</span></td>
                       </tr>
                     )];
                   })}
@@ -592,9 +673,12 @@ function AccountDashboard({ user, onLogout }) {
           </div>
 
           {campaigns.length === 0 ? (
-            <div className="bb-section bb-muted" style={{ paddingTop: 0 }}>
-              No campaigns tracked yet. Click <strong>Import from Meta</strong> above to pull them in.
-            </div>
+            <EmptyState
+              icon={Inbox}
+              title="No campaigns tracked yet"
+              body="Click Import from Meta to pull in your campaigns and start pacing."
+              action={{ label: 'Import from Meta', icon: DownloadCloud, onClick: openImport }}
+            />
           ) : (
             <table className="bb-table">
               <thead>
@@ -642,24 +726,26 @@ function AccountDashboard({ user, onLogout }) {
                       </td>
                       <td className="num">${(c.monthly_budget || 0).toFixed(0)}</td>
                       <td className="num">
-                        {lp?.current_daily_budget !== undefined
+                        {lp?.current_daily_budget !== undefined && lp?.current_daily_budget !== null
                           ? `$${(lp.current_daily_budget || 0).toFixed(2)}`
                           : (c.current_daily_budget !== undefined ? `$${c.current_daily_budget.toFixed(2)}` : '—')}
                       </td>
                       <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
                       <td className="num">
-                        {lp?.recommended_daily_budget !== undefined
-                          ? <>${(lp.recommended_daily_budget).toFixed(2)}<div>{changeIndicator(lp.change_percent)}</div></>
+                        {lp?.recommended_daily_budget !== undefined && lp?.recommended_daily_budget !== null
+                          ? <>${(lp.recommended_daily_budget).toFixed(2)}<div><ChangeBadge pct={lp.change_percent} /></div></>
                           : '—'}
                       </td>
-                      <td>{lp ? <span className={pill.cls}>{pill.text}</span> : <span className="bb-muted">No data</span>}</td>
+                      <td>
+                        {lp ? <span className={pill.cls}><pill.Icon size={11} aria-hidden="true" /> {pill.text}</span> : <span className="bb-muted">No data</span>}
+                      </td>
                       <td>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-link">View →</Link>
                           <button
                             className="bb-btn bb-btn-danger"
                             style={{ fontSize: 11, padding: '3px 8px' }}
-                            onClick={() => handleRemoveCampaign(c.id, c.campaign_name)}
+                            onClick={() => setRemoveTarget({ id: c.id, name: c.campaign_name })}
                             title="Remove from pacing"
                           >
                             Remove
@@ -674,19 +760,21 @@ function AccountDashboard({ user, onLogout }) {
           )}
         </div>
 
-        {/* ── Apply confirmation modal ── */}
+        {/* Apply confirmation modal */}
         {showConfirm && (
           <div className="bb-modal-backdrop" onClick={() => setShowConfirm(false)}>
             <div className="bb-modal" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
               <div className="bb-modal-head">
                 <div className="bb-modal-title">Confirm budget changes in Meta</div>
-                <button className="bb-icon-btn" onClick={() => setShowConfirm(false)}>×</button>
+                <button className="bb-icon-btn" onClick={() => setShowConfirm(false)} aria-label="Close">
+                  <X size={18} aria-hidden="true" />
+                </button>
               </div>
 
               <div className="bb-modal-body">
                 <div className="bb-alert bb-alert-warn" style={{ marginBottom: 16 }}>
                   This will push <strong>{pendingAdjustments.length} budget change{pendingAdjustments.length !== 1 ? 's' : ''}</strong> directly
-                  to Meta via the API. This action cannot be undone automatically — you would need to revert manually in Ads Manager.
+                  to Meta via the API. This cannot be undone automatically — you would need to revert manually in Ads Manager.
                 </div>
 
                 <table className="bb-table">
@@ -718,7 +806,8 @@ function AccountDashboard({ user, onLogout }) {
                           <td className="num">${(adj.recommended_daily_budget || 0).toFixed(2)}</td>
                           <td>
                             <span className={`bb-change ${up ? 'bb-change-up' : 'bb-change-down'}`}>
-                              {up ? '↗ +' : '↘ '}{(adj.change_percent || 0).toFixed(1)}%
+                              {up ? <TrendingUp size={11} aria-hidden="true" /> : <TrendingDown size={11} aria-hidden="true" />}
+                              {up ? '+' : ''}{(adj.change_percent || 0).toFixed(1)}%
                             </span>
                           </td>
                         </tr>
@@ -731,7 +820,36 @@ function AccountDashboard({ user, onLogout }) {
               <div className="bb-modal-foot">
                 <button className="bb-btn" onClick={() => setShowConfirm(false)}>Cancel</button>
                 <button className="bb-btn bb-btn-apply" onClick={handleConfirmApply}>
-                  Yes, push to Meta
+                  <Check size={14} aria-hidden="true" /> Yes, push to Meta
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Remove campaign confirmation modal */}
+        {removeTarget && (
+          <div className="bb-modal-backdrop" onClick={() => setRemoveTarget(null)}>
+            <div className="bb-modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+              <div className="bb-modal-head">
+                <div className="bb-modal-title">Remove from pacing?</div>
+                <button className="bb-icon-btn" onClick={() => setRemoveTarget(null)} aria-label="Close">
+                  <X size={18} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="bb-modal-body">
+                <p style={{ margin: 0 }}>
+                  Stop pacing <strong>{removeTarget.name}</strong>?
+                </p>
+                <p className="bb-muted" style={{ fontSize: 13, marginTop: 8 }}>
+                  This won't change anything in Meta — it just stops BudgetBuddy from including
+                  the campaign in future pacing runs. You can re-add it via Import from Meta.
+                </p>
+              </div>
+              <div className="bb-modal-foot">
+                <button className="bb-btn" onClick={() => setRemoveTarget(null)}>Cancel</button>
+                <button className="bb-btn bb-btn-danger" onClick={handleRemoveCampaign}>
+                  Remove
                 </button>
               </div>
             </div>
@@ -744,11 +862,17 @@ function AccountDashboard({ user, onLogout }) {
             <div className="bb-modal" onClick={(e) => e.stopPropagation()}>
               <div className="bb-modal-head">
                 <div className="bb-modal-title">Import campaigns from Meta</div>
-                <button className="bb-icon-btn" onClick={closeImport}>×</button>
+                <button className="bb-icon-btn" onClick={closeImport} aria-label="Close">
+                  <X size={18} aria-hidden="true" />
+                </button>
               </div>
 
               <div className="bb-modal-body">
-                {importLoading && <p className="bb-muted">Fetching campaigns from Meta...</p>}
+                {importLoading && (
+                  <p className="bb-muted" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Loader2 size={14} className="bb-i" /> Fetching campaigns from Meta…
+                  </p>
+                )}
                 {importError && <div className="bb-alert bb-alert-error">{importError}</div>}
 
                 {!importLoading && metaCampaigns.length > 0 && (
@@ -779,8 +903,7 @@ function AccountDashboard({ user, onLogout }) {
                           const mainRow = (
                             <tr key={c.meta_campaign_id}>
                               <td>
-                                <input
-                                  type="checkbox"
+                                <input type="checkbox"
                                   checked={!!sel.selected}
                                   onChange={() => toggleImportSelection(c.meta_campaign_id)}
                                 />
@@ -799,8 +922,7 @@ function AccountDashboard({ user, onLogout }) {
                               <td>
                                 <input
                                   type="number"
-                                  step="1"
-                                  min="0"
+                                  step="1" min="0"
                                   className="bb-input"
                                   placeholder="0"
                                   value={sel.monthly_budget ?? ''}
@@ -855,9 +977,7 @@ function AccountDashboard({ user, onLogout }) {
                                             <td>
                                               <input
                                                 type="number"
-                                                step="0.5"
-                                                min="0"
-                                                max="100"
+                                                step="0.5" min="0" max="100"
                                                 className="bb-input"
                                                 value={sel.adsets?.[a.meta_adset_id]?.allocation_pct ?? ''}
                                                 onChange={(e) => updateAdsetAllocation(c.meta_campaign_id, a.meta_adset_id, e.target.value)}
@@ -893,14 +1013,19 @@ function AccountDashboard({ user, onLogout }) {
                 )}
 
                 {!importLoading && !importError && metaCampaigns.length === 0 && (
-                  <p className="bb-muted">No active campaigns found in this Meta ad account.</p>
+                  <EmptyState
+                    icon={Inbox}
+                    title="No active campaigns found"
+                    body="There are no active campaigns in this Meta ad account."
+                  />
                 )}
               </div>
 
               <div className="bb-modal-foot">
                 <button className="bb-btn" onClick={closeImport} disabled={importSaving}>Cancel</button>
                 <button className="bb-btn bb-btn-primary" onClick={saveImport} disabled={importSaving || importLoading}>
-                  {importSaving ? 'Saving...' : 'Save selections'}
+                  {importSaving ? <Loader2 size={14} className="bb-i" /> : <Plus size={14} aria-hidden="true" />}
+                  {importSaving ? 'Saving…' : 'Save selections'}
                 </button>
               </div>
             </div>

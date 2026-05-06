@@ -157,6 +157,12 @@ ALTER TABLE pacing_data ADD COLUMN IF NOT EXISTS adset_id INTEGER REFERENCES ads
 ALTER TABLE budget_adjustments ADD COLUMN IF NOT EXISTS adset_id INTEGER REFERENCES adsets(id);
 ```
 
+**Daily digest email (session 8 — must be run before deploying session-8 code):**
+```sql
+ALTER TABLE account_settings
+  ADD COLUMN IF NOT EXISTS daily_digest_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+```
+
 ---
 
 ## Budget Update Strategy (meta_client.py)
@@ -175,12 +181,45 @@ SECRET_KEY=<random>
 FLASK_ENV=production
 CORS_ORIGINS=https://your-frontend.vercel.app
 GOOGLE_CREDENTIALS_JSON=<full contents of service account JSON key>
+
+# Optional — daily digest email (session 8). All five required to send mail.
+SMTP_HOST=smtp.resend.com           # or smtp.sendgrid.net, smtp.gmail.com, etc.
+SMTP_PORT=587                       # 465 = SSL, 587 = STARTTLS
+SMTP_USER=resend                    # Resend uses literal "resend"; SendGrid uses "apikey"
+SMTP_PASS=re_xxxxxxxxxxxxxxxxxx     # API key / password
+SMTP_FROM=BudgetBuddy <noreply@yourdomain.com>
+
+# Optional — manual cron trigger (session 8). Required if you want to fire pacing
+# from an external scheduler instead of relying on APScheduler.
+CRON_SECRET=<long random string>
 ```
 
 **Frontend (Vercel):**
 ```
 REACT_APP_API_URL=https://your-backend.railway.app
 ```
+
+---
+
+## Scheduled pacing & cron
+
+Two complementary mechanisms — pick one or run both:
+
+1. **APScheduler (built-in, default)** — `app.py` starts a `BackgroundScheduler` in production
+   that fires `_scheduled_pacing_job` daily at 06:00 UTC. A Postgres advisory lock prevents
+   double-runs across gunicorn workers. Set `DISABLE_SCHEDULER=true` to turn it off.
+
+2. **External cron via HTTP** — `POST /api/cron/run-all-accounts` runs the same job
+   synchronously. Protected by `X-Cron-Secret: <CRON_SECRET>` header. Use this from
+   Railway cron, Vercel cron, GitHub Actions, cron-job.org, etc. Example:
+   ```
+   curl -X POST https://your-backend.railway.app/api/cron/run-all-accounts \
+        -H "X-Cron-Secret: $CRON_SECRET"
+   ```
+
+Both paths run pacing for every account, write `PacingData` snapshots, log a `PacingRun`
+of type `AUTO`, write back to Google Sheets (when configured), and send digest emails to
+each user whose accounts have `daily_digest_enabled=TRUE` (when SMTP is configured).
 
 ---
 
@@ -216,6 +255,18 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
 
+- [x] **2026-05-06 (session 8 — Opus)** — "Make this feel like a real product" pass. Five high-ROI upgrades:
+  - **Lucide icons throughout.** Added `lucide-react` to package.json. Sidebar items now show icons + a brand mark (gradient pill with `Activity` glyph). Buttons (Run Pacing, Apply, Import from Meta, Save, Sync Budgets, Write Spend, Logout, Cancel, etc.) all carry inline icons. Status pills use `Check` / `TrendingUp` / `TrendingDown` / `Minus`. Change indicators use real arrow icons in place of ↗ ↘. Modal close buttons use the `X` icon. Login/Register show a centered brand mark above the title.
+  - **Toast system.** New `frontend/src/components/Toast.jsx` provides `<ToastProvider>` (wraps the app in `App.jsx`) and `useToast()` with `success/error/warn/info` variants — top-right stack with auto-dismiss, mount/leave animations. All transient `bb-alert` banners on Home, AccountDashboard, CampaignDetail, Settings, and History have been replaced with toast calls. Page-level errors (load failures) still show as inline alerts where blocking the UI is the right call.
+  - **Spend-vs-target chart.** New `frontend/src/components/SpendChart.jsx` (Chart.js line chart). Plots cumulative actual spend vs. expected linear trajectory for the current month, with shaded fill, today marker, and a friendly empty state when there's no monthly budget set. Wired into both `CampaignDetail` (uses the per-campaign `pacing-history` endpoint) and `AccountDashboard` (aggregates across every campaign in the account by summing `pacing-history` rows by date).
+  - **Skeletons + designed empty states.** New `frontend/src/components/Skeleton.jsx` exports `SkeletonStatTile`, `SkeletonTable`, `SkeletonCard`, `SkeletonAccountBlock` — shimmer-animated placeholders that match the real layout. New `frontend/src/components/EmptyState.jsx` exports `<EmptyState>` (icon-tile + headline + body + optional CTA). All "Loading…" muted text replaced with skeletons; all "No campaigns / No history" muted-row strings replaced with proper empty states with CTAs (Add Account, Import from Meta, etc.).
+  - **Daily digest email + manual cron endpoint.** New `backend/email_service.py` builds and sends a per-user daily digest via SMTP — works with Resend / SendGrid / Postmark / Gmail / SES (any SMTP provider). New `daily_digest_enabled` column on `account_settings` (opt-in toggle in Settings → Pacing Parameters). The existing `_scheduled_pacing_job` in `app.py` now collects off-pace items per account, buckets them by user, and emails an HTML+text digest after the run. New `POST /api/cron/run-all-accounts` endpoint (header-auth via `X-Cron-Secret`) lets external schedulers fire the same job — useful for Railway cron / Vercel cron / GitHub Actions.
+  - **`window.confirm` removed** — the campaign-remove flow now uses a proper modal instead of the browser-native dialog (matched the rest of the design system).
+  - ⚠️ **Requires Neon migration** before this code can ship: `ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS daily_digest_enabled BOOLEAN NOT NULL DEFAULT FALSE;` (without it, settings updates that include the new field will 500).
+  - ⚠️ **Requires `npm install` on the frontend** to pick up `lucide-react@^0.379.0`.
+  - ⚠️ **SMTP env vars are optional.** Without them, the digest step logs and skips silently — no error.
+  - Verified: backend `python3 -c 'import ast; ast.parse(...)'` clean across `app.py`, `database.py`, `email_service.py`, and all touched routes. Frontend `react-scripts build` (CI=true → warnings-as-errors) compiles cleanly. Build size: 167 kB JS, 5.6 kB CSS gzipped.
+
 - [x] **2026-05-05 (session 7 — Opus)** — Real CBO/ABO support, pacing math overhaul, design alignment.
   - `backend/database.py` — added `AdSet` model, `Campaign.budget_mode`, nullable `adset_id` on `PacingData` and `BudgetAdjustment`. `Campaign.to_dict` now produces a roll-up `latest_pacing` for ABO and a single-row latest for CBO (so frontend doesn't see one ad set's row as if it were the whole campaign).
   - `backend/meta_client.py` — added `get_adset_spend()`. (`update_adset_budget` and `list_adsets_for_campaign` already existed.)
@@ -238,5 +289,8 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 ## Known Issues / Open TODOs
 
 - [ ] **Run the ABO migration in Neon before deploying session-7 code** — see SQL block above. Once that's done, the new code is safe to push.
+- [ ] **Run the digest migration in Neon before deploying session-8 code** — `ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS daily_digest_enabled BOOLEAN NOT NULL DEFAULT FALSE;`
+- [ ] **Run `npm install` in `frontend/`** to pick up `lucide-react`.
 - [ ] No real-Meta-API ABO test yet — math + apply flow are unit-tested with a faked Meta client. First production run on a real ABO campaign should be watched (recommend running on one campaign and inspecting Ads Manager before enabling it broadly).
 - [ ] Recommendations table can get long for ABO accounts with many ad sets. Consider a per-campaign collapse/expand toggle if it gets uncomfortable.
+- [ ] No SMTP test sender from the UI yet — once SMTP env vars are set on Railway, you can verify by running `POST /api/cron/run-all-accounts` (with the `X-Cron-Secret` header) and checking your inbox.
