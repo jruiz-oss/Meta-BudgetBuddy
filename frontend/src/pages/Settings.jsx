@@ -29,6 +29,10 @@ function Settings({ user, onLogout }) {
   const [sheetSyncLoading, setSheetSyncLoading] = useState(false);
   const [sheetWriteLoading, setSheetWriteLoading] = useState(false);
 
+  // Per-account token override
+  const [tokenOverride, setTokenOverride] = useState('');
+  const [tokenSaving, setTokenSaving] = useState(false);
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
@@ -69,6 +73,19 @@ function Settings({ user, onLogout }) {
       const msg = err.response?.data?.error || 'Failed to save settings';
       setError(msg);
       toast.error(msg);
+    }
+  };
+
+  const handleSaveTokenOverride = async () => {
+    setTokenSaving(true);
+    try {
+      await axios.put(`/api/accounts/${accountId}`, { meta_token: tokenOverride });
+      toast.success(tokenOverride.trim() ? 'Token override saved.' : 'Token override cleared — using global token.');
+      setTokenOverride('');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save token');
+    } finally {
+      setTokenSaving(false);
     }
   };
 
@@ -289,6 +306,32 @@ function Settings({ user, onLogout }) {
                 <button className="bb-btn bb-btn-primary" onClick={handleSaveSettings}>
                   <Save size={14} aria-hidden="true" /> Save settings
                 </button>
+              </div>
+
+              {/* Per-account token override */}
+              <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid var(--bb-divider)' }}>
+                <div className="bb-section-title" style={{ marginBottom: 4 }}>Meta Token Override</div>
+                <div className="bb-section-meta" style={{ marginBottom: 12 }}>
+                  Leave blank to use the global token. Only fill this in if this specific account uses a different token.
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="password"
+                    className="bb-input"
+                    placeholder="Paste new token, or leave blank to revert to global"
+                    value={tokenOverride}
+                    onChange={(e) => setTokenOverride(e.target.value)}
+                    style={{ maxWidth: 400 }}
+                  />
+                  <button
+                    className="bb-btn bb-btn-secondary"
+                    onClick={handleSaveTokenOverride}
+                    disabled={tokenSaving}
+                  >
+                    {tokenSaving ? <Loader2 size={14} className="bb-spin" /> : <Save size={14} aria-hidden="true" />}
+                    {tokenOverride.trim() ? 'Save override' : 'Clear override'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

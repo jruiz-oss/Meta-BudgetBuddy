@@ -174,7 +174,7 @@ def run_pacing(account_id):
 
     try:
         meta = MetaClient(
-            access_token=account.meta_token,
+            access_token=account.effective_meta_token,
             ad_account_id=account.meta_account_id,
         )
     except ValueError as e:
@@ -501,7 +501,7 @@ def apply_recommendations(account_id):
 
     try:
         meta = MetaClient(
-            access_token=account.meta_token,
+            access_token=account.effective_meta_token,
             ad_account_id=account.meta_account_id,
         )
     except ValueError as e:

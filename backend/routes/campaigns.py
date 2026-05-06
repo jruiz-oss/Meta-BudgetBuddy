@@ -59,7 +59,7 @@ def sync_campaigns(account_id):
         return jsonify({'error': 'Account not found'}), 404
 
     try:
-        meta = MetaClient(account.meta_token, account.meta_account_id)
+        meta = MetaClient(account.effective_meta_token, account.meta_account_id)
     except ValueError as e:
         return jsonify({'error': f'Bad Meta credentials: {e}'}), 400
 

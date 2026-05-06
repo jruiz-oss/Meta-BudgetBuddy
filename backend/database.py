@@ -11,14 +11,19 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(255), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
+    # Shared Meta access token used by all accounts unless overridden per-account.
+    global_meta_token = db.Column(db.String(1000), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     accounts = db.relationship('Account', backref='user', lazy=True, cascade='all, delete-orphan')
 
     def to_dict(self):
+        tok = self.global_meta_token or ''
         return {
             'id': self.id,
             'email': self.email,
+            'has_global_token': bool(tok),
+            'global_token_preview': (tok[:6] + '…' + tok[-4:]) if len(tok) > 10 else ('set' if tok else ''),
             'created_at': self.created_at.isoformat()
         }
 
@@ -30,8 +35,16 @@ class Account(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     account_name = db.Column(db.String(255), nullable=False)
     meta_account_id = db.Column(db.String(255), nullable=False)
-    meta_token = db.Column(db.String(1000), nullable=False)  # Meta API access token
+    # Per-account token override. Leave blank to fall back to the user's global_meta_token.
+    meta_token = db.Column(db.String(1000), nullable=False, default='')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def effective_meta_token(self):
+        """Account-level token if set; otherwise the owning user's global token."""
+        if self.meta_token and self.meta_token.strip():
+            return self.meta_token.strip()
+        return (self.user.global_meta_token or '').strip() if self.user else ''
 
     campaigns = db.relationship('Campaign', backref='account', lazy=True, cascade='all, delete-orphan')
     settings = db.relationship('AccountSettings', backref='account', lazy=True, uselist=False, cascade='all, delete-orphan')
