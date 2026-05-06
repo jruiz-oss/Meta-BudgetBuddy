@@ -403,8 +403,14 @@ def get_all_campaigns():
                             if p.date and p.date >= month_start]
 
                 if not all_pacing:
-                    # Never paced → newly synced, give benefit of the doubt
-                    is_zero_spend = False
+                    # Never paced. Give a 7-day grace window for genuinely
+                    # new imports — anything older with no pacing history is
+                    # a stale/zombie import and should be hidden.
+                    age_days = (
+                        (datetime.utcnow() - campaign.created_at).days
+                        if campaign.created_at else 999
+                    )
+                    is_zero_spend = age_days > 7
                 elif mtd_rows:
                     # Has this-month snapshots: hide only if every one shows $0
                     is_zero_spend = all((p.actual_spend or 0) == 0 for p in mtd_rows)
@@ -575,7 +581,11 @@ def get_campaigns(account_id):
                         if p.date and p.date >= month_start]
 
             if not all_pacing:
-                is_zero_spend = False
+                age_days = (
+                    (datetime.utcnow() - campaign.created_at).days
+                    if campaign.created_at else 999
+                )
+                is_zero_spend = age_days > 7
             elif mtd_rows:
                 is_zero_spend = all((p.actual_spend or 0) == 0 for p in mtd_rows)
             else:
