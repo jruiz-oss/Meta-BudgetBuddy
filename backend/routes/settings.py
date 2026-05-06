@@ -128,12 +128,29 @@ def batch_update_flights(account_id):
     if not user_owns_account(account_id):
         return jsonify({'error': 'Not found'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     updates = data.get('updates', [])
+    if not isinstance(updates, list):
+        return jsonify({'error': 'updates must be a list'}), 400
+
+    # Validate everything up front; reject the whole batch on any bad input so we don't
+    # half-write rows. Mirrors the validation the single-update endpoint above performs.
+    for update in updates:
+        if not isinstance(update, dict):
+            return jsonify({'error': 'each update must be an object'}), 400
+        if 'flight_type' in update and update['flight_type'] not in ('ALWAYS_ON', 'LIMITED'):
+            return jsonify({'error': "flight_type must be 'ALWAYS_ON' or 'LIMITED'"}), 400
+        for key in ('flight_start_date', 'flight_end_date'):
+            val = update.get(key)
+            if val:
+                try:
+                    datetime.fromisoformat(str(val)[:10])
+                except (TypeError, ValueError):
+                    return jsonify({'error': f'{key} must be ISO-formatted (YYYY-MM-DD)'}), 400
 
     results = []
     for update in updates:
-        campaign = Campaign.query.filter_by(id=update['id'], account_id=account_id).first()
+        campaign = Campaign.query.filter_by(id=update.get('id'), account_id=account_id).first()
         if campaign:
             if 'flight_type' in update:
                 campaign.flight_type = update['flight_type']

@@ -7,6 +7,7 @@ account can use its own credentials.
 """
 
 import logging
+import re
 import time
 from datetime import date
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,17 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://graph.facebook.com/v18.0"
 DEFAULT_TIMEOUT = 15
 DEFAULT_RETRIES = 2
+
+# Strip any access_token=... fragment that might appear in URLs Meta echoes back in
+# error bodies. Without this, a Meta error response that quotes the request URL would
+# leak the user's Meta token into our HTTP responses and into application logs.
+_ACCESS_TOKEN_RE = re.compile(r"access_token=[^&\s\"']+")
+
+
+def _scrub_token(text: str) -> str:
+    if not text:
+        return text
+    return _ACCESS_TOKEN_RE.sub("access_token=REDACTED", text)
 
 
 class MetaAPIError(Exception):
@@ -93,6 +105,7 @@ class MetaClient:
                     body = e.response.text
                 except Exception:
                     pass
+                body = _scrub_token(body)
                 # Retry transient 5xx responses — Meta returns these intermittently and a
                 # raise-immediately approach would fail a /run mid-flight and leave partial
                 # PacingData rows.
@@ -107,12 +120,12 @@ class MetaClient:
                 raise MetaAPIError(f"{status_code}: {body}") from e
             except Exception as e:
                 last_err = e
-                logger.error("Meta request failed: %s", e)
+                logger.error("Meta request failed: %s", _scrub_token(str(e)))
                 if attempt < self.retries:
                     time.sleep(2 ** attempt)
                     continue
 
-        raise MetaAPIError(f"Meta request failed after retries: {last_err}")
+        raise MetaAPIError(f"Meta request failed after retries: {_scrub_token(str(last_err))}")
 
     # ------------------------------------------------------------------
     # Reads

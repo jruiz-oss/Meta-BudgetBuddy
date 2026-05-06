@@ -24,12 +24,25 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_pre_ping': True,
     'pool_recycle': 280,
 }
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
+_is_production = os.getenv('FLASK_ENV') == 'production'
+
+# Refuse to boot in production with the placeholder SECRET_KEY. A predictable key lets
+# anyone forge session cookies and impersonate any user, so a soft fallback would be a
+# foot-gun if Railway env vars are ever wiped.
+_secret_key = os.getenv('SECRET_KEY')
+if _is_production:
+    if not _secret_key or _secret_key in ('dev-secret-key', 'your-secret-key-change-this-in-production'):
+        raise RuntimeError(
+            "SECRET_KEY must be set to a non-default value in production. "
+            "Set it as a Railway env var to a long random string."
+        )
+else:
+    _secret_key = _secret_key or 'dev-secret-key'
+app.config['SECRET_KEY'] = _secret_key
 
 # Cross-domain session cookies.
 # In production (Vercel → Railway): SameSite=None + Secure required for cross-site cookies.
 # In development (localhost → localhost): Lax + not Secure, otherwise browsers drop cookies over HTTP.
-_is_production = os.getenv('FLASK_ENV') == 'production'
 app.config['SESSION_COOKIE_SAMESITE'] = 'None' if _is_production else 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = _is_production
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -39,7 +52,13 @@ db.init_app(app)
 
 # CORS: comma-separated origins via env var, defaults to allowing all in dev.
 # In prod, set CORS_ORIGINS=https://your-frontend.vercel.app
+# Refuse to boot with `*` and credentials in production — that would let any site read
+# the user's session by reflecting the Origin header.
 _cors_origins = os.getenv('CORS_ORIGINS', '*')
+if _is_production and _cors_origins.strip() in ('', '*'):
+    raise RuntimeError(
+        "CORS_ORIGINS must be set to an explicit allow-list (not '*') in production."
+    )
 if _cors_origins == '*':
     CORS(app, supports_credentials=True)
 else:
@@ -48,6 +67,22 @@ else:
         supports_credentials=True,
         origins=[o.strip() for o in _cors_origins.split(',') if o.strip()],
     )
+
+
+# ── Security response headers ────────────────────────────────────────────────
+# Cheap defense-in-depth headers. They cost nothing and make a few classes of
+# browser attacks (clickjacking, MIME sniffing, mixed-content) much harder.
+@app.after_request
+def _add_security_headers(resp):
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('X-Frame-Options', 'DENY')
+    resp.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    if _is_production:
+        # Only assert HSTS in prod (locally we run over plain HTTP).
+        resp.headers.setdefault(
+            'Strict-Transport-Security', 'max-age=31536000; includeSubDomains'
+        )
+    return resp
 
 # Register blueprints
 app.register_blueprint(auth_bp)

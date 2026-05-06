@@ -238,7 +238,10 @@ def preview_matches(account_id):
     except (ValueError, RuntimeError) as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
-        return jsonify({"error": f"Could not open sheet: {e}"}), 400
+        # Don't echo the raw exception text — google-auth/gspread errors can include
+        # request URLs, internal paths, or token fragments. Log full detail server-side.
+        logger.exception("Could not open Google Sheet for account %s", account_id)
+        return jsonify({"error": "Could not open Google Sheet. Check the URL and that the service account has access."}), 400
 
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
@@ -287,7 +290,10 @@ def sync_budgets(account_id):
     except (ValueError, RuntimeError) as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
-        return jsonify({"error": f"Could not open sheet: {e}"}), 400
+        # Don't echo the raw exception text — google-auth/gspread errors can include
+        # request URLs, internal paths, or token fragments. Log full detail server-side.
+        logger.exception("Could not open Google Sheet for account %s", account_id)
+        return jsonify({"error": "Could not open Google Sheet. Check the URL and that the service account has access."}), 400
 
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
@@ -439,9 +445,9 @@ def write_spend(account_id):
         result = write_spend_for_account(account_id)
     except (ValueError, RuntimeError) as e:
         return jsonify({"error": str(e)}), 400
-    except Exception as e:
+    except Exception:
         logger.exception("write_spend_for_account failed for account %s", account_id)
-        return jsonify({"error": f"Could not open sheet: {e}"}), 400
+        return jsonify({"error": "Could not write to Google Sheet. See server logs for details."}), 400
 
     return jsonify({
         "message": f"Wrote spend for {result['written_count']} campaign(s) to '{result['sheet_tab']}'",

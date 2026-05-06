@@ -4,6 +4,18 @@ from .auth import login_required
 
 history_bp = Blueprint('history', __name__, url_prefix='/api/history')
 
+# Maximum rows any single history endpoint will return. Caps cheap-but-noisy DoS where
+# someone hits ?limit=10000000 repeatedly. The UI never asks for more than ~100.
+HISTORY_MAX_LIMIT = 500
+
+
+def _clamp_limit(value, default):
+    try:
+        n = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        n = default
+    return max(1, min(n, HISTORY_MAX_LIMIT))
+
 
 def user_owns_account(account_id):
     account = Account.query.get(account_id)
@@ -37,7 +49,7 @@ def get_pacing_runs(account_id):
     if not user_owns_account(account_id):
         return jsonify({'error': 'Not found'}), 404
 
-    limit    = request.args.get('limit', 50, type=int)
+    limit    = _clamp_limit(request.args.get('limit'), default=50)
     run_type = request.args.get('run_type', None)
 
     query = PacingRun.query.filter_by(account_id=account_id)
@@ -54,7 +66,7 @@ def get_adjustments(account_id):
     if not user_owns_account(account_id):
         return jsonify({'error': 'Not found'}), 404
 
-    limit       = request.args.get('limit', 100, type=int)
+    limit       = _clamp_limit(request.args.get('limit'), default=100)
     campaign_id = request.args.get('campaign_id', None, type=int)
 
     query = BudgetAdjustment.query.join(Campaign).filter(Campaign.account_id == account_id)

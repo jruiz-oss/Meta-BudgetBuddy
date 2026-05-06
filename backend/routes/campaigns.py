@@ -3,13 +3,28 @@ Campaign management routes - CRUD for campaigns and flight configuration.
 Also exposes a /sync endpoint that pulls campaigns straight from Meta.
 """
 
+import logging
+
 from flask import Blueprint, request, jsonify, session
 from database import db, Account, AdSet, Campaign, PacingData, User
 from meta_client import MetaAPIError, MetaClient
 from routes.auth import login_required
 from datetime import datetime, timedelta
 
+logger = logging.getLogger(__name__)
+
 campaigns_bp = Blueprint('campaigns', __name__, url_prefix='/api/campaigns')
+
+
+def _internal_error(err, context):
+    """Log the real exception, but never echo it back to the client.
+
+    Returning ``str(e)`` from a 500 handler can leak SQL fragments, file paths,
+    library internals, etc. — useful info for an attacker probing the surface.
+    Callers receive a generic message; the full traceback only goes to logs.
+    """
+    logger.exception("%s: %s", context, err)
+    return jsonify({'error': 'Internal server error'}), 500
 
 
 def _current_user():
@@ -385,7 +400,7 @@ def get_all_campaigns():
         return jsonify({'accounts': result}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return _internal_error(e, 'get_all_campaigns failed')
 
 
 @campaigns_bp.route('/<account_id>', methods=['GET'])
@@ -433,7 +448,7 @@ def get_campaigns(account_id):
         }), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return _internal_error(e, 'get_campaigns failed')
 
 
 @campaigns_bp.route('/<account_id>/<campaign_id>', methods=['GET'])
@@ -474,7 +489,7 @@ def get_campaign(account_id, campaign_id):
         return jsonify(camp_dict), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return _internal_error(e, 'get_campaign failed')
 
 
 @campaigns_bp.route('/<account_id>/<campaign_id>/pacing-history', methods=['GET'])
@@ -501,7 +516,7 @@ def get_pacing_history(account_id, campaign_id):
         return jsonify({'history': history, 'campaign_id': campaign_id}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return _internal_error(e, 'get_pacing_history failed')
 
 
 @campaigns_bp.route('/<account_id>', methods=['POST'])
@@ -545,7 +560,7 @@ def create_campaign(account_id):
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return _internal_error(e, 'create_campaign failed')
 
 
 @campaigns_bp.route('/<account_id>/<campaign_id>', methods=['PUT'])
@@ -590,7 +605,7 @@ def update_campaign(account_id, campaign_id):
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return _internal_error(e, 'update_campaign failed')
 
 
 @campaigns_bp.route('/<account_id>/<campaign_id>', methods=['DELETE'])
@@ -618,7 +633,7 @@ def delete_campaign(account_id, campaign_id):
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return _internal_error(e, 'delete_campaign failed')
 
 
 @campaigns_bp.route('/<account_id>/<campaign_id>/adsets', methods=['PUT'])
@@ -695,4 +710,4 @@ def update_adset_allocations(account_id, campaign_id):
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return _internal_error(e, 'update_adset_allocations failed')
