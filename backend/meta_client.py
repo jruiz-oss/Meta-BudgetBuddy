@@ -174,10 +174,24 @@ class MetaClient:
             "status",
             "daily_budget",
             "lifetime_budget",
+            "is_campaign_budget_optimized",
             "start_time",
             "stop_time",
         ]
         return self._request("GET", f"/{meta_campaign_id}", params={"fields": ",".join(fields)})
+
+    @staticmethod
+    def _write_response_ok(resp: Any) -> bool:
+        """True if Meta accepted the write: JSON true, success flag, or id-only dict."""
+        if resp is True:
+            return True
+        if isinstance(resp, dict):
+            if "success" in resp:
+                return bool(resp.get("success"))
+            if resp.get("error"):
+                return False
+            return True
+        return True
 
     def get_campaign_spend(
         self,
@@ -253,14 +267,14 @@ class MetaClient:
         endpoint = f"/{meta_campaign_id}"
         data = {"daily_budget": int(round(new_daily_budget * 100))}  # to cents
         resp = self._request("POST", endpoint, data=data)
-        return bool(resp.get("success", True))
+        return self._write_response_ok(resp)
 
     def update_adset_budget(self, adset_id: str, new_daily_budget: float) -> bool:
         """Update an adset's daily budget. Returns True on success."""
         endpoint = f"/{adset_id}"
         data = {"daily_budget": int(round(new_daily_budget * 100))}
         resp = self._request("POST", endpoint, data=data)
-        return bool(resp.get("success", True))
+        return self._write_response_ok(resp)
 
     # ------------------------------------------------------------------
     # Higher-level helpers
@@ -286,7 +300,15 @@ class MetaClient:
         except MetaAPIError as e:
             return {"strategy": "error", "error": str(e)}
 
-        has_cbo = bool(camp.get("daily_budget"))
+        cbo_flag = camp.get("is_campaign_budget_optimized")
+        if cbo_flag is not None:
+            has_cbo = bool(cbo_flag)
+        else:
+            raw_db = camp.get("daily_budget")
+            try:
+                has_cbo = int(raw_db or 0) > 0
+            except (TypeError, ValueError):
+                has_cbo = False
 
         if has_cbo:
             try:

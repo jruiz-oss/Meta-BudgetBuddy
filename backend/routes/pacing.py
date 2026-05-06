@@ -765,12 +765,16 @@ def apply_recommendations(account_id):
 
     err_results = [r for r in results if r.get("error")]
     http_code = 200 if applied_count or not err_results else 422
-    return jsonify({
+    first_err = (err_results[0].get("error") if err_results else None) or "Apply failed"
+    payload = {
         "message": f"Applied {applied_count} budget adjustments",
         "applied_count": applied_count,
         "failed_count": len(err_results),
         "results": results,
-    }), http_code
+    }
+    if http_code == 422:
+        payload["error"] = first_err
+    return jsonify(payload), http_code
 
 
 @pacing_bp.route("/<account_id>/summary", methods=["GET"])

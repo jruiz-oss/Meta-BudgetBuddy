@@ -115,13 +115,29 @@ function CampaignDetail({ user, onLogout }) {
 
     try {
       const res = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments });
-      toast.success(
-        `${res.data.applied_count || adjustments.length} budget change${adjustments.length === 1 ? '' : 's'} pushed to Meta.`,
-        { title: 'Applied' }
-      );
-      fetchData();
+      const applied = res.data.applied_count ?? 0;
+      const failures = (res.data.results || []).filter((r) => r.error);
+      const skipped = (res.data.results || []).filter((r) => r.skipped);
+      if (failures.length && applied === 0) {
+        const msg = failures[0].error || res.data.error || 'Failed to apply recommendation';
+        setError(msg);
+        toast.error(msg, { title: 'Apply failed' });
+      } else if (failures.length) {
+        toast.warn(`${applied} applied; ${failures.length} failed. ${failures[0].error || ''}`, { title: 'Partial apply' });
+        fetchData();
+      } else if (skipped.length && applied === 0) {
+        toast.info('No budget changes sent — already on pace or unchanged.', { title: 'Nothing to apply' });
+        fetchData();
+      } else {
+        toast.success(
+          `${applied} budget change${applied === 1 ? '' : 's'} pushed to Meta.`,
+          { title: 'Applied' },
+        );
+        fetchData();
+      }
     } catch (err) {
-      const msg = err.response?.data?.error || 'Failed to apply recommendation';
+      const d = err.response?.data;
+      const msg = d?.error || d?.results?.find((r) => r.error)?.error || 'Failed to apply recommendation';
       setError(msg);
       toast.error(msg, { title: 'Apply failed' });
     } finally {
@@ -168,12 +184,30 @@ function CampaignDetail({ user, onLogout }) {
     };
 
     try {
-      await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: [adjustment] });
-      setAdsetResults((p) => ({ ...p, [adset.id]: { ok: true, msg: `Applied — new daily: $${(alp.recommended_daily_budget || 0).toFixed(2)}` } }));
-      toast.success(`${adset.adset_name}: pushed new daily of $${(alp.recommended_daily_budget || 0).toFixed(2)} to Meta.`);
-      fetchData();
+      const { data } = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: [adjustment] });
+      const applied = data.applied_count ?? 0;
+      const failures = (data.results || []).filter((r) => r.error);
+      const skipped = (data.results || []).filter((r) => r.skipped);
+      if (failures.length && applied === 0) {
+        const msg = failures[0].error || data.error || 'Failed to apply';
+        setAdsetResults((p) => ({ ...p, [adset.id]: { ok: false, msg } }));
+        toast.error(msg, { title: 'Apply failed' });
+      } else if (failures.length) {
+        setAdsetResults((p) => ({ ...p, [adset.id]: { ok: true, partial: true, msg: failures[0].error } }));
+        toast.warn(failures[0].error || 'Partial apply', { title: 'Apply warning' });
+        fetchData();
+      } else if (skipped.length && applied === 0) {
+        setAdsetResults((p) => ({ ...p, [adset.id]: { ok: true, noop: true } }));
+        toast.info('No change sent — already on pace or unchanged.', { title: 'Apply' });
+        fetchData();
+      } else {
+        setAdsetResults((p) => ({ ...p, [adset.id]: { ok: true, msg: `Applied — new daily: $${(alp.recommended_daily_budget || 0).toFixed(2)}` } }));
+        toast.success(`${adset.adset_name}: pushed new daily of $${(alp.recommended_daily_budget || 0).toFixed(2)} to Meta.`);
+        fetchData();
+      }
     } catch (err) {
-      const msg = err.response?.data?.error || 'Failed to apply';
+      const d = err.response?.data;
+      const msg = d?.error || d?.results?.find((r) => r.error)?.error || 'Failed to apply';
       setAdsetResults((p) => ({ ...p, [adset.id]: { ok: false, msg } }));
       toast.error(msg, { title: 'Apply failed' });
     } finally {
