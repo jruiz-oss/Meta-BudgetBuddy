@@ -6,6 +6,7 @@ Also exposes a /sync endpoint that pulls campaigns straight from Meta.
 import logging
 
 from flask import Blueprint, request, jsonify, session
+from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from database import db, Account, AdSet, Campaign, PacingData, PacingRun, User
 from meta_client import MetaAPIError, MetaClient
@@ -383,6 +384,15 @@ def get_all_campaigns():
                 lr = max(account.pacing_runs, key=lambda r: r.run_at or datetime.min)
                 last_run = lr.run_at.isoformat() if lr.run_at else None
 
+            # Has pacing run at all this month for this account?
+            # If yes, any campaign missing current-month rows was skipped by
+            # the pacing engine — i.e. it returned no data from Meta — which
+            # means it's ended/inactive. Safe to hide those.
+            pacing_ran_this_month = any(
+                r.run_at and r.run_at.date() >= month_start
+                for r in (account.pacing_runs or [])
+            )
+
             camp_list = []
             hidden_list = []
             for campaign in account.campaigns:
@@ -390,36 +400,47 @@ def get_all_campaigns():
                     continue
 
                 # --- Ended-campaign filter ---
-                # Three-way decision using already-loaded pacing_data:
+                # Decision tree (all pacing_data already eager-loaded):
                 #
-                # 1. No pacing data at all → newly synced, keep it.
-                # 2. Has current-month snapshots → hide if ALL show $0 spend.
-                # 3. Has only prior-month data → check the most recent snapshot:
-                #    - $0 spend last time it ran → ended before this month, hide it.
-                #    - Real spend last time → may still be active, just not paced
-                #      yet this month (e.g. new month, cron hasn't fired) → keep it.
-                all_pacing = campaign.pacing_data  # already eager-loaded
+                # 1. No pacing data at all:
+                #    - Imported within last 7 days → newly synced, show it.
+                #    - Older than 7 days → stale zombie import, hide it.
+                #
+                # 2. Has current-month pacing rows:
+                #    - Any row with spend > 0 → live, show it.
+                #    - All rows show $0 → ended/paused this month, hide it.
+                #
+                # 3. Has only prior-month pacing data (nothing yet this month):
+                #    - Pacing HAS run this month for this account → this campaign
+                #      was skipped by the pacing engine (Meta returned nothing) →
+                #      it's ended. Hide it.
+                #    - Pacing has NOT run yet this month → it's the start of a new
+                #      month and cron hasn't fired yet. Check last snapshot spend:
+                #      $0 → hide; real spend → keep.
+                all_pacing = campaign.pacing_data
                 mtd_rows = [p for p in all_pacing
                             if p.date and p.date >= month_start]
 
                 if not all_pacing:
-                    # Never paced. Give a 7-day grace window for genuinely
-                    # new imports — anything older with no pacing history is
-                    # a stale/zombie import and should be hidden.
                     age_days = (
                         (datetime.utcnow() - campaign.created_at).days
                         if campaign.created_at else 999
                     )
                     is_zero_spend = age_days > 7
+
                 elif mtd_rows:
-                    # Has this-month snapshots: hide only if every one shows $0
                     is_zero_spend = all((p.actual_spend or 0) == 0 for p in mtd_rows)
+
                 else:
-                    # Paced before this month, nothing yet this month.
-                    # Most-recent snapshot determines fate.
-                    latest = max(all_pacing,
-                                 key=lambda p: (p.date or date_type.min, p.id or 0))
-                    is_zero_spend = (latest.actual_spend or 0) == 0
+                    # Prior-month data only, no current-month rows.
+                    if pacing_ran_this_month:
+                        # Pacing ran but skipped this campaign → it's dead.
+                        is_zero_spend = True
+                    else:
+                        # Pacing hasn't fired yet this month; use last snapshot.
+                        latest = max(all_pacing,
+                                     key=lambda p: (p.date or date_type.min, p.id or 0))
+                        is_zero_spend = (latest.actual_spend or 0) == 0
 
                 camp_dict = campaign.to_dict()
 
@@ -539,7 +560,8 @@ def get_campaigns(account_id):
         if not account:
             return jsonify({'error': 'Account not found'}), 404
 
-        # Eager-load pacing rows + adsets so to_dict() doesn't trigger one query per row.
+        # Eager-load pacing rows + adsets + pacing_runs so to_dict() and the
+        # ended-campaign filter don't trigger extra queries.
         campaigns = (
             Campaign.query
             .filter_by(account_id=account_id, is_active=True)
@@ -550,8 +572,18 @@ def get_campaigns(account_id):
             .all()
         )
 
+        # Has pacing run at all this month for this account?
         today = datetime.utcnow().date()
         month_start = today.replace(day=1)
+        pacing_ran_this_month = (
+            PacingRun.query
+            .filter(
+                PacingRun.account_id == account_id,
+                func.date(PacingRun.run_at) >= month_start,
+            )
+            .limit(1)
+            .count() > 0
+        )
 
         campaigns_data = []
         hidden_data = []
@@ -575,7 +607,7 @@ def get_campaigns(account_id):
             if campaign.budget_mode == 'ABO':
                 camp_dict['adsets'] = [a.to_dict() for a in campaign.adsets if a.is_active]
 
-            # Ended-campaign filter (same three-way logic as get_all_campaigns)
+            # Ended-campaign filter — mirrors get_all_campaigns logic exactly.
             all_pacing = campaign.pacing_data
             mtd_rows = [p for p in all_pacing
                         if p.date and p.date >= month_start]
@@ -589,9 +621,13 @@ def get_campaigns(account_id):
             elif mtd_rows:
                 is_zero_spend = all((p.actual_spend or 0) == 0 for p in mtd_rows)
             else:
-                latest = max(all_pacing,
-                             key=lambda p: (p.date or date_type.min, p.id or 0))
-                is_zero_spend = (latest.actual_spend or 0) == 0
+                if pacing_ran_this_month:
+                    # Pacing ran but skipped this campaign → it's dead.
+                    is_zero_spend = True
+                else:
+                    latest = max(all_pacing,
+                                 key=lambda p: (p.date or date_type.min, p.id or 0))
+                    is_zero_spend = (latest.actual_spend or 0) == 0
 
             if is_zero_spend:
                 camp_dict['hidden_reason'] = 'no_spend_this_month'
