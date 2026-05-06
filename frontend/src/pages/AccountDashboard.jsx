@@ -408,6 +408,37 @@ function AccountDashboard({ user, onLogout }) {
     navigate('/login');
   };
 
+  // Pull a read-only health snapshot of this account from the backend and
+  // trigger a JSON download. Used to debug accounts whose dashboard looks
+  // off without having to crack open the DB. Pure read — never mutates.
+  const handleDownloadDiagnostic = async () => {
+    try {
+      const response = await axios.get(`/api/accounts/${accountId}/diagnostic`);
+      const data = response.data;
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const safeName = (data?.account?.name || 'account')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+      const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+      a.href = url;
+      a.download = `diagnostic-${safeName}-${stamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      const counts = data?.summary?.by_health || {};
+      const orphans = counts.orphan_no_adsets || 0;
+      toast.success(
+        orphans > 0
+          ? `Diagnostic downloaded — ${orphans} orphan ABO campaign${orphans === 1 ? '' : 's'} found`
+          : 'Diagnostic downloaded'
+      );
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not generate diagnostic');
+    }
+  };
+
   // Derived stats
   const stats = useMemo(() => {
     const s = { onPace: 0, needIncrease: 0, needDecrease: 0, totalSpend: 0, monthlyBudget: 0 };
@@ -499,6 +530,13 @@ function AccountDashboard({ user, onLogout }) {
             <Link to={`/account/${accountId}/settings`} className="bb-btn">
               <SettingsIcon size={14} aria-hidden="true" /> Settings
             </Link>
+            <button
+              className="bb-btn bb-btn-ghost"
+              onClick={handleDownloadDiagnostic}
+              title="Download a read-only JSON snapshot of this account's campaign health"
+            >
+              <Download size={14} aria-hidden="true" /> Diagnostic
+            </button>
             <button
               className="bb-btn bb-btn-primary"
               onClick={handleRunPacing}

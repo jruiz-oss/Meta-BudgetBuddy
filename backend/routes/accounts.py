@@ -2,7 +2,8 @@ import logging
 from datetime import datetime
 
 from flask import Blueprint, request, jsonify, session
-from database import db, Account, AccountSettings, AdSet, Campaign, User
+from sqlalchemy.orm import selectinload
+from database import db, Account, AccountSettings, AdSet, Campaign, PacingData, PacingRun, User
 from .auth import login_required
 
 logger = logging.getLogger(__name__)
@@ -348,4 +349,143 @@ def refresh_campaigns(account_id):
         'message': f'Imported {imported} campaign(s) from Meta.',
         'imported': imported,
         'errors': errors,
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic — read-only health snapshot of one account.
+# ---------------------------------------------------------------------------
+#
+# This endpoint exists to make debugging "weird" accounts trivial: instead of
+# poking around in the DB or the UI, the user can hit `Download diagnostic`
+# on the account page and send the resulting JSON back. It's pure read — it
+# cannot break any data and it doesn't call Meta. Safe to ship anywhere.
+#
+# What's in the payload:
+#   - account.{id, name, meta_account_id}
+#   - settings (the relevant pacing thresholds)
+#   - last_pacing_run (for context — when did the cron last fire)
+#   - campaigns: per-campaign health record. Each row tells you:
+#       * budget_mode, monthly_budget, is_active, created_at
+#       * adset_count_active / _total
+#       * pacing_row_count, latest_pacing_date, latest_pacing_status
+#       * health: 'ok' | 'orphan_no_adsets' | 'stale_never_paced'
+#         | 'no_data_yet'
+#     This is enough to spot exactly which campaigns are clogging the list
+#     and why, without running any SQL.
+# ---------------------------------------------------------------------------
+
+@accounts_bp.route('/<int:account_id>/diagnostic', methods=['GET'])
+@login_required
+def account_diagnostic(account_id):
+    """Read-only health snapshot of one account. See module-level comment above."""
+    account = Account.query.get(account_id)
+    if not account or account.user_id != session['user_id']:
+        return jsonify({'error': 'Not found'}), 404
+
+    # Eager-load everything to_dict touches so we don't fan out N+1 inside
+    # the per-campaign loop below. Same pattern as /api/campaigns/all.
+    campaigns = (
+        Campaign.query
+        .filter_by(account_id=account_id)
+        .options(
+            selectinload(Campaign.adsets),
+            selectinload(Campaign.pacing_data),
+        )
+        .order_by(Campaign.is_active.desc(), Campaign.campaign_name.asc())
+        .all()
+    )
+
+    last_run = (
+        PacingRun.query
+        .filter_by(account_id=account_id)
+        .order_by(PacingRun.run_at.desc())
+        .first()
+    )
+
+    now = datetime.utcnow()
+    rows = []
+    for c in campaigns:
+        active_adsets = [a for a in c.adsets if a.is_active]
+        total_adsets = len(c.adsets)
+
+        # Latest pacing row across both campaign-level and ad-set-level rows.
+        latest_pd = None
+        if c.pacing_data:
+            latest_pd = max(
+                c.pacing_data,
+                key=lambda p: (p.date or datetime.min.date(), p.id or 0),
+            )
+
+        age_days = (now - c.created_at).days if c.created_at else None
+
+        # Classify so the user doesn't have to interpret the numbers.
+        if not c.is_active:
+            health = 'untracked'
+        elif c.budget_mode == 'ABO' and len(active_adsets) == 0:
+            # Orphan ABO — pacing skips it because there are no ad sets to
+            # pull spend for. This is the case the SQL cleanup targets.
+            health = 'orphan_no_adsets'
+        elif latest_pd is None:
+            # Never produced a pacing row. If it was imported >7d ago, the
+            # ended-campaign filter would normally hide it, but it's still
+            # a real diagnostic signal.
+            health = 'stale_never_paced' if (age_days or 0) > 7 else 'no_data_yet'
+        else:
+            health = 'ok'
+
+        rows.append({
+            'campaign_id': c.id,
+            'campaign_name': c.campaign_name,
+            'meta_campaign_id': c.meta_campaign_id,
+            'budget_mode': c.budget_mode,
+            'monthly_budget': c.monthly_budget,
+            'is_active': c.is_active,
+            'created_at': c.created_at.isoformat() if c.created_at else None,
+            'age_days': age_days,
+            'flight_type': c.flight_type,
+            'flight_start_date': c.flight_start_date.isoformat() if c.flight_start_date else None,
+            'flight_end_date': c.flight_end_date.isoformat() if c.flight_end_date else None,
+            'adset_count_active': len(active_adsets),
+            'adset_count_total': total_adsets,
+            'pacing_row_count': len(c.pacing_data),
+            'latest_pacing_date': latest_pd.date.isoformat() if (latest_pd and latest_pd.date) else None,
+            'latest_pacing_status': getattr(latest_pd, 'status', None),
+            'latest_pacing_actual_spend': getattr(latest_pd, 'actual_spend', None),
+            'health': health,
+        })
+
+    # Aggregate counts so the user can see the pattern at a glance without
+    # scanning the per-campaign list.
+    summary = {
+        'total': len(rows),
+        'active': sum(1 for r in rows if r['is_active']),
+        'untracked': sum(1 for r in rows if not r['is_active']),
+        'by_health': {
+            'ok': sum(1 for r in rows if r['health'] == 'ok'),
+            'orphan_no_adsets': sum(1 for r in rows if r['health'] == 'orphan_no_adsets'),
+            'stale_never_paced': sum(1 for r in rows if r['health'] == 'stale_never_paced'),
+            'no_data_yet': sum(1 for r in rows if r['health'] == 'no_data_yet'),
+            'untracked': sum(1 for r in rows if r['health'] == 'untracked'),
+        },
+        'by_mode': {
+            'CBO': sum(1 for r in rows if r['budget_mode'] == 'CBO' and r['is_active']),
+            'ABO': sum(1 for r in rows if r['budget_mode'] == 'ABO' and r['is_active']),
+        },
+    }
+
+    settings = AccountSettings.query.filter_by(account_id=account_id).first()
+
+    return jsonify({
+        'generated_at': now.isoformat() + 'Z',
+        'account': {
+            'id': account.id,
+            'name': account.account_name,
+            'meta_account_id': account.meta_account_id,
+            'created_at': account.created_at.isoformat() if account.created_at else None,
+        },
+        'settings': settings.to_dict() if settings else None,
+        'last_pacing_run': last_run.to_dict() if last_run else None,
+        'summary': summary,
+        'campaigns': rows,
     }), 200
