@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { getCached, setCached, invalidateCache } from '../cache';
 import {
   Search, X, Play, Check, LogOut, Inbox, Plus, Building2,
   TrendingUp, TrendingDown, Minus, ArrowRight, RotateCcw, Loader2,
@@ -39,33 +40,27 @@ function Home({ user, onLogout }) {
 
   const navigate = useNavigate();
 
-  const fetchAll = useCallback(async () => {
+  const fetchAll = useCallback(async (force = false) => {
+    // Use cache unless forced (e.g. after a pacing run)
+    const cached = !force && getCached('home-data');
+    if (cached) {
+      setAllAccounts(cached.accounts);
+      setAccountBlocks(cached.blocks);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
-      const acctRes = await axios.get('/api/accounts');
-      const accounts = acctRes.data.accounts || acctRes.data || [];
+      // Single call returns all accounts + campaigns + latest pacing in one shot,
+      // replacing the previous 1 + (2 × N) per-account waterfall.
+      const res = await axios.get('/api/campaigns/all');
+      const blocks = res.data.accounts || [];
+      const accounts = blocks.map(({ id, account_name }) => ({ id, account_name }));
+
       setAllAccounts(accounts);
-
-      if (accounts.length === 0) {
-        setAccountBlocks([]);
-        return;
-      }
-
-      const blocks = await Promise.all(
-        accounts.map(async (acct) => {
-          const [campRes, summaryRes] = await Promise.all([
-            axios.get(`/api/campaigns/${acct.id}`),
-            axios.get(`/api/pacing/${acct.id}/summary`).catch(() => ({ data: {} })),
-          ]);
-          return {
-            id: acct.id,
-            account_name: acct.account_name,
-            last_run: summaryRes.data?.last_run || null,
-            campaigns: campRes.data.campaigns || [],
-          };
-        })
-      );
       setAccountBlocks(blocks);
+      setCached('home-data', { accounts, blocks });
     } catch (err) {
       setError('Failed to load campaigns: ' + (err.response?.data?.error || err.message));
     } finally {
@@ -110,7 +105,8 @@ function Home({ user, onLogout }) {
       if (isFullSuccess)      toast.success(summary, { title: 'Pacing complete' });
       else if (!isAllFail)    toast.warn(summary, { title: 'Pacing finished with errors' });
       else                    toast.error(summary, { title: 'Pacing failed' });
-      fetchAll();
+      invalidateCache('home-data');
+      fetchAll(true);
     } finally {
       setRunningAll(false);
     }

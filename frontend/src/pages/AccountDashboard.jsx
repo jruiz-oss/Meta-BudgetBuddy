@@ -12,6 +12,7 @@ import { SkeletonStatTile, SkeletonTable } from '../components/Skeleton';
 import { EmptyState } from '../components/EmptyState';
 import SpendChart from '../components/SpendChart';
 import { useToast } from '../components/Toast';
+import { getCached, setCached, invalidateCache } from '../cache';
 
 /**
  * Single-account dashboard.
@@ -55,7 +56,18 @@ function AccountDashboard({ user, onLogout }) {
 
   useEffect(() => { fetchAll(); }, [accountId]);
 
-  const fetchAll = async () => {
+  const fetchAll = async (force = false) => {
+    const cacheKey = `dashboard-${accountId}`;
+    const cached = !force && getCached(cacheKey);
+    if (cached) {
+      setAccounts(cached.accounts);
+      setAccount(cached.account);
+      setCampaigns(cached.campaigns);
+      setAccountHistory(cached.history || []);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const [accountsRes, accountRes, campaignsRes] = await Promise.all([
@@ -103,6 +115,14 @@ function AccountDashboard({ user, onLogout }) {
           .map(([date, actual_spend]) => ({ date, actual_spend }))
           .sort((a, b) => a.date.localeCompare(b.date));
         setAccountHistory(aggregated);
+
+        // Cache the full set so navigating away and back is instant
+        setCached(`dashboard-${accountId}`, {
+          accounts: accountsRes.data.accounts || accountsRes.data || [],
+          account: accountRes.data.account || accountRes.data,
+          campaigns: camps,
+          history: aggregated,
+        });
       } catch {
         setAccountHistory([]);
       }
@@ -127,6 +147,7 @@ function AccountDashboard({ user, onLogout }) {
         toast.warn(`${response.data.failures.length} campaign(s) had errors.`);
       }
 
+      // Bust cache so the post-run fetch gets live data
       // Surface sheet writeback result so the user can see what happened
       const sw = response.data.sheet_writeback;
       if (sw) {
@@ -142,7 +163,8 @@ function AccountDashboard({ user, onLogout }) {
         }
       }
 
-      fetchAll();
+      invalidateCache(`dashboard-${accountId}`, 'home-data');
+      fetchAll(true);
     } catch (err) {
       const msg = err.response?.data?.error || 'Failed to run pacing calculations';
       setError(msg);

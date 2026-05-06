@@ -32,8 +32,8 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
         <span>BudgetBuddy</span>
       </div>
 
-      {/* ACCOUNTS — always visible */}
-      <div className="bb-sidebar-section">
+      {/* ACCOUNTS — scrollable list, fixed label */}
+      <div className="bb-sidebar-section bb-sidebar-section-accounts">
         <div className="bb-sidebar-label">Accounts</div>
         <ul className="bb-sidebar-list">
           {accounts.map((acc) => (

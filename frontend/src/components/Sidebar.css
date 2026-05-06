@@ -10,7 +10,8 @@
   position: sticky;
   top: 0;
   height: 100vh;
-  overflow-y: auto;
+  /* Sidebar itself never scrolls — only the accounts list does */
+  overflow: hidden;
 }
 
 .bb-sidebar-brand {
@@ -22,10 +23,35 @@
   border-bottom: 1px solid var(--bb-divider);
 }
 
+/* Generic section — used for Navigation and (via modifier) for Accounts */
 .bb-sidebar-section {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Accounts section fills remaining height and scrolls internally */
+.bb-sidebar-section-accounts {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bb-sidebar-section-accounts .bb-sidebar-list {
+  overflow-y: auto;
+  flex: 1 1 0;
+  min-height: 0;
+  /* Thin, subtle scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: #c1c8d0 transparent;
+}
+.bb-sidebar-section-accounts .bb-sidebar-list::-webkit-scrollbar { width: 4px; }
+.bb-sidebar-section-accounts .bb-sidebar-list::-webkit-scrollbar-thumb {
+  background: #c1c8d0;
+  border-radius: 4px;
 }
 
 .bb-sidebar-label {
