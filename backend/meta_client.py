@@ -78,7 +78,9 @@ class MetaClient:
                 if method == "GET":
                     resp = requests.get(url, params=params, timeout=self.timeout)
                 elif method == "POST":
-                    resp = requests.post(url, params=params, json=data, timeout=self.timeout)
+                    # Graph / Marketing API expect form-encoded bodies for most POSTs;
+                    # JSON bodies are often ignored, which led to "success" with no budget change.
+                    resp = requests.post(url, params=params, data=data, timeout=self.timeout)
                 else:
                     raise ValueError(f"Unsupported method: {method}")
 

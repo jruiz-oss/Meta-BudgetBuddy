@@ -233,13 +233,33 @@ function AccountDashboard({ user, onLogout }) {
     setError('');
     try {
       const response = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: pendingAdjustments });
-      toast.success(
-        `${response.data.applied_count || pendingAdjustments.length} budget change${pendingAdjustments.length === 1 ? '' : 's'} pushed to Meta.`,
-        { title: 'Applied' }
-      );
-      fetchAll();
+      const { applied_count: applied = 0, results = [] } = response.data;
+      const failures = results.filter((r) => r.error);
+      const skipped = results.filter((r) => r.skipped);
+      if (failures.length && applied === 0) {
+        const msg = failures[0].error || 'Failed to apply recommendations';
+        setError(msg);
+        toast.error(msg, { title: 'Apply failed' });
+      } else if (failures.length) {
+        toast.warn(
+          `${applied} applied; ${failures.length} failed. ${failures[0].error || ''}`,
+          { title: 'Partial apply' },
+        );
+        fetchAll();
+      } else if (skipped.length && applied === 0) {
+        toast.info('No budget changes sent — items were already on pace or unchanged.', { title: 'Nothing to apply' });
+        fetchAll();
+      } else {
+        toast.success(
+          `${applied} budget change${applied === 1 ? '' : 's'} pushed to Meta.`,
+          { title: 'Applied' },
+        );
+        fetchAll();
+      }
     } catch (err) {
-      const msg = err.response?.data?.error || 'Failed to apply recommendations';
+      const data = err.response?.data;
+      const fromResults = data?.results?.find((r) => r.error)?.error;
+      const msg = fromResults || data?.error || 'Failed to apply recommendations';
       setError(msg);
       toast.error(msg, { title: 'Apply failed' });
     } finally {

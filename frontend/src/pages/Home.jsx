@@ -130,15 +130,33 @@ function Home({ user, onLogout }) {
     setApplying((p) => ({ ...p, [rowKey]: true }));
     setResults((p) => ({ ...p, [rowKey]: null }));
     try {
-      await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: [adjustment] });
-      setResults((p) => ({ ...p, [rowKey]: { ok: true } }));
-      toast.success(
-        `Pushed new daily of $${(adjustment.recommended_daily_budget || 0).toFixed(2)} to Meta.`,
-        { title: 'Applied' }
-      );
-      fetchAll();
+      const { data } = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: [adjustment] });
+      const applied = data.applied_count ?? 0;
+      const failures = (data.results || []).filter((r) => r.error);
+      const skipped = (data.results || []).filter((r) => r.skipped);
+      if (failures.length && applied === 0) {
+        const msg = failures[0].error || 'Failed';
+        setResults((p) => ({ ...p, [rowKey]: { ok: false, msg } }));
+        toast.error(msg, { title: 'Apply failed' });
+      } else if (failures.length) {
+        setResults((p) => ({ ...p, [rowKey]: { ok: true, partial: true } }));
+        toast.warn(failures[0].error || 'Partial apply', { title: 'Apply warning' });
+        fetchAll();
+      } else if (skipped.length && applied === 0) {
+        setResults((p) => ({ ...p, [rowKey]: { ok: true, noop: true } }));
+        toast.info('No change sent — already on pace or unchanged.', { title: 'Apply' });
+        fetchAll();
+      } else {
+        setResults((p) => ({ ...p, [rowKey]: { ok: true } }));
+        toast.success(
+          `Pushed new daily of $${(adjustment.recommended_daily_budget || 0).toFixed(2)} to Meta.`,
+          { title: 'Applied' },
+        );
+        fetchAll();
+      }
     } catch (err) {
-      const msg = err.response?.data?.error || 'Failed';
+      const d = err.response?.data;
+      const msg = d?.results?.find((r) => r.error)?.error || d?.error || 'Failed';
       setResults((p) => ({ ...p, [rowKey]: { ok: false, msg } }));
       toast.error(msg, { title: 'Apply failed' });
     } finally {

@@ -666,6 +666,13 @@ def apply_recommendations(account_id):
                 results.append({"adset_id": adset_local_id, "error": str(e)})
                 continue
 
+            if not ok:
+                results.append({
+                    "adset_id": adset_local_id,
+                    "error": "Meta returned success=false for ad set budget update",
+                })
+                continue
+
             db.session.add(BudgetAdjustment(
                 campaign_id=owning_campaign.id,
                 adset_id=adset.id,
@@ -682,7 +689,7 @@ def apply_recommendations(account_id):
                 "adset_name": adset.adset_name,
                 "campaign_id": owning_campaign.id,
                 "applied_new_daily": round(new_daily, 2),
-                "success": ok,
+                "success": True,
             })
             applied_count += 1
             continue
@@ -705,6 +712,36 @@ def apply_recommendations(account_id):
             results.append({"campaign_id": campaign.id, "error": str(e)})
             continue
 
+        strat = (meta_result or {}).get("strategy")
+        if strat == "error":
+            results.append({
+                "campaign_id": campaign.id,
+                "error": (meta_result or {}).get("error", "Meta apply failed"),
+                "meta": meta_result,
+            })
+            continue
+        if strat == "campaign" and not (meta_result or {}).get("success", True):
+            results.append({
+                "campaign_id": campaign.id,
+                "error": "Meta returned success=false for campaign budget update",
+                "meta": meta_result,
+            })
+            continue
+        if strat == "adsets":
+            updates = (meta_result or {}).get("updates") or []
+            failed = [u for u in updates if u.get("error") or not u.get("success", True)]
+            if failed or not updates:
+                msg = "; ".join(
+                    u.get("error") or "success=false"
+                    for u in (failed or updates or [{"error": "No ad set updates"}])
+                )[:500]
+                results.append({
+                    "campaign_id": campaign.id,
+                    "error": msg or "Ad set budget updates failed",
+                    "meta": meta_result,
+                })
+                continue
+
         db.session.add(BudgetAdjustment(
             campaign_id=campaign.id,
             adset_id=None,
@@ -726,11 +763,14 @@ def apply_recommendations(account_id):
 
     db.session.commit()
 
+    err_results = [r for r in results if r.get("error")]
+    http_code = 200 if applied_count or not err_results else 422
     return jsonify({
         "message": f"Applied {applied_count} budget adjustments",
         "applied_count": applied_count,
+        "failed_count": len(err_results),
         "results": results,
-    }), 200
+    }), http_code
 
 
 @pacing_bp.route("/<account_id>/summary", methods=["GET"])

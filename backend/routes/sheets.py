@@ -7,6 +7,18 @@ Endpoints:
   POST    /api/sheets/<account_id>/sync-budgets   – pull monthly budgets from sheet → DB
   POST    /api/sheets/<account_id>/write-spend    – push MTD spend + last paced date → sheet
 
+Meta section column layout (each data row under the ``Meta`` header):
+
+  A — Campaign label (matched to the tracked campaign name in the app)
+  B — Monthly budget
+  C — MTD spend (usually written back by the app)
+  D — Optional **account scope**: Budget Buddy ``account_name`` or Meta ad account id
+      (``act_…`` or numeric). When filled, the row is only used when syncing **that**
+      account. Leave blank for legacy sheets (row applies to whichever account is syncing).
+  E — Reserved / free-form
+  F — Notes (ABO allocation lines, ``Name - X%``)
+  G — Last paced date
+
 Requires:
   - GOOGLE_CREDENTIALS_JSON env var (Railway secret) containing a service account JSON key
   - The service account must have Viewer (for read) or Editor (for write) access to the sheet
@@ -77,6 +89,30 @@ def _parse_float(val: str):
         return None
 
 
+def _norm_meta_id_digits(raw: str) -> str:
+    """Digits-only form of a Meta ad account id for comparison (handles act_ / punctuation)."""
+    if not raw:
+        return ""
+    return re.sub(r"\D+", "", str(raw).lower().replace("act_", ""))
+
+
+def _sheet_row_matches_account(scope_cell: str, account: Account) -> bool:
+    """Blank column D → row applies to whichever Budget Buddy account is syncing (legacy).
+
+    Otherwise the cell must match this account's name (case-insensitive) or Meta ad account id.
+    """
+    if scope_cell is None or not str(scope_cell).strip():
+        return True
+    if not account:
+        return False
+    s = str(scope_cell).strip()
+    if s.lower() == (account.account_name or "").strip().lower():
+        return True
+    cell_digits = _norm_meta_id_digits(s)
+    acct_digits = _norm_meta_id_digits(account.meta_account_id or "")
+    return bool(cell_digits and acct_digits and cell_digits == acct_digits)
+
+
 def _get_meta_section(worksheet):
     """
     Return rows from the Meta section of the worksheet.
@@ -86,8 +122,8 @@ def _get_meta_section(worksheet):
     Skips blank rows.
 
     Returns a list of dicts:
-      { row_index (1-based int), name (str), monthly_budget (float|None),
-        mtd_spend (float|None), notes (str), last_paced (str) }
+      { row_index (1-based int), name (str), account_scope (str),
+        monthly_budget (float|None), mtd_spend (float|None), notes (str), last_paced (str) }
     """
     all_values = worksheet.get_all_values()  # list of lists of strings
 
@@ -112,6 +148,7 @@ def _get_meta_section(worksheet):
             continue
 
         name = row[0].strip() if len(row) > 0 else ""
+        account_scope = row[3].strip() if len(row) > 3 else ""
         monthly_budget = _parse_float(row[1]) if len(row) > 1 else None
         mtd_spend = _parse_float(row[2]) if len(row) > 2 else None
         notes = row[5].strip() if len(row) > 5 else ""
@@ -121,6 +158,7 @@ def _get_meta_section(worksheet):
             rows.append({
                 "row_index": i + 1,  # 1-based for Sheets API
                 "name": name,
+                "account_scope": account_scope,
                 "monthly_budget": monthly_budget,
                 "mtd_spend": mtd_spend,
                 "notes": notes,
@@ -184,6 +222,7 @@ def _word_overlap_score(name1: str, name2: str) -> float:
 # "Resort - Weddings" matches "Resort 2026: Wedding Booking" but tight enough
 # that two clearly-different campaigns don't get cross-matched.
 _FUZZY_MATCH_THRESHOLD = 0.5
+_SCORE_TIE_EPS = 1e-6
 
 
 def _match_campaign(sheet_name: str, db_campaigns: list):
@@ -193,68 +232,72 @@ def _match_campaign(sheet_name: str, db_campaigns: list):
     Priority:
       1. Exact match
       2. Case-insensitive match
-      3. Partial match — one name is a substring of the other
-         (e.g. "Commit 2026: Boosting" inside "Harrah's OKLAHOMA - Commit 2026: Boosting")
-      4. Word-overlap ≥ 50% (with stemming) — catches names that share most
-         meaningful words but differ in prefix/suffix or grammatical form
-         ("Weddings" ↔ "Wedding Booking").
+      3. Substring match only when **unique** among tracked campaigns
+      4. Word-overlap ≥ threshold with a clear winner (no tie for top score)
 
-    Returns the matched Campaign or None.
+    Order is deterministic (sorted by campaign name) so results don't flap.
     """
-    sheet_lower = sheet_name.lower()
+    if not sheet_name or not db_campaigns:
+        return None
 
-    for c in db_campaigns:
+    campaigns = sorted(db_campaigns, key=lambda c: (c.campaign_name or "").lower())
+
+    for c in campaigns:
         if c.campaign_name == sheet_name:
             return c
 
-    for c in db_campaigns:
+    sheet_lower = sheet_name.lower()
+    for c in campaigns:
         if c.campaign_name.lower() == sheet_lower:
             return c
 
-    for c in db_campaigns:
+    substring_hits = []
+    for c in campaigns:
         meta_lower = c.campaign_name.lower()
         if sheet_lower in meta_lower or meta_lower in sheet_lower:
-            return c
+            substring_hits.append(c)
+    if len(substring_hits) == 1:
+        return substring_hits[0]
+    pool = substring_hits if len(substring_hits) > 1 else campaigns
 
-    # Word-overlap fallback — pick the highest-scoring campaign above the threshold.
-    best_score, best_c = 0.0, None
-    for c in db_campaigns:
-        score = _word_overlap_score(sheet_name, c.campaign_name)
-        if score > best_score:
-            best_score, best_c = score, c
-    if best_score >= _FUZZY_MATCH_THRESHOLD:
+    scored = [(_word_overlap_score(sheet_name, c.campaign_name), c) for c in pool]
+    scored.sort(key=lambda x: (-x[0], (x[1].campaign_name or "").lower()))
+    best_score, best_c = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else -1.0
+    if best_score >= _FUZZY_MATCH_THRESHOLD and (best_score - second_score) > _SCORE_TIE_EPS:
         return best_c
-
     return None
 
 
 def _match_adset(needle_name: str, adsets: list):
-    """Match a name (e.g. parsed out of the Notes column) to one of `campaign.adsets`.
-
-    Same priority chain as _match_campaign but operates on AdSet.adset_name.
-    Returns the matched AdSet or None.
-    """
+    """Match a Notes-column label to an AdSet (same rules as _match_campaign)."""
     if not needle_name or not adsets:
         return None
+
+    rows = sorted(adsets, key=lambda a: (a.adset_name or "").lower())
     needle_lower = needle_name.lower()
 
-    for a in adsets:
+    for a in rows:
         if a.adset_name == needle_name:
             return a
-    for a in adsets:
+    for a in rows:
         if a.adset_name.lower() == needle_lower:
             return a
-    for a in adsets:
+
+    substring_hits = []
+    for a in rows:
         a_lower = a.adset_name.lower()
         if needle_lower in a_lower or a_lower in needle_lower:
-            return a
+            substring_hits.append(a)
+    if len(substring_hits) == 1:
+        return substring_hits[0]
+    pool = substring_hits if len(substring_hits) > 1 else rows
 
-    best_score, best_a = 0.0, None
-    for a in adsets:
-        score = _word_overlap_score(needle_name, a.adset_name)
-        if score > best_score:
-            best_score, best_a = score, a
-    if best_score >= _FUZZY_MATCH_THRESHOLD:
+    scored = [(_word_overlap_score(needle_name, a.adset_name), a) for a in pool]
+    scored.sort(key=lambda x: (-x[0], (x[1].adset_name or "").lower()))
+    best_score, best_a = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else -1.0
+    if best_score >= _FUZZY_MATCH_THRESHOLD and (best_score - second_score) > _SCORE_TIE_EPS:
         return best_a
     return None
 
@@ -395,12 +438,28 @@ def preview_matches(account_id):
 
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
+    account = Account.query.get(account_id)
 
     matches = []
     for row in sheet_rows:
+        scope = row.get("account_scope") or ""
+        if not _sheet_row_matches_account(scope, account):
+            matches.append({
+                "sheet_name": row["name"],
+                "account_scope": scope,
+                "monthly_budget": row["monthly_budget"],
+                "mtd_spend": row["mtd_spend"],
+                "last_paced": row["last_paced"],
+                "row_index": row["row_index"],
+                "matched_campaign_id": None,
+                "matched_campaign_name": None,
+                "match_type": "account_scope_mismatch",
+            })
+            continue
         campaign = _match_campaign(row["name"], db_campaigns)
         matches.append({
             "sheet_name": row["name"],
+            "account_scope": scope,
             "monthly_budget": row["monthly_budget"],
             "mtd_spend": row["mtd_spend"],
             "last_paced": row["last_paced"],
@@ -410,11 +469,12 @@ def preview_matches(account_id):
             "match_type": _match_type_label(row["name"], campaign),
         })
 
+    bad_types = {"none", "account_scope_mismatch"}
     return jsonify({
         "sheet_tab": tab_name,
         "total_sheet_rows": len(sheet_rows),
-        "matched": sum(1 for m in matches if m["match_type"] != "none"),
-        "unmatched": sum(1 for m in matches if m["match_type"] == "none"),
+        "matched": sum(1 for m in matches if m["match_type"] not in bad_types),
+        "unmatched": sum(1 for m in matches if m["match_type"] in bad_types),
         "matches": matches,
     }), 200
 
@@ -442,6 +502,10 @@ def sync_budgets_for_account(account_id):
     if not settings or not (settings.google_sheet_id or "").strip():
         raise ValueError("Google Sheet not configured.")
 
+    account = Account.query.get(account_id)
+    if not account:
+        raise ValueError("Account not found.")
+
     gc = _get_gspread_client()
     spreadsheet = gc.open_by_key(settings.google_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet)
@@ -454,6 +518,13 @@ def sync_budgets_for_account(account_id):
     skipped = []
 
     for row in sheet_rows:
+        scope = row.get("account_scope") or ""
+        if not _sheet_row_matches_account(scope, account):
+            skipped.append({
+                "sheet_name": row["name"],
+                "reason": "Column D does not match this Budget Buddy account — row skipped",
+            })
+            continue
         campaign = _match_campaign(row["name"], db_campaigns)
         if not campaign:
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
@@ -618,6 +689,10 @@ def write_spend_for_account(account_id):
     if not settings or not (settings.google_sheet_id or "").strip():
         raise ValueError("Google Sheet not configured.")
 
+    account = Account.query.get(account_id)
+    if not account:
+        raise ValueError("Account not found.")
+
     gc = _get_gspread_client()
     spreadsheet = gc.open_by_key(settings.google_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet)
@@ -633,6 +708,13 @@ def write_spend_for_account(account_id):
     skipped = []
 
     for row in sheet_rows:
+        scope = row.get("account_scope") or ""
+        if not _sheet_row_matches_account(scope, account):
+            skipped.append({
+                "sheet_name": row["name"],
+                "reason": "Column D does not match this Budget Buddy account — row skipped",
+            })
+            continue
         campaign = _match_campaign(row["name"], db_campaigns)
         if not campaign:
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
