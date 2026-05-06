@@ -454,6 +454,72 @@ def get_all_campaigns():
         return _internal_error(e, 'get_all_campaigns failed')
 
 
+@campaigns_bp.route('/<account_id>/history-aggregate', methods=['GET'])
+@login_required
+def get_account_pacing_history(account_id):
+    """
+    Return the last 30 days of pacing history for ALL campaigns in the account,
+    aggregated (summed) by date.  The AccountDashboard uses this for the spend
+    chart — one round trip instead of one per campaign.
+
+    Aggregation rules:
+    - CBO rows (adset_id IS NULL): keep the highest-id row per (date, campaign)
+      so multiple same-day runs don't double-count.
+    - ABO rows (adset_id IS NOT NULL): sum all adset rows per date directly;
+      the per-adset structure means they never overlap.
+    """
+    try:
+        user = _current_user()
+        if not user:
+            return jsonify({'error': 'Not authenticated'}), 401
+        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        if not account:
+            return jsonify({'error': 'Account not found'}), 404
+
+        cutoff = datetime.utcnow().date() - timedelta(days=30)
+
+        rows = (
+            PacingData.query
+            .join(Campaign, Campaign.id == PacingData.campaign_id)
+            .filter(
+                Campaign.account_id == account_id,
+                Campaign.is_active == True,
+                PacingData.date >= cutoff,
+            )
+            .all()
+        )
+
+        by_date = {}                       # date_str → summed actual_spend
+        cbo_best = {}                      # (date_str, campaign_id) → highest-id PacingData row
+
+        for row in rows:
+            d = row.date.isoformat() if row.date else None
+            if not d:
+                continue
+            if row.adset_id is None:
+                # CBO — deduplicate per campaign per day, keep highest id
+                key = (d, row.campaign_id)
+                prev = cbo_best.get(key)
+                if prev is None or (row.id or 0) > (prev.id or 0):
+                    cbo_best[key] = row
+            else:
+                # ABO — sum all adset rows per date
+                by_date[d] = by_date.get(d, 0.0) + (row.actual_spend or 0.0)
+
+        # Fold deduplicated CBO rows into the same date bucket
+        for (d, _), row in cbo_best.items():
+            by_date[d] = by_date.get(d, 0.0) + (row.actual_spend or 0.0)
+
+        history = [
+            {'date': d, 'actual_spend': round(v, 2)}
+            for d, v in sorted(by_date.items())
+        ]
+        return jsonify({'history': history}), 200
+
+    except Exception as e:
+        return _internal_error(e, 'get_account_pacing_history failed')
+
+
 @campaigns_bp.route('/<account_id>', methods=['GET'])
 @login_required
 def get_campaigns(account_id):

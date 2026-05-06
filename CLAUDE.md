@@ -314,6 +314,22 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 
 ---
 
+## Deploy — Push to GitHub (triggers Railway + Vercel auto-deploy)
+
+Run these from the repo root (`Meta-BudgetBuddy/`) after any session:
+
+```bash
+cd ~/Documents/Meta\ BudgetBuddy
+git add -A
+git commit -m "describe what changed here"
+git push origin main
+```
+
+Railway redeploys the backend automatically on push to `main`.
+Vercel redeploys the frontend automatically on push to `main`.
+
+---
+
 ## Known Issues / Open TODOs
 
 - [ ] **Run the ABO migration in Neon before deploying session-7 code** — see SQL block above. Once that's done, the new code is safe to push.

@@ -88,40 +88,11 @@ function AccountDashboard({ user, onLogout }) {
       setCampaigns(camps);
       setHiddenCampaigns(hiddenCamps);
 
-      // Aggregate per-day actual spend across all campaigns/adsets in this account.
-      // We pull pacing-history per campaign and sum by date.
+      // Fetch aggregated pacing history for the spend chart — one request instead
+      // of one per campaign (the old N+1 pattern was the main cause of slow loads).
       try {
-        const histResponses = await Promise.all(
-          camps.map((c) => axios.get(`/api/campaigns/${accountId}/${c.id}/pacing-history`).catch(() => null))
-        );
-        const byDate = new Map(); // date string → summed actual_spend
-        histResponses.forEach((res) => {
-          if (!res?.data?.history) return;
-          // For ABO, history rows are per-adset and we want to sum them per-day.
-          // For CBO, there's one row per day (adset_id null).
-          // Simplest: sum every row by date — same-day duplicate adsets sum naturally,
-          // and we keep the highest CBO row per date (most recent run).
-          const cboPerDate = new Map(); // date → highest-id CBO row
-          res.data.history.forEach((row) => {
-            if (!row?.date) return;
-            if (row.adset_id == null) {
-              const prev = cboPerDate.get(row.date);
-              if (!prev || (row.id || 0) > (prev.id || 0)) {
-                cboPerDate.set(row.date, row);
-              }
-            } else {
-              const v = byDate.get(row.date) || 0;
-              byDate.set(row.date, v + (Number(row.actual_spend) || 0));
-            }
-          });
-          cboPerDate.forEach((row, date) => {
-            const v = byDate.get(date) || 0;
-            byDate.set(date, v + (Number(row.actual_spend) || 0));
-          });
-        });
-        const aggregated = Array.from(byDate.entries())
-          .map(([date, actual_spend]) => ({ date, actual_spend }))
-          .sort((a, b) => a.date.localeCompare(b.date));
+        const histRes = await axios.get(`/api/campaigns/${accountId}/history-aggregate`).catch(() => null);
+        const aggregated = histRes?.data?.history || [];
         setAccountHistory(aggregated);
 
         // Cache the full set so navigating away and back is instant
@@ -146,7 +117,13 @@ function AccountDashboard({ user, onLogout }) {
     setPacingRunning(true);
     setError('');
     try {
-      const response = await axios.post(`/api/pacing/${accountId}/run`, { run_type: 'MANUAL' });
+      // 3-minute timeout — pacing calls the Meta API once per campaign (now in
+      // parallel), but a large account or slow Meta response can still take >60s.
+      const response = await axios.post(
+        `/api/pacing/${accountId}/run`,
+        { run_type: 'MANUAL' },
+        { timeout: 180000 },
+      );
       setLastRun(response.data);
       toast.success(
         `${response.data.campaigns_processed || 0} campaigns processed, ${response.data.adjustments_needed || 0} need adjusting.`,

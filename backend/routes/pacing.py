@@ -22,6 +22,7 @@ Math:
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request, session
@@ -146,6 +147,104 @@ def _compute_recommendation(
 
 
 # ----------------------------------------------------------------------
+# Parallel Meta-fetch helpers
+# ----------------------------------------------------------------------
+
+def _fetch_cbo_data(meta, campaign, month_start, spend_until):
+    """
+    Fetch MTD spend + live daily budget for a CBO campaign.
+    Both Meta calls run concurrently inside a small inner thread pool.
+
+    Returns:
+        {'spend': float, 'live_daily': float|None}   on success
+        {'error': str}                                if the spend call fails
+                                                      (live_daily failure is non-fatal)
+    """
+    with ThreadPoolExecutor(max_workers=2) as inner:
+        spend_f = inner.submit(
+            meta.get_campaign_spend,
+            campaign.meta_campaign_id, month_start, spend_until,
+        )
+        camp_f = inner.submit(
+            meta.get_campaign,
+            campaign.meta_campaign_id,
+        )
+        try:
+            spend = spend_f.result()
+        except Exception as e:
+            camp_f.cancel()
+            return {'error': str(e)}
+
+        live_daily = None
+        try:
+            camp_meta = camp_f.result()
+            raw = camp_meta.get('daily_budget')
+            if raw is not None:
+                v = float(raw) / 100.0
+                if v > 0:
+                    live_daily = v
+        except Exception:
+            pass  # non-fatal — _compute_recommendation falls back to daily_target
+
+    return {'spend': spend, 'live_daily': live_daily}
+
+
+def _fetch_abo_data(meta, campaign, month_start, spend_until):
+    """
+    Fetch live adset budgets + per-adset MTD spend for an ABO campaign.
+    Per-adset spend calls run concurrently.
+
+    Returns:
+        {'live_daily_map': {meta_adset_id: float},
+         'adset_spends':   {adset.id: float | {'error': str}},
+         'active_adsets':  [AdSet, ...]}
+    or {'error': str} if the campaign has no active ad sets.
+    """
+    active_adsets = [a for a in campaign.adsets if a.is_active]
+    if not active_adsets:
+        return {'error': 'ABO campaign has no active ad sets tracked.'}
+
+    # Live adset budgets (non-fatal).
+    live_daily_map = {}
+    try:
+        live_adsets = meta.list_adsets_for_campaign(campaign.meta_campaign_id, only_active=False)
+        for la in live_adsets:
+            raw = la.get('daily_budget')
+            if raw is not None:
+                try:
+                    live_daily_map[la['id']] = float(raw) / 100.0
+                except (TypeError, ValueError):
+                    pass
+    except MetaAPIError as e:
+        logger.warning(
+            "Could not fetch live adset budgets for campaign %s: %s", campaign.id, e,
+        )
+
+    # Per-adset spend — parallelised, tracked individually.
+    adset_spends = {}
+    workers = min(len(active_adsets), 8)
+    with ThreadPoolExecutor(max_workers=workers) as inner:
+        fut_map = {
+            inner.submit(
+                meta.get_adset_spend,
+                adset.meta_adset_id, month_start, spend_until,
+            ): adset
+            for adset in active_adsets
+        }
+        for fut, adset in fut_map.items():
+            try:
+                adset_spends[adset.id] = fut.result()
+            except Exception as e:
+                adset_spends[adset.id] = {'error': str(e)}
+
+    return {
+        'live_daily_map': live_daily_map,
+        'adset_spends': adset_spends,
+        'active_adsets': active_adsets,
+    }
+
+
+# ----------------------------------------------------------------------
 # Routes
 # ----------------------------------------------------------------------
 @pacing_bp.route("/<account_id>/run", methods=["POST"])
@@ -205,66 +304,80 @@ def run_pacing(account_id):
     adjustments_needed = 0
     failures = []
 
-    for campaign in included:
-        if not campaign.meta_campaign_id:
+    # ------------------------------------------------------------------
+    # Phase 1: Parallel Meta fetches.
+    # Fire all network calls concurrently so wall time ≈ slowest single
+    # call instead of sum-of-all-calls.  DB writes happen in Phase 2.
+    # ------------------------------------------------------------------
+    campaigns_with_meta_id = [c for c in included if c.meta_campaign_id]
+    campaigns_missing_meta  = [c for c in included if not c.meta_campaign_id]
+
+    fetch_data = {}   # campaign.id → result dict from _fetch_cbo_data / _fetch_abo_data
+
+    if campaigns_with_meta_id:
+        outer_workers = min(len(campaigns_with_meta_id), 10)
+        with ThreadPoolExecutor(max_workers=outer_workers) as pool:
+            fut_map = {}
+            for campaign in campaigns_with_meta_id:
+                if campaign.budget_mode == 'ABO':
+                    f = pool.submit(_fetch_abo_data, meta, campaign, month_start, spend_until)
+                else:
+                    f = pool.submit(_fetch_cbo_data, meta, campaign, month_start, spend_until)
+                fut_map[f] = campaign
+
+            for fut, campaign in fut_map.items():
+                try:
+                    fetch_data[campaign.id] = fut.result()
+                except Exception as e:
+                    fetch_data[campaign.id] = {'error': str(e)}
+
+    # ------------------------------------------------------------------
+    # Phase 2: Compute recommendations + write PacingData (no Meta I/O).
+    # ------------------------------------------------------------------
+
+    # Campaigns that had no meta_campaign_id — can't pace them.
+    for campaign in campaigns_missing_meta:
+        failures.append({
+            "campaign_id": campaign.id,
+            "campaign_name": campaign.campaign_name,
+            "error": "No meta_campaign_id set; sync from Meta first.",
+        })
+
+    for campaign in campaigns_with_meta_id:
+        data = fetch_data.get(campaign.id, {'error': 'No data fetched'})
+
+        if 'error' in data:
             failures.append({
                 "campaign_id": campaign.id,
                 "campaign_name": campaign.campaign_name,
-                "error": "No meta_campaign_id set; sync from Meta first.",
+                "error": data['error'],
             })
             continue
 
         if campaign.budget_mode == 'ABO':
-            # ABO: per-ad-set pacing
-            active_adsets = [a for a in campaign.adsets if a.is_active]
-            if not active_adsets:
-                failures.append({
-                    "campaign_id": campaign.id,
-                    "campaign_name": campaign.campaign_name,
-                    "error": "ABO campaign has no active ad sets tracked.",
-                })
-                continue
-
-            # Fetch actual daily budgets from Meta so we use real numbers as the
-            # reference point for cap/change_pct — not the internal allocation target.
-            live_daily_map = {}   # meta_adset_id → actual daily in dollars
-            try:
-                live_adsets = meta.list_adsets_for_campaign(
-                    campaign.meta_campaign_id, only_active=False
-                )
-                for la in live_adsets:
-                    raw = la.get('daily_budget')
-                    if raw is not None:
-                        try:
-                            live_daily_map[la['id']] = float(raw) / 100.0
-                        except (TypeError, ValueError):
-                            pass
-            except MetaAPIError as e:
-                logger.warning(
-                    "Could not fetch live adset budgets for campaign %s: %s",
-                    campaign.id, e,
-                )
-                # Non-fatal: fall back to allocation target as reference.
+            # ---- ABO: per-ad-set pacing ----
+            active_adsets  = data['active_adsets']
+            live_daily_map = data['live_daily_map']
+            adset_spends   = data['adset_spends']
 
             adset_recs = []
             campaign_actual_total = 0.0
+
             for adset in active_adsets:
                 allocated_budget = campaign.monthly_budget * (adset.allocation_pct / 100.0)
                 actual_meta_daily = live_daily_map.get(adset.meta_adset_id)  # None if unavailable
 
-                try:
-                    actual_spend = meta.get_adset_spend(
-                        adset.meta_adset_id, since=month_start, until=spend_until,
-                    )
-                except MetaAPIError as e:
+                spend_result = adset_spends.get(adset.id, {'error': 'Not fetched'})
+                if isinstance(spend_result, dict) and 'error' in spend_result:
                     failures.append({
                         "campaign_id": campaign.id,
                         "campaign_name": campaign.campaign_name,
                         "adset_id": adset.id,
                         "adset_name": adset.adset_name,
-                        "error": str(e),
+                        "error": spend_result['error'],
                     })
                     continue
+                actual_spend = spend_result
                 campaign_actual_total += actual_spend
 
                 (
@@ -279,7 +392,6 @@ def run_pacing(account_id):
                     actual_current_daily=actual_meta_daily,
                 )
 
-                # current_daily_budget in the response = actual Meta value when known.
                 display_current = actual_meta_daily if actual_meta_daily is not None else daily_target
 
                 adset_recs.append({
@@ -314,7 +426,7 @@ def run_pacing(account_id):
                 if action != 'ON_PACE':
                     adjustments_needed += 1
 
-            # Roll up for the response (but no campaign-level PacingData row).
+            # Roll-up for the response (no campaign-level PacingData row for ABO).
             campaign_expected = (campaign.monthly_budget / days_in_month) * days_elapsed
             campaign_pace = (campaign_actual_total / campaign_expected) if campaign_expected > 0 else 1.0
             recommendations.append({
@@ -332,38 +444,9 @@ def run_pacing(account_id):
             })
             continue
 
-        # CBO path
-        try:
-            actual_spend = meta.get_campaign_spend(
-                campaign.meta_campaign_id, since=month_start, until=spend_until,
-            )
-        except MetaAPIError as e:
-            failures.append({
-                "campaign_id": campaign.id,
-                "campaign_name": campaign.campaign_name,
-                "error": str(e),
-            })
-            continue
-
-        # Pull the live daily_budget from Meta so the cap math (±max_daily_change_percent)
-        # and the displayed "current daily" reflect the real Meta value, not just the
-        # internal monthly/days_in_month target. ABO already does this for ad sets.
-        live_cbo_daily = None
-        try:
-            camp_meta = meta.get_campaign(campaign.meta_campaign_id)
-            raw_daily = camp_meta.get('daily_budget')
-            if raw_daily is not None:
-                try:
-                    live_cbo_daily = float(raw_daily) / 100.0
-                    if live_cbo_daily <= 0:
-                        live_cbo_daily = None
-                except (TypeError, ValueError):
-                    live_cbo_daily = None
-        except MetaAPIError as e:
-            logger.warning(
-                "Could not fetch live CBO daily for campaign %s: %s", campaign.id, e,
-            )
-            # Non-fatal — fall back to daily_target as the reference inside _compute_recommendation.
+        # ---- CBO path ----
+        actual_spend  = data['spend']
+        live_cbo_daily = data.get('live_daily')
 
         (
             daily_target, expected_mtd, pace_ratio,
@@ -377,7 +460,6 @@ def run_pacing(account_id):
             actual_current_daily=live_cbo_daily,
         )
 
-        # Display the actual Meta daily when we have it, otherwise fall back to the target.
         display_current = live_cbo_daily if live_cbo_daily is not None else daily_target
 
         recommendations.append({

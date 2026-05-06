@@ -217,7 +217,9 @@ def get_account(account_id):
     account = Account.query.get(account_id)
     if not account or account.user_id != session['user_id']:
         return jsonify({'error': 'Not found'}), 404
-    return jsonify({'account': account.to_dict()}), 200
+    # lite=True skips the pacing_data N+1 walk — callers that need pacing roll-ups
+    # should use /api/campaigns/<id> or /api/pacing/<id>/summary instead.
+    return jsonify({'account': account.to_dict(lite=True)}), 200
 
 
 @accounts_bp.route('', methods=['POST'])
