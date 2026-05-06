@@ -286,7 +286,7 @@ function Home({ user, onLogout }) {
     if (!needsAction) return <span className="bb-muted" style={{ fontSize: 12 }}>—</span>;
     return (
       <div style={{ display: 'flex', gap: 6 }}>
-        <button className="bb-btn bb-btn-primary" style={{ fontSize: 11, padding: '3px 10px' }}
+        <button className="bb-btn bb-btn-apply" style={{ fontSize: 11, padding: '3px 10px' }}
           onClick={onApply} disabled={isApplying}>{isApplying ? '…' : 'Apply'}</button>
         <button className="bb-btn" style={{ fontSize: 11, padding: '3px 8px' }}
           onClick={() => setSkipped((p) => ({ ...p, [rowKey]: true }))} disabled={isApplying}>Skip</button>
@@ -472,14 +472,22 @@ function Home({ user, onLogout }) {
           </div>
         ) : filteredBlocks.map((acct) => (
           <div key={acct.id} className="bb-card" style={{ marginBottom: 20 }}>
-            <div className="bb-section bb-row-between" style={{ paddingBottom: 12 }}>
+            <div className="bb-row-between" style={{
+              padding: '12px 20px',
+              background: 'linear-gradient(90deg, #004359 0%, #00627f 100%)',
+              borderRadius: '10px 10px 0 0',
+            }}>
               <div>
-                <div className="bb-section-title">{acct.account_name}</div>
-                <div className="bb-section-meta">
-                  Last pacing run: <strong>{timeAgo(acct.last_run)}</strong>
+                <div style={{ fontWeight: 700, fontSize: 15, color: '#fff' }}>{acct.account_name}</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginTop: 2 }}>
+                  Last pacing run: <strong style={{ color: 'rgba(255,255,255,0.9)' }}>{timeAgo(acct.last_run)}</strong>
                 </div>
               </div>
-              <Link to={`/account/${acct.id}`} className="bb-btn bb-btn-secondary">Dashboard →</Link>
+              <Link to={`/account/${acct.id}`} className="bb-btn bb-btn-secondary" style={{
+                background: 'rgba(255,255,255,0.12)',
+                borderColor: 'rgba(255,255,255,0.25)',
+                color: '#fff',
+              }}>Dashboard →</Link>
             </div>
 
             {acct.campaigns.length === 0 ? (
@@ -649,7 +657,7 @@ function Home({ user, onLogout }) {
 
               <div className="bb-modal-foot">
                 <button className="bb-btn" onClick={() => setPendingConfirm(null)}>Cancel</button>
-                <button className="bb-btn bb-btn-primary" onClick={handleConfirmApply}>
+                <button className="bb-btn bb-btn-apply" onClick={handleConfirmApply}>
                   Yes, push to Meta
                 </button>
               </div>
