@@ -481,6 +481,11 @@ function Home({ user, onLogout }) {
                 </div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
                   Last pacing run: <strong style={{ color: '#374151' }}>{timeAgo(acct.last_run)}</strong>
+                  {(acct.hidden_count || 0) > 0 && (
+                    <span style={{ marginLeft: 10, color: '#9ca3af' }}>
+                      · {acct.hidden_count} campaign{acct.hidden_count !== 1 ? 's' : ''} hidden (no spend this month)
+                    </span>
+                  )}
                 </div>
               </div>
               <Link to={`/account/${acct.id}`} className="bb-btn bb-btn-secondary">
@@ -491,8 +496,10 @@ function Home({ user, onLogout }) {
             {acct.campaigns.length === 0 ? (
               <EmptyState
                 icon={Inbox}
-                title="No campaigns tracked"
-                body="Open this account's dashboard and click Import from Meta to start tracking campaigns."
+                title={acct.hidden_count > 0 ? 'All campaigns ended this month' : 'No campaigns tracked'}
+                body={acct.hidden_count > 0
+                  ? `${acct.hidden_count} campaign${acct.hidden_count !== 1 ? 's are' : ' is'} tracked but show no spend this month. Open the dashboard to view them.`
+                  : 'Open this account\'s dashboard and click Import from Meta to start tracking campaigns.'}
                 action={{
                   label: 'Open dashboard',
                   icon: ArrowRight,

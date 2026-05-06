@@ -374,6 +374,7 @@ def get_all_campaigns():
         )
         result = []
         today = datetime.utcnow().date()
+        month_start = today.replace(day=1)
 
         for account in accounts:
             # Most recent pacing run for this account (already loaded above).
@@ -383,9 +384,22 @@ def get_all_campaigns():
                 last_run = lr.run_at.isoformat() if lr.run_at else None
 
             camp_list = []
+            hidden_list = []
             for campaign in account.campaigns:
                 if not campaign.is_active:
                     continue
+
+                # --- Ended-campaign filter ---
+                # If a campaign has pacing data for the current month and every
+                # snapshot shows $0 actual spend, it's almost certainly ended or
+                # paused for the full month. Hide it from the main list.
+                # Campaigns with NO pacing data yet (newly synced) are kept.
+                mtd_rows = [p for p in campaign.pacing_data
+                            if p.date and p.date >= month_start]
+                is_zero_spend = bool(mtd_rows) and all(
+                    (p.actual_spend or 0) == 0 for p in mtd_rows
+                )
+
                 camp_dict = campaign.to_dict()
 
                 # Flight status
@@ -404,13 +418,19 @@ def get_all_campaigns():
                 if campaign.budget_mode == 'ABO':
                     camp_dict['adsets'] = [a.to_dict() for a in campaign.adsets if a.is_active]
 
-                camp_list.append(camp_dict)
+                if is_zero_spend:
+                    camp_dict['hidden_reason'] = 'no_spend_this_month'
+                    hidden_list.append(camp_dict)
+                else:
+                    camp_list.append(camp_dict)
 
             result.append({
                 'id': account.id,
                 'account_name': account.account_name,
                 'last_run': last_run,
                 'campaigns': camp_list,
+                'hidden_campaigns': hidden_list,
+                'hidden_count': len(hidden_list),
             })
 
         return jsonify({'accounts': result}), 200
@@ -443,13 +463,16 @@ def get_campaigns(account_id):
             .all()
         )
 
+        today = datetime.utcnow().date()
+        month_start = today.replace(day=1)
+
         campaigns_data = []
+        hidden_data = []
         for campaign in campaigns:
             # campaign.to_dict() now correctly handles ABO roll-up vs CBO row.
             camp_dict = campaign.to_dict()
 
             # Determine flight status
-            today = datetime.utcnow().date()
             if campaign.flight_type == 'LIMITED':
                 if campaign.flight_start_date and campaign.flight_end_date:
                     if today < campaign.flight_start_date:
@@ -465,11 +488,24 @@ def get_campaigns(account_id):
             if campaign.budget_mode == 'ABO':
                 camp_dict['adsets'] = [a.to_dict() for a in campaign.adsets if a.is_active]
 
-            campaigns_data.append(camp_dict)
+            # Ended-campaign filter: pacing data this month but all $0 spend → hide
+            mtd_rows = [p for p in campaign.pacing_data
+                        if p.date and p.date >= month_start]
+            is_zero_spend = bool(mtd_rows) and all(
+                (p.actual_spend or 0) == 0 for p in mtd_rows
+            )
+
+            if is_zero_spend:
+                camp_dict['hidden_reason'] = 'no_spend_this_month'
+                hidden_data.append(camp_dict)
+            else:
+                campaigns_data.append(camp_dict)
 
         return jsonify({
             'campaigns': campaigns_data,
-            'total': len(campaigns_data)
+            'hidden_campaigns': hidden_data,
+            'hidden_count': len(hidden_data),
+            'total': len(campaigns_data),
         }), 200
 
     except Exception as e:

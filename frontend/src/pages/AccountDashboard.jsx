@@ -31,6 +31,8 @@ function AccountDashboard({ user, onLogout }) {
   const [accounts, setAccounts] = useState([]);
   const [account, setAccount] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
+  const [hiddenCampaigns, setHiddenCampaigns] = useState([]);
+  const [showHidden, setShowHidden] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -64,6 +66,7 @@ function AccountDashboard({ user, onLogout }) {
       setAccounts(cached.accounts);
       setAccount(cached.account);
       setCampaigns(cached.campaigns);
+      setHiddenCampaigns(cached.hiddenCampaigns || []);
       setAccountHistory(cached.history || []);
       setLoading(false);
       if (!isStale(cacheKey)) return;
@@ -81,7 +84,9 @@ function AccountDashboard({ user, onLogout }) {
       setAccounts(accountsRes.data.accounts || accountsRes.data || []);
       setAccount(accountRes.data.account || accountRes.data);
       const camps = campaignsRes.data.campaigns || [];
+      const hiddenCamps = campaignsRes.data.hidden_campaigns || [];
       setCampaigns(camps);
+      setHiddenCampaigns(hiddenCamps);
 
       // Aggregate per-day actual spend across all campaigns/adsets in this account.
       // We pull pacing-history per campaign and sum by date.
@@ -124,6 +129,7 @@ function AccountDashboard({ user, onLogout }) {
           accounts: accountsRes.data.accounts || accountsRes.data || [],
           account: accountRes.data.account || accountRes.data,
           campaigns: camps,
+          hiddenCampaigns: hiddenCamps,
           history: aggregated,
         });
       } catch {
@@ -728,14 +734,35 @@ function AccountDashboard({ user, onLogout }) {
               <div className="bb-section-title">Tracked campaigns ({campaigns.length})</div>
               <div className="bb-section-meta">Pulled from Meta via the Import button above.</div>
             </div>
+            {hiddenCampaigns.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13, color: 'var(--bb-muted)' }}>
+                <span>
+                  {hiddenCampaigns.length} campaign{hiddenCampaigns.length !== 1 ? 's' : ''} hidden — no spend recorded this month.
+                </span>
+                <button
+                  className="bb-btn bb-btn-ghost"
+                  style={{ fontSize: 12, padding: '2px 10px' }}
+                  onClick={() => setShowHidden(h => !h)}
+                >
+                  {showHidden ? 'Hide ended' : 'Show anyway'}
+                </button>
+              </div>
+            )}
           </div>
 
-          {campaigns.length === 0 ? (
+          {campaigns.length === 0 && hiddenCampaigns.length === 0 ? (
             <EmptyState
               icon={Inbox}
               title="No campaigns tracked yet"
               body="Click Import from Meta to pull in your campaigns and start pacing."
               action={{ label: 'Import from Meta', icon: DownloadCloud, onClick: openImport }}
+            />
+          ) : campaigns.length === 0 && !showHidden ? (
+            <EmptyState
+              icon={Inbox}
+              title="No active campaigns this month"
+              body={`${hiddenCampaigns.length} campaign${hiddenCampaigns.length !== 1 ? 's are' : ' is'} hidden because they show no spend this month.`}
+              action={{ label: 'Show ended campaigns', icon: DownloadCloud, onClick: () => setShowHidden(true) }}
             />
           ) : (
             <table className="bb-table">
@@ -797,6 +824,41 @@ function AccountDashboard({ user, onLogout }) {
                       <td>
                         {lp ? <span className={pill.cls}><pill.Icon size={11} aria-hidden="true" /> {pill.text}</span> : <span className="bb-muted">No data</span>}
                       </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-link">View →</Link>
+                          <button
+                            className="bb-btn bb-btn-danger"
+                            style={{ fontSize: 11, padding: '3px 8px' }}
+                            onClick={() => setRemoveTarget({ id: c.id, name: c.campaign_name })}
+                            title="Remove from pacing"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {showHidden && hiddenCampaigns.map((c) => {
+                  const mode = c.budget_mode || 'CBO';
+                  return (
+                    <tr key={`hidden-${c.id}`} style={{ opacity: 0.45 }}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{c.campaign_name}</div>
+                        <div className="bb-muted" style={{ fontSize: 11, marginTop: 2 }}>No spend this month</div>
+                      </td>
+                      <td>
+                        <span className={`bb-mode-badge ${mode === 'ABO' ? 'bb-mode-abo' : 'bb-mode-cbo'}`}>
+                          {mode}
+                        </span>
+                      </td>
+                      <td><span className="bb-pill bb-pill-muted">{c.flight_status || c.flight_type || '—'}</span></td>
+                      <td className="num">${(c.monthly_budget || 0).toFixed(0)}</td>
+                      <td className="num">—</td>
+                      <td className="num">—</td>
+                      <td className="num">—</td>
+                      <td><span className="bb-pill bb-pill-muted">Ended</span></td>
                       <td>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-link">View →</Link>
