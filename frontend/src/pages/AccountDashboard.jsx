@@ -126,6 +126,22 @@ function AccountDashboard({ user, onLogout }) {
       if (response.data.failures && response.data.failures.length > 0) {
         toast.warn(`${response.data.failures.length} campaign(s) had errors.`);
       }
+
+      // Surface sheet writeback result so the user can see what happened
+      const sw = response.data.sheet_writeback;
+      if (sw) {
+        if (sw.error) {
+          toast.error(`Sheet sync failed: ${sw.error}`, { title: 'Sheet not updated' });
+        } else if (sw.written_count > 0) {
+          const skipNote = sw.skipped_count > 0 ? ` (${sw.skipped_count} skipped)` : '';
+          toast.success(`Wrote spend to ${sw.written_count} row(s) in "${sw.sheet_tab}"${skipNote}.`, { title: 'Sheet updated' });
+        } else {
+          // 0 written — tell the user the first skip reason so they can diagnose
+          const firstReason = sw.skipped && sw.skipped.length > 0 ? ` Reason: ${sw.skipped[0].reason}` : '';
+          toast.warn(`Sheet: nothing written — ${sw.skipped_count || 0} row(s) skipped.${firstReason}`, { title: 'Sheet not updated' });
+        }
+      }
+
       fetchAll();
     } catch (err) {
       const msg = err.response?.data?.error || 'Failed to run pacing calculations';
