@@ -665,6 +665,30 @@ a {
   vertical-align: -2px;
 }
 
+/* Spinning loader — apply to any Lucide icon that should rotate */
+@keyframes bb-spin {
+  to { transform: rotate(360deg); }
+}
+.bb-spin {
+  animation: bb-spin 0.75s linear infinite;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Pacing-in-progress banner */
+.bb-pacing-banner {
+  border-left: 3px solid var(--bb-primary);
+}
+.bb-pacing-banner-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.bb-pacing-banner-text { flex: 1; }
+.bb-pacing-banner-title { font-weight: 600; font-size: 15px; margin-bottom: 3px; }
+.bb-pacing-banner-sub   { font-size: 13px; color: var(--bb-text-muted); }
+
 /* ============ Toast notifications ============ */
 
 .bb-toast-stack {

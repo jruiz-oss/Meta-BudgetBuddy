@@ -480,7 +480,7 @@ function AccountDashboard({ user, onLogout }) {
               onClick={handleRunPacing}
               disabled={pacingRunning}
             >
-              {pacingRunning ? <Loader2 size={14} className="bb-i" /> : <Play size={14} aria-hidden="true" />}
+              {pacingRunning ? <Loader2 size={14} className="bb-spin" /> : <Play size={14} aria-hidden="true" />}
               {pacingRunning ? 'Running…' : 'Run Pacing'}
             </button>
             <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
@@ -517,6 +517,23 @@ function AccountDashboard({ user, onLogout }) {
             <span className="bb-stat-sub">of ${stats.monthlyBudget.toFixed(0)} monthly</span>
           </div>
         </div>
+
+        {/* Pacing-in-progress banner */}
+        {pacingRunning && (
+          <div className="bb-card bb-pacing-banner" style={{ marginBottom: 20 }}>
+            <div className="bb-section">
+              <div className="bb-pacing-banner-inner">
+                <Loader2 size={22} className="bb-spin" style={{ color: 'var(--bb-primary)' }} />
+                <div className="bb-pacing-banner-text">
+                  <div className="bb-pacing-banner-title">Running pacing calculations…</div>
+                  <div className="bb-pacing-banner-sub">
+                    Pulling MTD spend from Meta and computing recommendations for all tracked campaigns.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Spend chart */}
         {stats.monthlyBudget > 0 && (
@@ -566,7 +583,7 @@ function AccountDashboard({ user, onLogout }) {
                     onClick={handleApplyAll}
                     disabled={applying || lastRun.adjustments_needed === 0}
                   >
-                    {applying ? <Loader2 size={14} className="bb-i" /> : <Check size={14} aria-hidden="true" />}
+                    {applying ? <Loader2 size={14} className="bb-spin" /> : <Check size={14} aria-hidden="true" />}
                     {applying ? 'Applying…' : 'Apply all to Meta'}
                   </button>
                 </div>
@@ -870,7 +887,7 @@ function AccountDashboard({ user, onLogout }) {
               <div className="bb-modal-body">
                 {importLoading && (
                   <p className="bb-muted" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Loader2 size={14} className="bb-i" /> Fetching campaigns from Meta…
+                    <Loader2 size={14} className="bb-spin" /> Fetching campaigns from Meta…
                   </p>
                 )}
                 {importError && <div className="bb-alert bb-alert-error">{importError}</div>}
@@ -1024,7 +1041,7 @@ function AccountDashboard({ user, onLogout }) {
               <div className="bb-modal-foot">
                 <button className="bb-btn" onClick={closeImport} disabled={importSaving}>Cancel</button>
                 <button className="bb-btn bb-btn-primary" onClick={saveImport} disabled={importSaving || importLoading}>
-                  {importSaving ? <Loader2 size={14} className="bb-i" /> : <Plus size={14} aria-hidden="true" />}
+                  {importSaving ? <Loader2 size={14} className="bb-spin" /> : <Plus size={14} aria-hidden="true" />}
                   {importSaving ? 'Saving…' : 'Save selections'}
                 </button>
               </div>

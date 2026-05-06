@@ -298,7 +298,7 @@ function Home({ user, onLogout }) {
       <div style={{ display: 'flex', gap: 6 }}>
         <button className="bb-btn bb-btn-apply" style={{ fontSize: 11, padding: '3px 10px' }}
           onClick={onApply} disabled={isApplying}>
-          {isApplying ? <Loader2 size={11} className="bb-i" /> : <Check size={11} aria-hidden="true" />}
+          {isApplying ? <Loader2 size={11} className="bb-spin" /> : <Check size={11} aria-hidden="true" />}
           {isApplying ? '…' : 'Apply'}
         </button>
         <button className="bb-btn" style={{ fontSize: 11, padding: '3px 8px' }}
@@ -332,7 +332,7 @@ function Home({ user, onLogout }) {
               disabled={runningAll || loading || allAccounts.length === 0}
               title="Pull fresh MTD spend (through yesterday) for every account"
             >
-              {runningAll ? <Loader2 size={14} className="bb-i" /> : <Play size={14} aria-hidden="true" />}
+              {runningAll ? <Loader2 size={14} className="bb-spin" /> : <Play size={14} aria-hidden="true" />}
               {runningAll ? `Running ${allAccounts.length}…` : `Run Pacing (All ${allAccounts.length})`}
             </button>
             <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>

@@ -408,7 +408,7 @@ function Settings({ user, onLogout }) {
                   onClick={handleSaveSheetUrl}
                   disabled={sheetSaving || !sheetUrl.trim()}
                 >
-                  {sheetSaving ? <Loader2 size={14} className="bb-i" /> : <Save size={14} aria-hidden="true" />}
+                  {sheetSaving ? <Loader2 size={14} className="bb-spin" /> : <Save size={14} aria-hidden="true" />}
                   {sheetSaving ? 'Saving…' : 'Save URL'}
                 </button>
                 <button
@@ -416,7 +416,7 @@ function Settings({ user, onLogout }) {
                   onClick={handlePreviewSheet}
                   disabled={sheetPreviewLoading || !sheetUrl.trim()}
                 >
-                  {sheetPreviewLoading ? <Loader2 size={14} className="bb-i" /> : <Eye size={14} aria-hidden="true" />}
+                  {sheetPreviewLoading ? <Loader2 size={14} className="bb-spin" /> : <Eye size={14} aria-hidden="true" />}
                   {sheetPreviewLoading ? 'Loading…' : 'Preview Matches'}
                 </button>
               </div>
@@ -444,7 +444,7 @@ function Settings({ user, onLogout }) {
                       disabled={sheetSyncLoading}
                       title="Read column B budgets from sheet → update DB campaigns"
                     >
-                      {sheetSyncLoading ? <Loader2 size={14} className="bb-i" /> : <ArrowDownToLine size={14} aria-hidden="true" />}
+                      {sheetSyncLoading ? <Loader2 size={14} className="bb-spin" /> : <ArrowDownToLine size={14} aria-hidden="true" />}
                       {sheetSyncLoading ? 'Syncing…' : 'Sync Budgets'}
                     </button>
                     <button
@@ -453,7 +453,7 @@ function Settings({ user, onLogout }) {
                       disabled={sheetWriteLoading}
                       title="Write MTD spend to col C and today's date to col G"
                     >
-                      {sheetWriteLoading ? <Loader2 size={14} className="bb-i" /> : <ArrowUpFromLine size={14} aria-hidden="true" />}
+                      {sheetWriteLoading ? <Loader2 size={14} className="bb-spin" /> : <ArrowUpFromLine size={14} aria-hidden="true" />}
                       {sheetWriteLoading ? 'Writing…' : 'Write Spend'}
                     </button>
                   </div>

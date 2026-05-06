@@ -505,7 +505,7 @@ function CampaignDetail({ user, onLogout }) {
                       onClick={handleApply}
                       disabled={applying}
                     >
-                      {applying ? <Loader2 size={14} className="bb-i" /> : <Check size={14} aria-hidden="true" />}
+                      {applying ? <Loader2 size={14} className="bb-spin" /> : <Check size={14} aria-hidden="true" />}
                       {applying ? 'Applying…' : 'Apply Recommendation'}
                     </button>
                     <button
@@ -540,7 +540,7 @@ function CampaignDetail({ user, onLogout }) {
                       onClick={handleRunPacing}
                       disabled={pacingRunning}
                     >
-                      {pacingRunning ? <Loader2 size={14} className="bb-i" /> : <Play size={14} aria-hidden="true" />}
+                      {pacingRunning ? <Loader2 size={14} className="bb-spin" /> : <Play size={14} aria-hidden="true" />}
                       {pacingRunning ? 'Running…' : 'Run Pacing'}
                     </button>
                     <button className="bb-btn bb-btn-secondary" onClick={enterEditMode}>
@@ -575,7 +575,7 @@ function CampaignDetail({ user, onLogout }) {
                   <button className="bb-btn bb-btn-primary"
                     onClick={saveAdsetAllocations}
                     disabled={adsetSaving || !allocOk}>
-                    {adsetSaving ? <Loader2 size={14} className="bb-i" /> : <Check size={14} aria-hidden="true" />}
+                    {adsetSaving ? <Loader2 size={14} className="bb-spin" /> : <Check size={14} aria-hidden="true" />}
                     {adsetSaving ? 'Saving…' : 'Save'}
                   </button>
                   <button className="bb-btn" onClick={cancelEditMode} disabled={adsetSaving}>
@@ -682,7 +682,7 @@ function CampaignDetail({ user, onLogout }) {
                                 onClick={() => handleApplyAdset(a)}
                                 disabled={isApplyingA}
                               >
-                                {isApplyingA ? <Loader2 size={11} className="bb-i" /> : <Check size={11} aria-hidden="true" />}
+                                {isApplyingA ? <Loader2 size={11} className="bb-spin" /> : <Check size={11} aria-hidden="true" />}
                                 {isApplyingA ? '…' : 'Apply'}
                               </button>
                               <button

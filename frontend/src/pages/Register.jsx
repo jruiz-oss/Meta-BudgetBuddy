@@ -95,7 +95,7 @@ function Register({ onRegisterSuccess }) {
             style={{ width: '100%', justifyContent: 'center', padding: '11px', fontSize: '14px' }}
             disabled={loading}
           >
-            {loading ? <Loader2 size={14} className="bb-i" /> : <UserPlus size={14} aria-hidden="true" />}
+            {loading ? <Loader2 size={14} className="bb-spin" /> : <UserPlus size={14} aria-hidden="true" />}
             {loading ? 'Creating account…' : 'Register'}
           </button>
         </form>

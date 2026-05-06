@@ -72,7 +72,7 @@ function Login({ onLoginSuccess }) {
             style={{ width: '100%', justifyContent: 'center', padding: '11px', fontSize: '14px' }}
             disabled={loading}
           >
-            {loading ? <Loader2 size={14} className="bb-i" /> : <LogIn size={14} aria-hidden="true" />}
+            {loading ? <Loader2 size={14} className="bb-spin" /> : <LogIn size={14} aria-hidden="true" />}
             {loading ? 'Logging in…' : 'Log In'}
           </button>
         </form>
