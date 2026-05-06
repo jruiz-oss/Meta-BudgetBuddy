@@ -118,45 +118,100 @@ def _get_meta_section(worksheet):
     Return rows from the Meta section of the worksheet.
 
     Scans for a row where column A is exactly "Meta" (case-insensitive header),
-    then collects rows until it hits a "LinkedIn" or "TikTok" header or EOF.
-    Skips blank rows.
+    then reads data rows until a "LinkedIn" or "TikTok" header or EOF.
+
+    Data is loaded with a fixed **A:G** range per row so empty column C (MTD)
+    does not collapse — ``get_all_values()`` jagged rows used to shift column D
+    into index 2, making monthly budget look like it came from D.
+
+    Column layout: A name, B monthly budget, C MTD spend, D account scope,
+    E reserved, F notes, G last paced.
 
     Returns a list of dicts:
       { row_index (1-based int), name (str), account_scope (str),
         monthly_budget (float|None), mtd_spend (float|None), notes (str), last_paced (str) }
     """
-    all_values = worksheet.get_all_values()  # list of lists of strings
-
+    all_values = worksheet.get_all_values()
     STOP_KEYWORDS = {"linkedin", "tiktok"}
-    in_meta = False
-    rows = []
 
+    meta_idx = None
+    stop_idx = len(all_values)
     for i, row in enumerate(all_values):
         col_a = (row[0] if row else "").strip().lower()
+        if meta_idx is None:
+            if col_a == "meta":
+                meta_idx = i
+            continue
+        if col_a in STOP_KEYWORDS:
+            stop_idx = i
+            break
 
+    if meta_idx is None:
+        return []
+
+    # 1-based sheet rows: "Meta" is meta_idx+1; first data row is meta_idx+2.
+    first_sr = meta_idx + 2
+    # stop_idx is 0-based index of LinkedIn/TikTok row, or len(all_values).
+    # Last Meta data row (1-based) equals stop_idx when terminator exists, else len.
+    last_sr = stop_idx if stop_idx < len(all_values) else len(all_values)
+
+    if first_sr > last_sr:
+        return []
+
+    range_a1 = f"A{first_sr}:G{last_sr}"
+    try:
+        grid = worksheet.get_values(range_a1)
+    except Exception as e:
+        logger.warning("get_values(%s) failed, falling back to jagged scan: %s", range_a1, e)
+        grid = []
+
+    rows = []
+    if grid:
+        for off, raw in enumerate(grid):
+            r = list(raw) + [""] * (7 - len(raw))
+            r = r[:7]
+            if not any(str(c).strip() for c in r):
+                continue
+            name = r[0].strip()
+            monthly_budget = _parse_float(r[1])
+            mtd_spend = _parse_float(r[2])
+            account_scope = r[3].strip()
+            notes = r[5].strip()
+            last_paced = r[6].strip()
+            sheet_row = first_sr + off
+            if name:
+                rows.append({
+                    "row_index": sheet_row,
+                    "name": name,
+                    "account_scope": account_scope,
+                    "monthly_budget": monthly_budget,
+                    "mtd_spend": mtd_spend,
+                    "notes": notes,
+                    "last_paced": last_paced,
+                })
+        return rows
+
+    # Fallback if range read failed: old jagged behavior (best-effort).
+    in_meta = False
+    for i, row in enumerate(all_values):
+        col_a = (row[0] if row else "").strip().lower()
         if not in_meta:
             if col_a == "meta":
                 in_meta = True
             continue
-
-        # Stop at next platform header
         if col_a in STOP_KEYWORDS:
             break
-
-        # Skip fully blank rows
         if not any(cell.strip() for cell in row):
             continue
-
         name = row[0].strip() if len(row) > 0 else ""
         account_scope = row[3].strip() if len(row) > 3 else ""
         monthly_budget = _parse_float(row[1]) if len(row) > 1 else None
         mtd_spend = _parse_float(row[2]) if len(row) > 2 else None
         notes = row[5].strip() if len(row) > 5 else ""
         last_paced = row[6].strip() if len(row) > 6 else ""
-
         if name:
             rows.append({
-                "row_index": i + 1,  # 1-based for Sheets API
+                "row_index": i + 1,
                 "name": name,
                 "account_scope": account_scope,
                 "monthly_budget": monthly_budget,
@@ -164,7 +219,6 @@ def _get_meta_section(worksheet):
                 "notes": notes,
                 "last_paced": last_paced,
             })
-
     return rows
 
 
