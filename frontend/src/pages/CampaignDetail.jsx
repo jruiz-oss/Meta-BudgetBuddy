@@ -295,7 +295,6 @@ function CampaignDetail({ user, onLogout }) {
   // not `action`. Reading `action` here was the cause of the "Apply on ON_PACE campaigns" bug.
   const action        = (lp?.status || '').toUpperCase();
   const isOnPace      = action === 'ON_PACE';
-  const pill          = pillForStatus(action, paceRatio);
 
   const today         = new Date();
   const daysInMonth   = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
@@ -303,6 +302,7 @@ function CampaignDetail({ user, onLogout }) {
   const actualSpend   = lp?.actual_spend    || 0;
   const expectedSpend = lp?.expected_spend  || 0;
   const paceRatio     = lp?.pace_ratio      || 0;
+  const pill          = pillForStatus(action, paceRatio);
   const gap           = actualSpend - expectedSpend;
   const gapColor      = gap >= 0 ? '#10b981' : '#3b82f6';
 
