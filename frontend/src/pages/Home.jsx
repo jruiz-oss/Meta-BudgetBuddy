@@ -41,7 +41,7 @@ function Home({ user, onLogout }) {
   const navigate = useNavigate();
 
   const fetchAll = useCallback(async (force = false) => {
-    // Use cache unless forced (e.g. after a pacing run)
+    // Serve from cache on repeat visits (90-second TTL set in cache.js)
     const cached = !force && getCached('home-data');
     if (cached) {
       setAllAccounts(cached.accounts);
@@ -52,13 +52,31 @@ function Home({ user, onLogout }) {
 
     try {
       setLoading(true);
-      // Single call returns all accounts + campaigns + latest pacing in one shot,
-      // replacing the previous 1 + (2 × N) per-account waterfall.
-      const res = await axios.get('/api/campaigns/all');
-      const blocks = res.data.accounts || [];
-      const accounts = blocks.map(({ id, account_name }) => ({ id, account_name }));
-
+      const acctRes = await axios.get('/api/accounts');
+      const accounts = acctRes.data.accounts || acctRes.data || [];
       setAllAccounts(accounts);
+
+      if (accounts.length === 0) {
+        setAccountBlocks([]);
+        return;
+      }
+
+      // Fire all per-account fetches in parallel — each is fast individually;
+      // the total wall time ≈ the slowest single call, not the sum.
+      const blocks = await Promise.all(
+        accounts.map(async (acct) => {
+          const [campRes, summaryRes] = await Promise.all([
+            axios.get(`/api/campaigns/${acct.id}`),
+            axios.get(`/api/pacing/${acct.id}/summary`).catch(() => ({ data: {} })),
+          ]);
+          return {
+            id: acct.id,
+            account_name: acct.account_name,
+            last_run: summaryRes.data?.last_run || null,
+            campaigns: campRes.data.campaigns || [],
+          };
+        })
+      );
       setAccountBlocks(blocks);
       setCached('home-data', { accounts, blocks });
     } catch (err) {
