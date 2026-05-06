@@ -25,6 +25,7 @@ import logging
 from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request, session
+from sqlalchemy.orm import selectinload
 
 from database import (
     Account,
@@ -647,7 +648,17 @@ def get_pacing_summary(account_id):
     if not account:
         return jsonify({"error": "Account not found"}), 404
 
-    campaigns = Campaign.query.filter_by(account_id=account_id).all()
+    # Eager-load campaigns + their adsets + pacing_data so the loops below don't trigger
+    # one lazy query per campaign / adset.
+    campaigns = (
+        Campaign.query
+        .filter_by(account_id=account_id)
+        .options(
+            selectinload(Campaign.pacing_data),
+            selectinload(Campaign.adsets),
+        )
+        .all()
+    )
 
     on_pace = need_increase = need_decrease = 0
     paced_units = 0  # number of CBO campaigns + active ABO ad sets
@@ -658,14 +669,20 @@ def get_pacing_summary(account_id):
 
     for campaign in campaigns:
         if campaign.budget_mode == 'ABO':
+            # Bucket pacing rows once per campaign instead of re-filtering inside the
+            # adset loop (which was O(adsets * pacing_rows)).
+            rows_by_adset = {}
+            for p in campaign.pacing_data:
+                if p.adset_id is not None:
+                    rows_by_adset.setdefault(p.adset_id, []).append(p)
             for adset in campaign.adsets:
                 if not adset.is_active:
                     continue
                 paced_units += 1
-                rows = [p for p in campaign.pacing_data if p.adset_id == adset.id]
+                rows = rows_by_adset.get(adset.id) or []
                 if not rows:
                     continue
-                latest = sorted(rows, key=sort_key)[-1]
+                latest = max(rows, key=sort_key)
                 if latest.status == "ON_PACE":
                     on_pace += 1
                 elif latest.status == "INCREASE":
@@ -677,7 +694,7 @@ def get_pacing_summary(account_id):
             rows = [p for p in campaign.pacing_data if p.adset_id is None]
             if not rows:
                 continue
-            latest = sorted(rows, key=sort_key)[-1]
+            latest = max(rows, key=sort_key)
             if latest.status == "ON_PACE":
                 on_pace += 1
             elif latest.status == "INCREASE":
@@ -685,9 +702,12 @@ def get_pacing_summary(account_id):
             elif latest.status == "DECREASE":
                 need_decrease += 1
 
+    # Single query for the most recent run instead of loading every PacingRun row.
     last_run = (
-        sorted(account.pacing_runs, key=lambda r: r.run_at or datetime.min)[-1]
-        if account.pacing_runs else None
+        PacingRun.query
+        .filter_by(account_id=account_id)
+        .order_by(PacingRun.run_at.desc())
+        .first()
     )
 
     return jsonify({

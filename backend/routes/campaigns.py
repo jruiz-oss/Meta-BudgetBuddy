@@ -6,7 +6,8 @@ Also exposes a /sync endpoint that pulls campaigns straight from Meta.
 import logging
 
 from flask import Blueprint, request, jsonify, session
-from database import db, Account, AdSet, Campaign, PacingData, User
+from sqlalchemy.orm import selectinload
+from database import db, Account, AdSet, Campaign, PacingData, PacingRun, User
 from meta_client import MetaAPIError, MetaClient
 from routes.auth import login_required
 from datetime import datetime, timedelta
@@ -349,27 +350,42 @@ def sync_campaigns(account_id):
 def get_all_campaigns():
     """
     Return all active campaigns (with latest pacing + adsets) across every
-    account that belongs to the current user. Used by the unified Home view.
+    account that belongs to the current user — in one round trip with eager
+    loading. This is what the Home page hits; replaces the old N+1 fan-out
+    of `/accounts` + `/campaigns/<id>` + `/pacing/<id>/summary` per account.
     """
     try:
         uid = session.get('user_id')
         if not uid:
             return jsonify({'error': 'Not authenticated'}), 401
 
-        accounts = Account.query.filter_by(user_id=uid).all()
+        # Eager-load EVERYTHING we'll touch in to_dict() to avoid lazy-loaded N+1
+        # queries inside the loops below. selectinload issues one query per
+        # relationship instead of one per parent row.
+        accounts = (
+            Account.query
+            .filter_by(user_id=uid)
+            .options(
+                selectinload(Account.campaigns).selectinload(Campaign.pacing_data),
+                selectinload(Account.campaigns).selectinload(Campaign.adsets).selectinload(AdSet.pacing_data),
+                selectinload(Account.pacing_runs),
+            )
+            .all()
+        )
         result = []
         today = datetime.utcnow().date()
 
         for account in accounts:
-            # Most recent pacing run for this account
+            # Most recent pacing run for this account (already loaded above).
             last_run = None
             if account.pacing_runs:
-                lr = sorted(account.pacing_runs, key=lambda r: r.run_at)[-1]
-                last_run = lr.run_at.isoformat()
+                lr = max(account.pacing_runs, key=lambda r: r.run_at or datetime.min)
+                last_run = lr.run_at.isoformat() if lr.run_at else None
 
-            campaigns = Campaign.query.filter_by(account_id=account.id, is_active=True).all()
             camp_list = []
-            for campaign in campaigns:
+            for campaign in account.campaigns:
+                if not campaign.is_active:
+                    continue
                 camp_dict = campaign.to_dict()
 
                 # Flight status
@@ -416,7 +432,16 @@ def get_campaigns(account_id):
         if not account:
             return jsonify({'error': 'Account not found'}), 404
 
-        campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
+        # Eager-load pacing rows + adsets so to_dict() doesn't trigger one query per row.
+        campaigns = (
+            Campaign.query
+            .filter_by(account_id=account_id, is_active=True)
+            .options(
+                selectinload(Campaign.pacing_data),
+                selectinload(Campaign.adsets).selectinload(AdSet.pacing_data),
+            )
+            .all()
+        )
 
         campaigns_data = []
         for campaign in campaigns:

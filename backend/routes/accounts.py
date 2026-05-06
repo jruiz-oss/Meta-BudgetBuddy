@@ -206,7 +206,9 @@ def _auto_import_campaigns(account):
 def get_accounts():
     user_id = session['user_id']
     accounts = Account.query.filter_by(user_id=user_id).all()
-    return jsonify({'accounts': [acc.to_dict() for acc in accounts]}), 200
+    # Use lite=True — the list view doesn't need the per-account pacing roll-up,
+    # which was triggering N+1 lazy loads of every campaign's pacing_data.
+    return jsonify({'accounts': [acc.to_dict(lite=True) for acc in accounts]}), 200
 
 
 @accounts_bp.route('/<int:account_id>', methods=['GET'])

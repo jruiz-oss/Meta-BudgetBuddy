@@ -128,6 +128,26 @@ def _get_meta_section(worksheet):
     return rows
 
 
+def _word_overlap_score(name1: str, name2: str) -> float:
+    """
+    Fraction of the shorter name's meaningful tokens that appear in the longer name.
+
+    Handles cases like:
+      sheet  → "Harrah's OKLAHOMA - Commit 2026: Promo - Next Day Free"
+      meta   → "Commit 2026: Promo - Next Day Free Slot Play"
+    Neither is a substring of the other, but they share most of their words.
+    """
+    import re
+    def tokenise(s):
+        # alphanumeric tokens of length > 1 (strips punctuation, drops "a", "-", etc.)
+        return {t for t in re.findall(r'[a-z0-9]+', s.lower()) if len(t) > 1}
+    t1, t2 = tokenise(name1), tokenise(name2)
+    if not t1 or not t2:
+        return 0.0
+    shorter = t1 if len(t1) <= len(t2) else t2
+    return len(shorter & t1 & t2) / len(shorter)   # overlap / shorter-set size
+
+
 def _match_campaign(sheet_name: str, db_campaigns: list):
     """
     Match a sheet row name to a Campaign object.
@@ -135,7 +155,10 @@ def _match_campaign(sheet_name: str, db_campaigns: list):
     Priority:
       1. Exact match
       2. Case-insensitive match
-      3. Partial match (one name is a substring of the other)
+      3. Partial match — one name is a substring of the other
+         (e.g. "Commit 2026: Boosting" inside "Harrah's OKLAHOMA - Commit 2026: Boosting")
+      4. Word-overlap ≥ 70% — catches names that share most words but differ in
+         prefix/suffix (e.g. account prefix in sheet vs. extra words in Meta name)
 
     Returns the matched Campaign or None.
     """
@@ -154,6 +177,15 @@ def _match_campaign(sheet_name: str, db_campaigns: list):
         if sheet_lower in meta_lower or meta_lower in sheet_lower:
             return c
 
+    # Word-overlap fallback — pick the highest-scoring campaign above the threshold.
+    best_score, best_c = 0.0, None
+    for c in db_campaigns:
+        score = _word_overlap_score(sheet_name, c.campaign_name)
+        if score > best_score:
+            best_score, best_c = score, c
+    if best_score >= 0.70:
+        return best_c
+
     return None
 
 
@@ -164,7 +196,11 @@ def _match_type_label(sheet_name: str, campaign) -> str:
         return "exact"
     if sheet_name.lower() == campaign.campaign_name.lower():
         return "case_insensitive"
-    return "partial"
+    sheet_lower = sheet_name.lower()
+    meta_lower = campaign.campaign_name.lower()
+    if sheet_lower in meta_lower or meta_lower in sheet_lower:
+        return "partial"
+    return "word_overlap"
 
 
 def _user_owns_account(account_id: int) -> bool:

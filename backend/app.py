@@ -143,16 +143,21 @@ def cron_run_all_accounts():
 # Uses a PostgreSQL advisory lock so only one gunicorn worker runs create_all —
 # otherwise two workers boot simultaneously, both try to CREATE TABLE, and one
 # crashes with a duplicate type error in pg_type.
-with app.app_context():
-    try:
-        with db.engine.connect() as conn:
-            conn.execute(text("SELECT pg_advisory_lock(20260505)"))
-            try:
-                db.create_all()
-            finally:
-                conn.execute(text("SELECT pg_advisory_unlock(20260505)"))
-    except Exception as e:
-        logging.exception("db.create_all() failed at startup: %s", e)
+#
+# Skip this step in production once tables exist — it's a slow no-op that adds
+# 1-3s to every cold-start (and Railway cold-starts are already slow). Set
+# SKIP_CREATE_ALL=true on Railway after the first successful deploy.
+if not (os.getenv('SKIP_CREATE_ALL', '').lower() in ('1', 'true', 'yes')):
+    with app.app_context():
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(text("SELECT pg_advisory_lock(20260505)"))
+                try:
+                    db.create_all()
+                finally:
+                    conn.execute(text("SELECT pg_advisory_unlock(20260505)"))
+        except Exception as e:
+            logging.exception("db.create_all() failed at startup: %s", e)
 
 # ── Scheduled auto-pacing ────────────────────────────────────────────────────
 # Runs once daily at 06:00 UTC using APScheduler's BackgroundScheduler.

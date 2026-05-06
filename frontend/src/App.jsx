@@ -16,6 +16,15 @@ import CampaignDetail from './pages/CampaignDetail';
 import Settings from './pages/Settings';
 import History from './pages/History';
 
+// Default timeout — Railway cold starts can take ~15s, but anything past 60s is dead.
+// Without this, hung requests sit forever and look like the app is "loading" with no spinner state ever resolving.
+axios.defaults.timeout = 60_000;
+
+// Fire a warmup ping before anything else so the Railway dyno wakes up while
+// React is still mounting. Cuts perceived first-paint latency on cold starts.
+// Fire-and-forget — failures are fine (they just mean we'll retry on the real call).
+try { axios.get('/api/health').catch(() => {}); } catch {}
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);

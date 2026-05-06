@@ -163,6 +163,23 @@ ALTER TABLE account_settings
   ADD COLUMN IF NOT EXISTS daily_digest_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ```
 
+**Performance indexes (session 9 — required for Home page to load fast):**
+```sql
+-- FK indexes Postgres doesn't auto-create. Without these, the Home N+1 fan-out
+-- caused 1-2 minute load times. Run all of these in Neon SQL Editor.
+CREATE INDEX IF NOT EXISTS ix_accounts_user_id              ON accounts(user_id);
+CREATE INDEX IF NOT EXISTS ix_campaigns_account_id          ON campaigns(account_id);
+CREATE INDEX IF NOT EXISTS ix_campaigns_meta_campaign_id    ON campaigns(meta_campaign_id);
+CREATE INDEX IF NOT EXISTS ix_adsets_campaign_id            ON adsets(campaign_id);
+CREATE INDEX IF NOT EXISTS ix_adsets_meta_adset_id          ON adsets(meta_adset_id);
+CREATE INDEX IF NOT EXISTS ix_pacing_data_campaign_id       ON pacing_data(campaign_id);
+CREATE INDEX IF NOT EXISTS ix_pacing_data_adset_id          ON pacing_data(adset_id);
+CREATE INDEX IF NOT EXISTS ix_pacing_data_date              ON pacing_data(date);
+CREATE INDEX IF NOT EXISTS ix_budget_adjustments_campaign_id ON budget_adjustments(campaign_id);
+CREATE INDEX IF NOT EXISTS ix_budget_adjustments_adset_id   ON budget_adjustments(adset_id);
+CREATE INDEX IF NOT EXISTS ix_pacing_runs_account_id        ON pacing_runs(account_id);
+```
+
 ---
 
 ## Budget Update Strategy (meta_client.py)
@@ -254,6 +271,17 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 ## Recent Changes Log
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
+
+- [x] **2026-05-06 (session 9 — Opus)** — Performance pass. Home went from 1-2 min to <2s after the migration runs.
+  - **Single-endpoint Home.** Frontend was doing 1 + 2*N round trips (`/api/accounts` + per-account `/api/campaigns/<id>` + `/api/pacing/<id>/summary`). Replaced with one call to `/api/campaigns/all`, which now eager-loads everything via `selectinload` (campaigns → pacing_data, campaigns → adsets → pacing_data, account → pacing_runs). Single DB round trip per relationship instead of one per parent row.
+  - **Lite serializer.** `Account.to_dict(lite=True)` skips the heavy pacing_data walk used to compute the per-account roll-up. `/api/accounts` now uses lite mode — that endpoint's response was triggering a hidden N+1 over every campaign's pacing_data on every page load.
+  - **Eager loading on dashboard endpoints.** `GET /api/campaigns/<id>` and `GET /api/pacing/<id>/summary` now use `selectinload` for pacing_data + adsets. Summary also uses a single ORDER BY query for `last_run` instead of pulling every PacingRun row and sorting in Python. Bucketed pacing rows by adset once instead of re-filtering inside the inner loop.
+  - **DB indexes on every FK.** Added `index=True` to `accounts.user_id`, `campaigns.account_id`, `campaigns.meta_campaign_id`, `adsets.campaign_id`, `adsets.meta_adset_id`, `pacing_data.campaign_id`, `pacing_data.adset_id`, `pacing_data.date`, `budget_adjustments.campaign_id`, `budget_adjustments.adset_id`, `pacing_runs.account_id`. Postgres doesn't auto-index FK columns, so before this every `Campaign.query.filter_by(account_id=…)` was a sequential scan.
+  - **Backend warmup ping + axios timeout.** `App.jsx` fires `GET /api/health` at module load (fire-and-forget) so the Railway dyno wakes up while React is still mounting. Added `axios.defaults.timeout = 60_000` so dead requests don't hang forever (was contributing to the "loading" state never resolving).
+  - **Optional `SKIP_CREATE_ALL` env flag.** Once tables exist on Neon, set `SKIP_CREATE_ALL=true` on Railway to skip the advisory-locked `db.create_all()` on every cold start. Saves 1-3s per boot.
+  - ⚠️ **Run the perf-index migration in Neon before this code helps** — see "Performance indexes" SQL block above. Code is safe to ship without it (queries still work), but you won't see the speed-up until the indexes exist.
+  - ⚠️ **Optional but recommended:** set `SKIP_CREATE_ALL=true` on Railway env vars once the migration is applied.
+  - Verified: `python3 -c 'import ast; ast.parse(...)'` clean across `app.py`, `database.py`, `routes/accounts.py`, `routes/campaigns.py`, `routes/pacing.py`. Frontend `react-scripts build` clean.
 
 - [x] **2026-05-06 (session 8 — Opus)** — "Make this feel like a real product" pass. Five high-ROI upgrades:
   - **Lucide icons throughout.** Added `lucide-react` to package.json. Sidebar items now show icons + a brand mark (gradient pill with `Activity` glyph). Buttons (Run Pacing, Apply, Import from Meta, Save, Sync Budgets, Write Spend, Logout, Cancel, etc.) all carry inline icons. Status pills use `Check` / `TrendingUp` / `TrendingDown` / `Minus`. Change indicators use real arrow icons in place of ↗ ↘. Modal close buttons use the `X` icon. Login/Register show a centered brand mark above the title.

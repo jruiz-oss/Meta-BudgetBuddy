@@ -59,30 +59,11 @@ function Home({ user, onLogout }) {
     if (!cached) setLoading(true);
 
     try {
-      const acctRes = await axios.get('/api/accounts');
-      const accounts = acctRes.data.accounts || acctRes.data || [];
-
-      if (accounts.length === 0) {
-        setAllAccounts([]);
-        setAccountBlocks([]);
-        setCached('home-data', { accounts: [], blocks: [] });
-        return;
-      }
-
-      const blocks = await Promise.all(
-        accounts.map(async (acct) => {
-          const [campRes, summaryRes] = await Promise.all([
-            axios.get(`/api/campaigns/${acct.id}`),
-            axios.get(`/api/pacing/${acct.id}/summary`).catch(() => ({ data: {} })),
-          ]);
-          return {
-            id: acct.id,
-            account_name: acct.account_name,
-            last_run: summaryRes.data?.last_run || null,
-            campaigns: campRes.data.campaigns || [],
-          };
-        })
-      );
+      // Single round-trip to the backend. Replaces the previous N+1 fan-out
+      // (1 + 2*N requests) which was the main cause of the 1-2 minute load.
+      const res = await axios.get('/api/campaigns/all');
+      const blocks = res.data?.accounts || [];
+      const accounts = blocks.map((b) => ({ id: b.id, account_name: b.account_name }));
 
       setAllAccounts(accounts);
       setAccountBlocks(blocks);

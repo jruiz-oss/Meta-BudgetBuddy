@@ -32,7 +32,7 @@ class Account(db.Model):
     __tablename__ = 'accounts'
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
     account_name = db.Column(db.String(255), nullable=False)
     meta_account_id = db.Column(db.String(255), nullable=False)
     # Per-account token override. Leave blank to fall back to the user's global_meta_token.
@@ -50,7 +50,23 @@ class Account(db.Model):
     settings = db.relationship('AccountSettings', backref='account', lazy=True, uselist=False, cascade='all, delete-orphan')
     pacing_runs = db.relationship('PacingRun', backref='account', lazy=True, cascade='all, delete-orphan')
 
-    def to_dict(self):
+    def to_dict(self, lite=False):
+        """Serialize for API.
+
+        ``lite=True`` skips the heavy pacing_data walk used to compute pacing_status
+        / status_category. The /api/accounts list view doesn't render those fields,
+        so passing lite=True there avoids an N+1 over every campaign's pacing rows
+        (which was the main cause of the 1-2 minute Home load).
+        """
+        if lite:
+            return {
+                'id': self.id,
+                'user_id': self.user_id,
+                'account_name': self.account_name,
+                'meta_account_id': self.meta_account_id,
+                'created_at': self.created_at.isoformat() if self.created_at else None,
+            }
+
         # Only count tracked campaigns. "Remove" in the UI sets is_active=False (not a hard
         # delete), so without this filter the dashboard reports stale campaigns the user
         # already removed.
@@ -105,9 +121,9 @@ class Campaign(db.Model):
     __tablename__ = 'campaigns'
 
     id = db.Column(db.Integer, primary_key=True)
-    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
+    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False, index=True)
     campaign_name = db.Column(db.String(255), nullable=False)
-    meta_campaign_id = db.Column(db.String(255), nullable=False)
+    meta_campaign_id = db.Column(db.String(255), nullable=False, index=True)
     monthly_budget = db.Column(db.Float, nullable=False)
     flight_type = db.Column(db.String(50), default='ALWAYS_ON')  # ALWAYS_ON or LIMITED
     flight_start_date = db.Column(db.Date)
@@ -217,8 +233,8 @@ class AdSet(db.Model):
     __tablename__ = 'adsets'
 
     id = db.Column(db.Integer, primary_key=True)
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False)
-    meta_adset_id = db.Column(db.String(255), nullable=False)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False, index=True)
+    meta_adset_id = db.Column(db.String(255), nullable=False, index=True)
     adset_name = db.Column(db.String(255), nullable=False)
     # Percent of the campaign's monthly_budget allocated to this adset (0-100).
     # Sum across a campaign's active adsets should be ~100. Used only for ABO campaigns.
@@ -261,10 +277,10 @@ class PacingData(db.Model):
     __tablename__ = 'pacing_data'
 
     id = db.Column(db.Integer, primary_key=True)
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False, index=True)
     # Nullable: NULL means campaign-level row (CBO); set means ad-set-level row (ABO).
-    adset_id = db.Column(db.Integer, db.ForeignKey('adsets.id'), nullable=True)
-    date = db.Column(db.Date, nullable=False)
+    adset_id = db.Column(db.Integer, db.ForeignKey('adsets.id'), nullable=True, index=True)
+    date = db.Column(db.Date, nullable=False, index=True)
     current_daily_budget = db.Column(db.Float)
     actual_spend = db.Column(db.Float, nullable=False)
     expected_spend = db.Column(db.Float, nullable=False)
@@ -295,9 +311,9 @@ class BudgetAdjustment(db.Model):
     __tablename__ = 'budget_adjustments'
 
     id = db.Column(db.Integer, primary_key=True)
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False, index=True)
     # Nullable: NULL means a campaign-level (CBO) adjustment; set means an ad-set-level (ABO) one.
-    adset_id = db.Column(db.Integer, db.ForeignKey('adsets.id'), nullable=True)
+    adset_id = db.Column(db.Integer, db.ForeignKey('adsets.id'), nullable=True, index=True)
     old_budget = db.Column(db.Float, nullable=False)
     new_budget = db.Column(db.Float, nullable=False)
     change_percent = db.Column(db.Float, nullable=False)
@@ -323,7 +339,7 @@ class PacingRun(db.Model):
     __tablename__ = 'pacing_runs'
 
     id = db.Column(db.Integer, primary_key=True)
-    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
+    account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False, index=True)
     run_type = db.Column(db.String(50))           # MANUAL, AUTO
     triggered_by = db.Column(db.String(255))      # user email
     campaigns_processed = db.Column(db.Integer)
