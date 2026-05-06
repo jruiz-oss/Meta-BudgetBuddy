@@ -21,6 +21,11 @@ function Home({ user, onLogout }) {
   // Search filter — case-insensitive substring match against account / campaign / ad set name.
   const [search, setSearch] = useState('');
 
+  // Manual "Run Pacing for All" state — fires /api/pacing/:id/run for every account.
+  // Pacing pulls MTD spend through yesterday only, so this gives a clean as-of-prior-day view.
+  const [runningAll, setRunningAll]   = useState(false);
+  const [runAllResult, setRunAllResult] = useState(null);
+
   const navigate = useNavigate();
 
   const fetchAll = useCallback(async () => {
@@ -64,6 +69,42 @@ function Home({ user, onLogout }) {
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Manually run pacing for every account in parallel. Each /run call also triggers the
+  // Google Sheet write-back (handled server-side), so a single click refreshes both
+  // recommendations and the sheet's MTD column.
+  const handleRunAll = async () => {
+    if (runningAll || allAccounts.length === 0) return;
+    setRunningAll(true);
+    setRunAllResult(null);
+    try {
+      const settled = await Promise.allSettled(
+        allAccounts.map((a) =>
+          axios.post(`/api/pacing/${a.id}/run`, { run_type: 'MANUAL' })
+        )
+      );
+      let succeeded = 0;
+      let totalCampaigns = 0;
+      const failures = [];
+      settled.forEach((res, i) => {
+        const acct = allAccounts[i];
+        if (res.status === 'fulfilled') {
+          succeeded += 1;
+          totalCampaigns += res.value?.data?.campaigns_processed || 0;
+        } else {
+          failures.push({
+            account: acct.account_name,
+            error: res.reason?.response?.data?.error || res.reason?.message || 'Unknown error',
+          });
+        }
+      });
+      setRunAllResult({ succeeded, total: allAccounts.length, totalCampaigns, failures });
+      // Refresh the displayed data so cards + tables reflect the new pacing rows.
+      fetchAll();
+    } finally {
+      setRunningAll(false);
+    }
+  };
 
   const handleLogout = async () => {
     try { await axios.post('/api/auth/logout'); } catch {}
@@ -241,10 +282,64 @@ function Home({ user, onLogout }) {
             <div className="bb-page-title">All Campaigns</div>
             <div className="bb-page-subtitle">Every tracked campaign across all accounts. Apply recommendations here.</div>
           </div>
-          <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>Log out</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="bb-btn bb-btn-primary"
+              onClick={handleRunAll}
+              disabled={runningAll || loading || allAccounts.length === 0}
+              title="Pull fresh MTD spend (through yesterday) for every account"
+            >
+              {runningAll
+                ? `Running ${allAccounts.length} accounts…`
+                : `Run Pacing (All ${allAccounts.length})`}
+            </button>
+            <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>Log out</button>
+          </div>
         </div>
 
         {error && <div className="bb-alert bb-alert-error">{error}</div>}
+
+        {/* Run-all result banner — auto-clears whenever the user runs again. */}
+        {runAllResult && (
+          <div
+            className={
+              runAllResult.failures.length === 0
+                ? 'bb-alert bb-alert-success'
+                : runAllResult.succeeded > 0
+                  ? 'bb-alert bb-alert-warn'
+                  : 'bb-alert bb-alert-error'
+            }
+            style={{ marginBottom: 12 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+              <div>
+                <strong>
+                  {runAllResult.succeeded === runAllResult.total
+                    ? 'All accounts refreshed.'
+                    : `${runAllResult.succeeded} of ${runAllResult.total} accounts refreshed.`}
+                </strong>{' '}
+                <span style={{ fontSize: 13 }}>
+                  {runAllResult.totalCampaigns} campaign{runAllResult.totalCampaigns === 1 ? '' : 's'} processed.
+                  Spend reflects activity through yesterday.
+                </span>
+                {runAllResult.failures.length > 0 && (
+                  <ul style={{ margin: '6px 0 0 18px', fontSize: 12 }}>
+                    {runAllResult.failures.map((f, i) => (
+                      <li key={i}><strong>{f.account}:</strong> {f.error}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <button
+                className="bb-btn bb-btn-ghost"
+                style={{ fontSize: 11, padding: '4px 8px' }}
+                onClick={() => setRunAllResult(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Top stat cards — compact totals across every account / campaign on this Home view */}
         {!loading && accountBlocks.length > 0 && (
