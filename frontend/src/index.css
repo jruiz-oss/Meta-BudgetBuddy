@@ -163,13 +163,12 @@ a {
 .bb-btn-primary:hover { background: var(--bb-primary-hover); border-color: var(--bb-primary-hover); }
 
 .bb-btn-apply {
-  background: #00bdf2;
-  color: #00202c;
-  border-color: #00bdf2;
-  box-shadow: 0 2px 8px rgba(0, 189, 242, 0.35);
+  background: #059669;
+  color: #fff;
+  border-color: #059669;
   font-weight: 600;
 }
-.bb-btn-apply:hover { background: #00aada; border-color: #00aada; box-shadow: 0 3px 12px rgba(0, 189, 242, 0.45); }
+.bb-btn-apply:hover { background: #047857; border-color: #047857; }
 
 .bb-btn-secondary {
   background: #fff;

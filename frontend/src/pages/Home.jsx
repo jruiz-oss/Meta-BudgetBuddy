@@ -477,7 +477,6 @@ function Home({ user, onLogout }) {
               background: '#f0f2f4',
               borderRadius: '10px 10px 0 0',
               borderBottom: '1px solid #e2e5e8',
-              borderLeft: '4px solid #004359',
             }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 15, color: '#0d1f26' }}>{acct.account_name}</div>
