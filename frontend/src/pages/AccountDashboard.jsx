@@ -529,7 +529,7 @@ function AccountDashboard({ user, onLogout }) {
           </div>
           <div className="bb-stat">
             <span className="bb-stat-label">Total Spend (MTD)</span>
-            <span className="bb-stat-value">${stats.totalSpend.toFixed(0)}</span>
+            <span className="bb-stat-value">${stats.totalSpend.toFixed(2)}</span>
             <span className="bb-stat-sub">of ${stats.monthlyBudget.toFixed(0)} monthly</span>
           </div>
         </div>

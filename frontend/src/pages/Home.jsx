@@ -367,7 +367,7 @@ function Home({ user, onLogout }) {
                 <BarChart3 size={11} aria-hidden="true" /> Spend (MTD)
               </span>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                <span className="bb-stat-value">{fmt$(totals.spent)}</span>
+                <span className="bb-stat-value">{fmt$(totals.spent, 2)}</span>
                 <span style={{
                   fontSize: 11, fontWeight: 600,
                   color: totals.pct > 100 ? '#ef4444' : '#10b981',
@@ -527,7 +527,7 @@ function Home({ user, onLogout }) {
                           </td>
                           <td><span className="bb-mode-badge bb-mode-abo">ABO</span></td>
                           <td className="num">{fmt$(campaign.monthly_budget)}/mo</td>
-                          <td className="num">{lp ? fmt$(lp.actual_spend) : '—'}</td>
+                          <td className="num">{lp ? fmt$(lp.actual_spend, 2) : '—'}</td>
                           <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
                           <td className="num bb-muted">—</td>
                           <td className="num bb-muted">—</td>
@@ -604,7 +604,7 @@ function Home({ user, onLogout }) {
                         </td>
                         <td><span className="bb-mode-badge bb-mode-cbo">CBO</span></td>
                         <td className="num">{fmt$(campaign.monthly_budget)}/mo</td>
-                        <td className="num">{lp ? fmt$(lp.actual_spend) : '—'}</td>
+                        <td className="num">{lp ? fmt$(lp.actual_spend, 2) : '—'}</td>
                         <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
                         <td className="num">
                           {lp?.current_daily_budget != null ? fmt$(lp.current_daily_budget, 2) : '—'}
