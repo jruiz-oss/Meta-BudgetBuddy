@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from database import db, Account, AdSet, Campaign, PacingData, PacingRun, User
 from meta_client import MetaAPIError, MetaClient
 from routes.auth import login_required
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date as date_type
 
 logger = logging.getLogger(__name__)
 
@@ -390,15 +390,30 @@ def get_all_campaigns():
                     continue
 
                 # --- Ended-campaign filter ---
-                # If a campaign has pacing data for the current month and every
-                # snapshot shows $0 actual spend, it's almost certainly ended or
-                # paused for the full month. Hide it from the main list.
-                # Campaigns with NO pacing data yet (newly synced) are kept.
-                mtd_rows = [p for p in campaign.pacing_data
+                # Three-way decision using already-loaded pacing_data:
+                #
+                # 1. No pacing data at all → newly synced, keep it.
+                # 2. Has current-month snapshots → hide if ALL show $0 spend.
+                # 3. Has only prior-month data → check the most recent snapshot:
+                #    - $0 spend last time it ran → ended before this month, hide it.
+                #    - Real spend last time → may still be active, just not paced
+                #      yet this month (e.g. new month, cron hasn't fired) → keep it.
+                all_pacing = campaign.pacing_data  # already eager-loaded
+                mtd_rows = [p for p in all_pacing
                             if p.date and p.date >= month_start]
-                is_zero_spend = bool(mtd_rows) and all(
-                    (p.actual_spend or 0) == 0 for p in mtd_rows
-                )
+
+                if not all_pacing:
+                    # Never paced → newly synced, give benefit of the doubt
+                    is_zero_spend = False
+                elif mtd_rows:
+                    # Has this-month snapshots: hide only if every one shows $0
+                    is_zero_spend = all((p.actual_spend or 0) == 0 for p in mtd_rows)
+                else:
+                    # Paced before this month, nothing yet this month.
+                    # Most-recent snapshot determines fate.
+                    latest = max(all_pacing,
+                                 key=lambda p: (p.date or date_type.min, p.id or 0))
+                    is_zero_spend = (latest.actual_spend or 0) == 0
 
                 camp_dict = campaign.to_dict()
 
@@ -488,12 +503,19 @@ def get_campaigns(account_id):
             if campaign.budget_mode == 'ABO':
                 camp_dict['adsets'] = [a.to_dict() for a in campaign.adsets if a.is_active]
 
-            # Ended-campaign filter: pacing data this month but all $0 spend → hide
-            mtd_rows = [p for p in campaign.pacing_data
+            # Ended-campaign filter (same three-way logic as get_all_campaigns)
+            all_pacing = campaign.pacing_data
+            mtd_rows = [p for p in all_pacing
                         if p.date and p.date >= month_start]
-            is_zero_spend = bool(mtd_rows) and all(
-                (p.actual_spend or 0) == 0 for p in mtd_rows
-            )
+
+            if not all_pacing:
+                is_zero_spend = False
+            elif mtd_rows:
+                is_zero_spend = all((p.actual_spend or 0) == 0 for p in mtd_rows)
+            else:
+                latest = max(all_pacing,
+                             key=lambda p: (p.date or date_type.min, p.id or 0))
+                is_zero_spend = (latest.actual_spend or 0) == 0
 
             if is_zero_spend:
                 camp_dict['hidden_reason'] = 'no_spend_this_month'
