@@ -215,6 +215,26 @@ def _scheduled_pacing_job():
                 settings = AccountSettings.query.filter_by(account_id=account.id).first()
                 if not settings:
                     continue
+
+                # Pull fresh budgets + ABO allocations from the configured Google Sheet
+                # *before* we read campaigns from the DB. Sheet is the source of truth.
+                # Best-effort per account so a single bad sheet doesn't break the job.
+                if (settings.google_sheet_id or "").strip():
+                    try:
+                        from routes.sheets import sync_budgets_for_account
+                        sync_result = sync_budgets_for_account(account.id)
+                        logging.info(
+                            "Scheduler sheet sync: account %s → %s budgets, %s allocations updated",
+                            account.id,
+                            sync_result["updated_count"],
+                            sync_result["allocations_updated_count"],
+                        )
+                    except Exception as sheet_err:
+                        logging.warning(
+                            "Scheduler sheet sync failed for account %s: %s",
+                            account.id, sheet_err,
+                        )
+
                 try:
                     meta = MetaClient(
                         access_token=account.meta_token,

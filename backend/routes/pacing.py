@@ -272,6 +272,25 @@ def run_pacing(account_id):
     if not settings:
         return jsonify({"error": "Account settings not found"}), 404
 
+    # Auto-pull budgets & ABO allocations from the configured Google Sheet *before*
+    # we read campaigns from the DB. Sheet is the source of truth — without this
+    # we'd pace against the daily*30 estimate stored at account-import time.
+    # Best-effort: any sheet failure must not block the pacing run.
+    sheet_sync_result = None
+    if (settings.google_sheet_id or "").strip():
+        try:
+            from routes.sheets import sync_budgets_for_account
+            sheet_sync_result = sync_budgets_for_account(account_id)
+            logger.info(
+                "Pre-pacing sheet sync: account %s → %s budgets, %s allocations updated",
+                account_id,
+                sheet_sync_result["updated_count"],
+                sheet_sync_result["allocations_updated_count"],
+            )
+        except Exception as e:
+            logger.warning("Pre-pacing sheet sync failed for account %s: %s", account_id, e)
+            sheet_sync_result = {"error": str(e)}
+
     try:
         meta = MetaClient(
             access_token=account.effective_meta_token,
@@ -538,6 +557,7 @@ def run_pacing(account_id):
         "adjustments_needed": adjustments_needed,
         "recommendations": recommendations,
         "failures": failures,
+        "sheet_sync": sheet_sync_result,
         "sheet_writeback": sheet_writeback,
     }), 200
 

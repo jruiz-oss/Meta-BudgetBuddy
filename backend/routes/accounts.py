@@ -253,12 +253,23 @@ def create_account():
     # Auto-import all active campaigns from Meta (best-effort)
     imported, import_errors = _auto_import_campaigns(account)
 
+    # If a sheet was configured at create time (rare), pull budgets from it
+    # so the daily*30 seed gets overwritten with the real monthly numbers.
+    sheet_sync = None
+    if (settings.google_sheet_id or '').strip():
+        try:
+            from routes.sheets import sync_budgets_for_account
+            sheet_sync = sync_budgets_for_account(account.id)
+        except Exception as e:
+            logger.warning('Post-create sheet sync failed for account %s: %s', account.id, e)
+
     return jsonify({
         'account': account.to_dict(),
         'auto_import': {
             'imported': imported,
             'errors': import_errors,
         },
+        'sheet_sync': sheet_sync,
     }), 201
 
 
@@ -345,10 +356,24 @@ def refresh_campaigns(account_id):
         return jsonify({'error': 'Not found'}), 404
 
     imported, errors = _auto_import_campaigns(account)
+
+    # After re-import (which seeds monthly_budget = daily*30), pull authoritative
+    # budgets + ABO allocations from the configured sheet, if any. Best-effort.
+    sheet_sync = None
+    settings = AccountSettings.query.filter_by(account_id=account_id).first()
+    if settings and (settings.google_sheet_id or '').strip():
+        try:
+            from routes.sheets import sync_budgets_for_account
+            sheet_sync = sync_budgets_for_account(account_id)
+        except Exception as e:
+            logger.warning('Post-refresh sheet sync failed for account %s: %s', account_id, e)
+            sheet_sync = {'error': str(e)}
+
     return jsonify({
         'message': f'Imported {imported} campaign(s) from Meta.',
         'imported': imported,
         'errors': errors,
+        'sheet_sync': sheet_sync,
     }), 200
 
 

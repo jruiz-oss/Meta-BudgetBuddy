@@ -87,7 +87,7 @@ def _get_meta_section(worksheet):
 
     Returns a list of dicts:
       { row_index (1-based int), name (str), monthly_budget (float|None),
-        mtd_spend (float|None), last_paced (str) }
+        mtd_spend (float|None), notes (str), last_paced (str) }
     """
     all_values = worksheet.get_all_values()  # list of lists of strings
 
@@ -114,6 +114,7 @@ def _get_meta_section(worksheet):
         name = row[0].strip() if len(row) > 0 else ""
         monthly_budget = _parse_float(row[1]) if len(row) > 1 else None
         mtd_spend = _parse_float(row[2]) if len(row) > 2 else None
+        notes = row[5].strip() if len(row) > 5 else ""
         last_paced = row[6].strip() if len(row) > 6 else ""
 
         if name:
@@ -122,30 +123,67 @@ def _get_meta_section(worksheet):
                 "name": name,
                 "monthly_budget": monthly_budget,
                 "mtd_spend": mtd_spend,
+                "notes": notes,
                 "last_paced": last_paced,
             })
 
     return rows
 
 
+# Common words we ignore when scoring overlap — they appear everywhere and would
+# inflate the score without indicating a real match.
+_STOP_TOKENS = {
+    "the", "and", "ads", "ad", "campaign", "campaigns", "fb", "ig", "facebook",
+    "instagram", "meta", "social", "for", "of", "to", "in", "on", "at", "a",
+    "an", "is", "by", "or", "with", "now", "new",
+}
+
+
+def _stem(token: str) -> str:
+    """Light stemmer — strip common English suffixes so 'weddings' == 'wedding'.
+
+    Not a real Porter stemmer; just enough to handle plural / -ing / -ed variants
+    that show up in campaign names. Cheap, no external deps.
+    """
+    if len(token) <= 3:
+        return token
+    for suf in ("ings", "ing", "ies", "ied", "ed", "es", "s"):
+        if token.endswith(suf) and len(token) - len(suf) >= 3:
+            base = token[: -len(suf)]
+            # "ies" → "y" (stories → story)
+            if suf == "ies":
+                base += "y"
+            return base
+    return token
+
+
+def _tokenise(s: str) -> set:
+    """Lowercase alphanumeric tokens, length > 1, with light stemming and stopwords removed."""
+    import re
+    raw = [t for t in re.findall(r"[a-z0-9]+", (s or "").lower()) if len(t) > 1]
+    return {_stem(t) for t in raw if t not in _STOP_TOKENS}
+
+
 def _word_overlap_score(name1: str, name2: str) -> float:
     """
     Fraction of the shorter name's meaningful tokens that appear in the longer name.
 
-    Handles cases like:
-      sheet  → "Harrah's OKLAHOMA - Commit 2026: Promo - Next Day Free"
-      meta   → "Commit 2026: Promo - Next Day Free Slot Play"
-    Neither is a substring of the other, but they share most of their words.
+    Uses light stemming so "weddings" matches "wedding" and "boosting" matches "boost".
+    Stopwords ("the", "ads", "campaign", "fb", "ig"…) are ignored so they don't
+    inflate scores or count as matches on their own.
     """
-    import re
-    def tokenise(s):
-        # alphanumeric tokens of length > 1 (strips punctuation, drops "a", "-", etc.)
-        return {t for t in re.findall(r'[a-z0-9]+', s.lower()) if len(t) > 1}
-    t1, t2 = tokenise(name1), tokenise(name2)
+    t1, t2 = _tokenise(name1), _tokenise(name2)
     if not t1 or not t2:
         return 0.0
     shorter = t1 if len(t1) <= len(t2) else t2
     return len(shorter & t1 & t2) / len(shorter)   # overlap / shorter-set size
+
+
+# Threshold for fuzzy match. 0.5 means: at least half of the shorter side's
+# distinctive tokens must appear in the longer side. Loose enough that
+# "Resort - Weddings" matches "Resort 2026: Wedding Booking" but tight enough
+# that two clearly-different campaigns don't get cross-matched.
+_FUZZY_MATCH_THRESHOLD = 0.5
 
 
 def _match_campaign(sheet_name: str, db_campaigns: list):
@@ -157,8 +195,9 @@ def _match_campaign(sheet_name: str, db_campaigns: list):
       2. Case-insensitive match
       3. Partial match — one name is a substring of the other
          (e.g. "Commit 2026: Boosting" inside "Harrah's OKLAHOMA - Commit 2026: Boosting")
-      4. Word-overlap ≥ 70% — catches names that share most words but differ in
-         prefix/suffix (e.g. account prefix in sheet vs. extra words in Meta name)
+      4. Word-overlap ≥ 50% (with stemming) — catches names that share most
+         meaningful words but differ in prefix/suffix or grammatical form
+         ("Weddings" ↔ "Wedding Booking").
 
     Returns the matched Campaign or None.
     """
@@ -183,10 +222,85 @@ def _match_campaign(sheet_name: str, db_campaigns: list):
         score = _word_overlap_score(sheet_name, c.campaign_name)
         if score > best_score:
             best_score, best_c = score, c
-    if best_score >= 0.70:
+    if best_score >= _FUZZY_MATCH_THRESHOLD:
         return best_c
 
     return None
+
+
+def _match_adset(needle_name: str, adsets: list):
+    """Match a name (e.g. parsed out of the Notes column) to one of `campaign.adsets`.
+
+    Same priority chain as _match_campaign but operates on AdSet.adset_name.
+    Returns the matched AdSet or None.
+    """
+    if not needle_name or not adsets:
+        return None
+    needle_lower = needle_name.lower()
+
+    for a in adsets:
+        if a.adset_name == needle_name:
+            return a
+    for a in adsets:
+        if a.adset_name.lower() == needle_lower:
+            return a
+    for a in adsets:
+        a_lower = a.adset_name.lower()
+        if needle_lower in a_lower or a_lower in needle_lower:
+            return a
+
+    best_score, best_a = 0.0, None
+    for a in adsets:
+        score = _word_overlap_score(needle_name, a.adset_name)
+        if score > best_score:
+            best_score, best_a = score, a
+    if best_score >= _FUZZY_MATCH_THRESHOLD:
+        return best_a
+    return None
+
+
+def _parse_allocations_from_notes(notes: str):
+    """Try to read adset allocation %s out of a Notes-column cell.
+
+    Convention: chunks separated by ``/`` or newlines, each shaped like
+    ``"<name> - <pct>%"``.
+
+      "Pays to Play - 40% / Sports Bar - 30% / Free Slot Play - 30%"
+        → [("Pays to Play", 40.0), ("Sports Bar", 30.0), ("Free Slot Play", 30.0)]
+
+    Returns ``None`` if any chunk doesn't match the pattern, or if the parsed
+    %s don't sum to ~100 (±1.5). This is conservative on purpose — flight notes
+    like "Cinco De Mayo (5/2 End)" must not be misread as allocations.
+    """
+    if not notes or not notes.strip():
+        return None
+
+    import re
+    # Split on " / " or newlines (some users put each on its own line)
+    chunks = [c.strip() for c in re.split(r"\s*/\s*|\n", notes) if c.strip()]
+    if not chunks:
+        return None
+
+    pattern = re.compile(r"^(.+?)\s*[-–—]\s*(\d+(?:\.\d+)?)\s*%\s*$")
+    parsed = []
+    for chunk in chunks:
+        m = pattern.match(chunk)
+        if not m:
+            return None  # any non-conforming chunk → bail (don't risk misreading flight notes)
+        name = m.group(1).strip()
+        try:
+            pct = float(m.group(2))
+        except ValueError:
+            return None
+        if not name or pct < 0 or pct > 100:
+            return None
+        parsed.append((name, pct))
+
+    total = sum(p for _, p in parsed)
+    if abs(total - 100.0) > 1.5:
+        return None  # don't apply partial allocations
+
+    return parsed
 
 
 def _match_type_label(sheet_name: str, campaign) -> str:
@@ -305,67 +419,138 @@ def preview_matches(account_id):
     }), 200
 
 
-@sheets_bp.route("/<int:account_id>/sync-budgets", methods=["POST"])
-@login_required
-def sync_budgets(account_id):
-    """
-    Read monthly budgets from column B of the current month's tab and write them
-    into the matched DB campaigns. Skips rows with no match or no budget value.
-    """
-    if not _user_owns_account(account_id):
-        return jsonify({"error": "Not found"}), 404
+def sync_budgets_for_account(account_id):
+    """Pull monthly budgets (and ABO adset allocations) from the configured sheet.
 
+    Single source of truth used by:
+      - the manual "Sync Budgets" button (POST /api/sheets/<id>/sync-budgets)
+      - /api/pacing/<id>/run, opportunistically before each pacing run
+      - the daily background scheduler in app.py
+      - account creation when a sheet ID is configured up-front
+
+    For each matched campaign:
+      * Updates campaign.monthly_budget from col B.
+      * For ABO campaigns, parses col F (Notes) for "Name - X%" patterns. If every
+        chunk parses and they sum to ~100, applies them to the matched ad sets'
+        allocation_pct. If notes don't conform (flight info etc.) the existing
+        allocations are left untouched.
+
+    Raises ValueError on misconfiguration (no sheet, missing tab, bad creds) so
+    callers can decide whether to surface or swallow the error.
+    """
     settings = AccountSettings.query.filter_by(account_id=account_id).first()
     if not settings or not (settings.google_sheet_id or "").strip():
-        return jsonify({"error": "Google Sheet not configured."}), 400
+        raise ValueError("Google Sheet not configured.")
 
-    try:
-        gc = _get_gspread_client()
-        spreadsheet = gc.open_by_key(settings.google_sheet_id)
-        ws, tab_name = _open_month_worksheet(spreadsheet)
-    except (ValueError, RuntimeError) as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        # Don't echo the raw exception text — google-auth/gspread errors can include
-        # request URLs, internal paths, or token fragments. Log full detail server-side.
-        logger.exception("Could not open Google Sheet for account %s", account_id)
-        return jsonify({"error": "Could not open Google Sheet. Check the URL and that the service account has access."}), 400
+    gc = _get_gspread_client()
+    spreadsheet = gc.open_by_key(settings.google_sheet_id)
+    ws, tab_name = _open_month_worksheet(spreadsheet)
 
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
 
-    updated = []
+    updated = []          # campaign budget changes
+    allocations_updated = []  # adset allocation changes
     skipped = []
 
     for row in sheet_rows:
-        if row["monthly_budget"] is None:
-            skipped.append({"sheet_name": row["name"], "reason": "No budget value in column B"})
-            continue
-
         campaign = _match_campaign(row["name"], db_campaigns)
         if not campaign:
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
 
-        old_budget = campaign.monthly_budget
-        campaign.monthly_budget = row["monthly_budget"]
-        updated.append({
-            "campaign_name": campaign.campaign_name,
-            "sheet_name": row["name"],
-            "old_budget": old_budget,
-            "new_budget": row["monthly_budget"],
-            "match_type": _match_type_label(row["name"], campaign),
-        })
+        # Campaign-level budget
+        if row["monthly_budget"] is not None:
+            old_budget = campaign.monthly_budget
+            new_budget = row["monthly_budget"]
+            if old_budget != new_budget:
+                campaign.monthly_budget = new_budget
+                updated.append({
+                    "campaign_name": campaign.campaign_name,
+                    "sheet_name": row["name"],
+                    "old_budget": old_budget,
+                    "new_budget": new_budget,
+                    "match_type": _match_type_label(row["name"], campaign),
+                })
+        else:
+            skipped.append({"sheet_name": row["name"], "reason": "No budget value in column B"})
+
+        # ABO adset allocations — only attempt if this campaign is ABO and notes parse
+        if campaign.budget_mode == 'ABO':
+            allocations = _parse_allocations_from_notes(row.get("notes", ""))
+            if allocations:
+                active_adsets = [a for a in campaign.adsets if a.is_active]
+                proposed = []  # [(adset, new_pct, parsed_name)]
+                ok = True
+                for parsed_name, parsed_pct in allocations:
+                    matched = _match_adset(parsed_name, active_adsets)
+                    if not matched:
+                        ok = False
+                        break
+                    proposed.append((matched, parsed_pct, parsed_name))
+
+                # Reject if duplicate adsets matched (two notes chunks → same adset)
+                if ok:
+                    seen_ids = set()
+                    for ad, _, _ in proposed:
+                        if ad.id in seen_ids:
+                            ok = False
+                            break
+                        seen_ids.add(ad.id)
+
+                if ok and proposed:
+                    for ad, new_pct, parsed_name in proposed:
+                        old_pct = ad.allocation_pct
+                        if old_pct != new_pct:
+                            ad.allocation_pct = new_pct
+                            allocations_updated.append({
+                                "campaign_name": campaign.campaign_name,
+                                "adset_name": ad.adset_name,
+                                "sheet_label": parsed_name,
+                                "old_pct": round(old_pct, 2),
+                                "new_pct": round(new_pct, 2),
+                            })
 
     db.session.commit()
 
-    return jsonify({
-        "message": f"Synced budgets for {len(updated)} campaign(s) from '{tab_name}'",
+    return {
         "sheet_tab": tab_name,
         "updated_count": len(updated),
         "skipped_count": len(skipped),
+        "allocations_updated_count": len(allocations_updated),
         "updated": updated,
         "skipped": skipped,
+        "allocations_updated": allocations_updated,
+    }
+
+
+@sheets_bp.route("/<int:account_id>/sync-budgets", methods=["POST"])
+@login_required
+def sync_budgets(account_id):
+    """
+    Read monthly budgets from column B (and ABO allocations from col F notes) of
+    the current month's tab and write them into the matched DB campaigns/adsets.
+    Thin wrapper around sync_budgets_for_account.
+    """
+    if not _user_owns_account(account_id):
+        return jsonify({"error": "Not found"}), 404
+
+    try:
+        result = sync_budgets_for_account(account_id)
+    except (ValueError, RuntimeError) as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception:
+        logger.exception("Could not open Google Sheet for account %s", account_id)
+        return jsonify({"error": "Could not open Google Sheet. Check the URL and that the service account has access."}), 400
+
+    msg_parts = [f"Synced budgets for {result['updated_count']} campaign(s)"]
+    if result["allocations_updated_count"]:
+        msg_parts.append(f"and allocations for {result['allocations_updated_count']} ad set(s)")
+    msg_parts.append(f"from '{result['sheet_tab']}'")
+
+    return jsonify({
+        "message": " ".join(msg_parts),
+        **result,
     }), 200
 
 

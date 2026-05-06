@@ -133,6 +133,19 @@ function AccountDashboard({ user, onLogout }) {
         toast.warn(`${response.data.failures.length} campaign(s) had errors.`);
       }
 
+      // Surface sheet sync (pre-run pull from sheet → DB)
+      const ss = response.data.sheet_sync;
+      if (ss && !ss.error) {
+        const parts = [];
+        if (ss.updated_count > 0) parts.push(`${ss.updated_count} budget(s)`);
+        if (ss.allocations_updated_count > 0) parts.push(`${ss.allocations_updated_count} allocation(s)`);
+        if (parts.length > 0) {
+          toast.info(`Pulled ${parts.join(' + ')} from "${ss.sheet_tab}".`, { title: 'Sheet → App' });
+        }
+      } else if (ss && ss.error) {
+        toast.warn(`Could not read sheet before run: ${ss.error}`, { title: 'Sheet sync skipped' });
+      }
+
       // Bust cache so the post-run fetch gets live data
       // Surface sheet writeback result so the user can see what happened
       const sw = response.data.sheet_writeback;
