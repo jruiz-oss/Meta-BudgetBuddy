@@ -12,7 +12,7 @@ import { SkeletonStatTile, SkeletonTable } from '../components/Skeleton';
 import { EmptyState } from '../components/EmptyState';
 import SpendChart from '../components/SpendChart';
 import { useToast } from '../components/Toast';
-import { getCached, setCached, invalidateCache } from '../cache';
+import { getCached, isStale, setCached, invalidateCache } from '../cache';
 
 /**
  * Single-account dashboard.
@@ -58,18 +58,21 @@ function AccountDashboard({ user, onLogout }) {
 
   const fetchAll = async (force = false) => {
     const cacheKey = `dashboard-${accountId}`;
-    const cached = !force && getCached(cacheKey);
-    if (cached) {
+    const cached = getCached(cacheKey);
+
+    if (cached && !force) {
       setAccounts(cached.accounts);
       setAccount(cached.account);
       setCampaigns(cached.campaigns);
       setAccountHistory(cached.history || []);
       setLoading(false);
-      return;
+      if (!isStale(cacheKey)) return;
+      // stale — fall through and refresh silently
     }
 
+    if (!cached) setLoading(true);
+
     try {
-      setLoading(true);
       const [accountsRes, accountRes, campaignsRes] = await Promise.all([
         axios.get('/api/accounts'),
         axios.get(`/api/accounts/${accountId}`),
@@ -127,7 +130,7 @@ function AccountDashboard({ user, onLogout }) {
         setAccountHistory([]);
       }
     } catch (err) {
-      setError('Failed to load account data');
+      if (!cached) setError('Failed to load account data');
     } finally {
       setLoading(false);
     }

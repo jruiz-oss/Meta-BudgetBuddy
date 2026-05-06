@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { getCached, setCached, invalidateCache } from '../cache';
+import { getCached, isStale, setCached, invalidateCache } from '../cache';
 import {
   Search, X, Play, Check, LogOut, Inbox, Plus, Building2,
   TrendingUp, TrendingDown, Minus, ArrowRight, RotateCcw, Loader2,
@@ -41,28 +41,34 @@ function Home({ user, onLogout }) {
   const navigate = useNavigate();
 
   const fetchAll = useCallback(async (force = false) => {
-    // Serve from cache on repeat visits (90-second TTL set in cache.js)
-    const cached = !force && getCached('home-data');
-    if (cached) {
+    const cached = getCached('home-data');
+
+    if (cached && !force) {
+      // Always paint cached data immediately — zero wait for the user
       setAllAccounts(cached.accounts);
       setAccountBlocks(cached.blocks);
       setLoading(false);
-      return;
+
+      // If data is still fresh, stop here — no background work needed
+      if (!isStale('home-data')) return;
+
+      // Data is stale: refresh silently in the background without showing a spinner
     }
 
+    // Only show the loading spinner when there's nothing to display yet
+    if (!cached) setLoading(true);
+
     try {
-      setLoading(true);
       const acctRes = await axios.get('/api/accounts');
       const accounts = acctRes.data.accounts || acctRes.data || [];
-      setAllAccounts(accounts);
 
       if (accounts.length === 0) {
+        setAllAccounts([]);
         setAccountBlocks([]);
+        setCached('home-data', { accounts: [], blocks: [] });
         return;
       }
 
-      // Fire all per-account fetches in parallel — each is fast individually;
-      // the total wall time ≈ the slowest single call, not the sum.
       const blocks = await Promise.all(
         accounts.map(async (acct) => {
           const [campRes, summaryRes] = await Promise.all([
@@ -77,10 +83,13 @@ function Home({ user, onLogout }) {
           };
         })
       );
+
+      setAllAccounts(accounts);
       setAccountBlocks(blocks);
       setCached('home-data', { accounts, blocks });
     } catch (err) {
-      setError('Failed to load campaigns: ' + (err.response?.data?.error || err.message));
+      // If we already showed cached data, swallow background-refresh errors silently
+      if (!cached) setError('Failed to load campaigns: ' + (err.response?.data?.error || err.message));
     } finally {
       setLoading(false);
     }
