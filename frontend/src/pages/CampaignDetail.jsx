@@ -67,7 +67,9 @@ function CampaignDetail({ user, onLogout }) {
     if (mode === 'ABO') {
       (campaign.adsets || []).forEach((a) => {
         const alp = a.latest_pacing;
-        if (!alp || (alp.action || '').toUpperCase() === 'ON_PACE') return;
+        // AdSet.latest_pacing comes from PacingData.to_dict() which exposes `status`, not `action`.
+        const aStatus = (alp?.status || '').toUpperCase();
+        if (!alp || aStatus === 'ON_PACE') return;
         adjustments.push({
           level: 'adset',
           campaign_id: campaign.id,
@@ -77,11 +79,14 @@ function CampaignDetail({ user, onLogout }) {
           current_daily_budget: alp.current_daily_budget,
           recommended_daily_budget: alp.recommended_daily_budget,
           change_percent: alp.change_percent,
-          action: alp.action,
+          action: aStatus,
         });
       });
     } else {
-      if ((lp.action || '').toUpperCase() !== 'ON_PACE') {
+      // CBO: campaign.latest_pacing comes from Campaign.to_dict() → PacingData.to_dict(),
+      // which exposes the field as `status` (not `action`).
+      const cboStatus = (lp.status || '').toUpperCase();
+      if (cboStatus !== 'ON_PACE') {
         adjustments.push({
           level: 'campaign',
           campaign_id: campaign.id,
@@ -89,7 +94,7 @@ function CampaignDetail({ user, onLogout }) {
           current_daily_budget: lp.current_daily_budget,
           recommended_daily_budget: lp.recommended_daily_budget,
           change_percent: lp.change_percent,
-          action: lp.action,
+          action: cboStatus,
         });
       }
     }
@@ -280,7 +285,9 @@ function CampaignDetail({ user, onLogout }) {
   const lp            = campaign?.latest_pacing;
   const mode          = campaign?.budget_mode || 'CBO';
   const hasPacing     = !!lp;
-  const action        = (lp?.action || '').toUpperCase();
+  // `latest_pacing` comes from Campaign.to_dict(); the field is `status` (PacingData column),
+  // not `action`. Reading `action` here was the cause of the "Apply on ON_PACE campaigns" bug.
+  const action        = (lp?.status || '').toUpperCase();
   const isOnPace      = action === 'ON_PACE';
   const pill          = pillForStatus(action);
 

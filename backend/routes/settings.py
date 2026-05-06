@@ -30,14 +30,35 @@ def update_settings(account_id):
     account = Account.query.get(account_id)
     settings = account.settings
 
-    data = request.get_json()
+    data = request.get_json() or {}
 
-    if 'min_daily_budget' in data:
-        settings.min_daily_budget = float(data['min_daily_budget'])
-    if 'max_daily_change_percent' in data:
-        settings.max_daily_change_percent = float(data['max_daily_change_percent'])
-    if 'pace_tolerance_percent' in data:
-        settings.pace_tolerance_percent = float(data['pace_tolerance_percent'])
+    # Validate up front so a bad value can't poison pacing math (a negative tolerance
+    # would mark every campaign off-pace; a negative min_daily_budget would let budgets
+    # go below zero in the floor step).
+    def _bounded_float(name, value, lo=0.0, hi=None):
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a number")
+        if v < lo or (hi is not None and v > hi):
+            bound = f">= {lo}" + (f" and <= {hi}" if hi is not None else "")
+            raise ValueError(f"{name} must be {bound}")
+        return v
+
+    try:
+        if 'min_daily_budget' in data:
+            settings.min_daily_budget = _bounded_float('min_daily_budget', data['min_daily_budget'])
+        if 'max_daily_change_percent' in data:
+            settings.max_daily_change_percent = _bounded_float(
+                'max_daily_change_percent', data['max_daily_change_percent'], lo=0.0, hi=100.0,
+            )
+        if 'pace_tolerance_percent' in data:
+            settings.pace_tolerance_percent = _bounded_float(
+                'pace_tolerance_percent', data['pace_tolerance_percent'], lo=0.0, hi=100.0,
+            )
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
     if 'auto_adjust_enabled' in data:
         settings.auto_adjust_enabled = bool(data['auto_adjust_enabled'])
 
@@ -74,14 +95,22 @@ def update_flight(account_id, campaign_id):
     if not campaign:
         return jsonify({'error': 'Campaign not found'}), 404
 
-    data = request.get_json()
+    data = request.get_json() or {}
 
     if 'flight_type' in data:
+        if data['flight_type'] not in ('ALWAYS_ON', 'LIMITED'):
+            return jsonify({'error': "flight_type must be 'ALWAYS_ON' or 'LIMITED'"}), 400
         campaign.flight_type = data['flight_type']
     if 'flight_start_date' in data and data['flight_start_date']:
         campaign.flight_start_date = datetime.fromisoformat(data['flight_start_date'][:10]).date()
     if 'flight_end_date' in data and data['flight_end_date']:
         campaign.flight_end_date = datetime.fromisoformat(data['flight_end_date'][:10]).date()
+
+    if (
+        campaign.flight_start_date and campaign.flight_end_date
+        and campaign.flight_start_date > campaign.flight_end_date
+    ):
+        return jsonify({'error': 'flight_start_date must be on or before flight_end_date'}), 400
 
     db.session.commit()
     return jsonify({

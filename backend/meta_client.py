@@ -87,13 +87,24 @@ class MetaClient:
                     time.sleep(2 ** attempt)
                     continue
             except requests.exceptions.HTTPError as e:
+                status_code = getattr(e.response, "status_code", 0) or 0
                 body = ""
                 try:
                     body = e.response.text
                 except Exception:
                     pass
-                logger.error("Meta HTTP %s on %s %s: %s", e.response.status_code, method, endpoint, body)
-                raise MetaAPIError(f"{e.response.status_code}: {body}") from e
+                # Retry transient 5xx responses — Meta returns these intermittently and a
+                # raise-immediately approach would fail a /run mid-flight and leave partial
+                # PacingData rows.
+                if 500 <= status_code < 600 and attempt < self.retries:
+                    last_err = e
+                    logger.warning(
+                        "Meta %s on %s %s (attempt %s); retrying", status_code, method, endpoint, attempt + 1,
+                    )
+                    time.sleep(2 ** attempt)
+                    continue
+                logger.error("Meta HTTP %s on %s %s: %s", status_code, method, endpoint, body)
+                raise MetaAPIError(f"{status_code}: {body}") from e
             except Exception as e:
                 last_err = e
                 logger.error("Meta request failed: %s", e)
@@ -243,6 +254,7 @@ class MetaClient:
         self,
         meta_campaign_id: str,
         new_daily_budget: float,
+        min_daily: float = 1.0,
     ) -> Dict[str, Any]:
         """
         Try to update budget at the campaign level first (CBO).
@@ -286,9 +298,12 @@ class MetaClient:
             total_weight = sum(weights)
 
         updates = []
+        # Floor: respect the user's account-level min_daily_budget, but never below
+        # Meta's hard floor of $1/day.
+        floor = max(1.0, float(min_daily or 1.0))
         for adset, w in zip(adsets, weights):
             share = (w / total_weight) * new_daily_budget if total_weight else (new_daily_budget / len(adsets))
-            share = max(1.0, share)  # Meta enforces a $1/day minimum on most accounts
+            share = max(floor, share)
             try:
                 ok = self.update_adset_budget(adset["id"], share)
                 updates.append({"adset_id": adset["id"], "name": adset.get("name"), "new_daily_budget": round(share, 2), "success": ok})

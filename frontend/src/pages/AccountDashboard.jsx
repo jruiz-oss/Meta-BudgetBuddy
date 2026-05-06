@@ -302,7 +302,14 @@ function AccountDashboard({ user, onLogout }) {
     setImportSaving(true);
     setImportError('');
     try {
-      await axios.post(`/api/campaigns/${accountId}/sync`, { campaigns: chosen });
+      // Tell the server every campaign the modal *showed* the user, so it can deactivate
+      // tracked campaigns the user explicitly unchecked. Without this, unchecking a tracked
+      // campaign in the modal would leave it lingering as is_active=true in the DB.
+      const seen_meta_ids = metaCampaigns.map((c) => c.meta_campaign_id);
+      await axios.post(`/api/campaigns/${accountId}/sync`, {
+        campaigns: chosen,
+        seen_meta_ids,
+      });
       closeImport();
       fetchAll();
     } catch (err) {

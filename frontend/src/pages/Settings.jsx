@@ -56,11 +56,12 @@ function Settings({ user, onLogout }) {
   const handleSaveSettings = async () => {
     setError(''); setSuccess('');
     try {
+      // auto_adjust_enabled was never wired to any apply path, so the toggle was misleading.
+      // The app applies recommendations manually only — see the dashboard's Apply button.
       await axios.put(`/api/settings/${accountId}`, {
         min_daily_budget: parseFloat(settings.min_daily_budget),
         max_daily_change_percent: parseFloat(settings.max_daily_change_percent),
         pace_tolerance_percent: parseFloat(settings.pace_tolerance_percent),
-        auto_adjust_enabled: !!settings.auto_adjust_enabled,
       });
       setSuccess('Settings saved.');
     } catch (err) {
@@ -263,19 +264,11 @@ function Settings({ user, onLogout }) {
                   />
                   <span className="bb-form-help">Campaigns within ±X% of ideal pace are "on pace".</span>
                 </div>
+              </div>
 
-                <div className="bb-form-group">
-                  <label className="bb-form-label">Auto-adjust</label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                    <input
-                      type="checkbox"
-                      checked={!!settings.auto_adjust_enabled}
-                      onChange={(e) => handleSettingsChange('auto_adjust_enabled', e.target.checked)}
-                    />
-                    <span>Apply recommendations automatically</span>
-                  </label>
-                  <span className="bb-form-help">When off, you review and apply manually from the dashboard.</span>
-                </div>
+              <div className="bb-alert bb-alert-info" style={{ marginTop: 12 }}>
+                Pacing runs nightly and writes recommendations. Budget changes are
+                always pushed to Meta manually — review on the dashboard and click Apply.
               </div>
 
               <div style={{ marginTop: 16 }}>

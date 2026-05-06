@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from flask import Blueprint, request, jsonify, session
 from database import db, Account, AccountSettings, Campaign
 from .auth import login_required
@@ -74,16 +76,24 @@ def account_summary(account_id):
     if not account or account.user_id != session['user_id']:
         return jsonify({'error': 'Not found'}), 404
 
-    campaigns = Campaign.query.filter_by(account_id=account_id).all()
+    # Only count tracked (active) campaigns — "Remove" is a soft delete.
+    campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
 
     pacing_status = {'on_track': 0, 'over_pacing': 0, 'under_pacing': 0, 'mixed': 0}
     total_daily_budget = 0.0
 
     for campaign in campaigns:
-        if campaign.pacing_data:
-            latest = campaign.pacing_data[-1]
-            total_daily_budget += campaign.daily_budget
+        # Approximate daily budget from the monthly budget. The Campaign model does not
+        # store a campaign-level daily_budget field — that's a Meta-side value. For ABO
+        # campaigns this is still the correct rollup (sum of allocated dailies = monthly/30).
+        if campaign.monthly_budget:
+            total_daily_budget += campaign.monthly_budget / 30.0
 
+        if campaign.pacing_data:
+            latest = sorted(
+                campaign.pacing_data,
+                key=lambda r: (r.date or datetime.min.date(), r.id or 0),
+            )[-1]
             if latest.status == 'ON_PACE':
                 pacing_status['on_track'] += 1
             elif latest.status == 'DECREASE':

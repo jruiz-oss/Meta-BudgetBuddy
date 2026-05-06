@@ -186,6 +186,10 @@ def run_pacing(account_id):
     days_in_month = (month_end - month_start).days + 1
     days_elapsed = max(1, (yesterday - month_start).days + 1)
     spend_until = max(month_start, yesterday)
+    # On the 1st of the month yesterday belongs to the *previous* month, so PacingData rows
+    # would land in the wrong month and the dashboard's MTD filter would miss them. Clamp
+    # the snapshot date into the current month.
+    snapshot_date = max(month_start, yesterday)
 
     campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     included = [c for c in campaigns if _campaign_should_run_today(c, today)]
@@ -295,7 +299,7 @@ def run_pacing(account_id):
                 snapshot = PacingData(
                     campaign_id=campaign.id,
                     adset_id=adset.id,
-                    date=yesterday,
+                    date=snapshot_date,
                     current_daily_budget=display_current,
                     actual_spend=actual_spend,
                     expected_spend=expected_mtd,
@@ -340,6 +344,26 @@ def run_pacing(account_id):
             })
             continue
 
+        # Pull the live daily_budget from Meta so the cap math (±max_daily_change_percent)
+        # and the displayed "current daily" reflect the real Meta value, not just the
+        # internal monthly/days_in_month target. ABO already does this for ad sets.
+        live_cbo_daily = None
+        try:
+            camp_meta = meta.get_campaign(campaign.meta_campaign_id)
+            raw_daily = camp_meta.get('daily_budget')
+            if raw_daily is not None:
+                try:
+                    live_cbo_daily = float(raw_daily) / 100.0
+                    if live_cbo_daily <= 0:
+                        live_cbo_daily = None
+                except (TypeError, ValueError):
+                    live_cbo_daily = None
+        except MetaAPIError as e:
+            logger.warning(
+                "Could not fetch live CBO daily for campaign %s: %s", campaign.id, e,
+            )
+            # Non-fatal — fall back to daily_target as the reference inside _compute_recommendation.
+
         (
             daily_target, expected_mtd, pace_ratio,
             new_daily, change_pct, action,
@@ -349,7 +373,11 @@ def run_pacing(account_id):
             days_in_month=days_in_month,
             days_elapsed=days_elapsed,
             settings=settings,
+            actual_current_daily=live_cbo_daily,
         )
+
+        # Display the actual Meta daily when we have it, otherwise fall back to the target.
+        display_current = live_cbo_daily if live_cbo_daily is not None else daily_target
 
         recommendations.append({
             "campaign_id": campaign.id,
@@ -360,7 +388,7 @@ def run_pacing(account_id):
             "actual_spend": round(actual_spend, 2),
             "expected_spend": round(expected_mtd, 2),
             "pace_ratio": round(pace_ratio, 3),
-            "current_daily_budget": round(daily_target, 2),
+            "current_daily_budget": round(display_current, 2),
             "recommended_daily_budget": round(new_daily, 2),
             "change_percent": round(change_pct, 1),
             "action": action,
@@ -371,8 +399,8 @@ def run_pacing(account_id):
         snapshot = PacingData(
             campaign_id=campaign.id,
             adset_id=None,
-            date=yesterday,
-            current_daily_budget=daily_target,
+            date=snapshot_date,
+            current_daily_budget=display_current,
             actual_spend=actual_spend,
             expected_spend=expected_mtd,
             pace_ratio=pace_ratio,
@@ -470,6 +498,26 @@ def apply_recommendations(account_id):
             continue
         new_daily = max(min_daily, requested_new)
 
+        # Defensive guard: if the caller flagged this adjustment as ON_PACE, or the
+        # recommended daily matches the current daily within a cent, skip the Meta call.
+        # This protects against frontend bugs that build adjustments for already-on-pace
+        # campaigns (which would silently overwrite the live Meta budget with daily_target).
+        try:
+            current_daily = float(adj.get("current_daily_budget") or 0.0)
+        except (TypeError, ValueError):
+            current_daily = 0.0
+        action_label = (adj.get("action") or "").upper()
+        if action_label == "ON_PACE" or (
+            current_daily > 0 and abs(new_daily - current_daily) < 0.01
+        ):
+            results.append({
+                "skipped": True,
+                "reason": "ON_PACE — no change required",
+                "campaign_id": adj.get("campaign_id"),
+                "adset_id": adj.get("adset_id"),
+            })
+            continue
+
         adset_local_id = adj.get("adset_id")
         if adset_local_id:
             # ABO path
@@ -526,7 +574,9 @@ def apply_recommendations(account_id):
             continue
 
         try:
-            meta_result = meta.apply_campaign_daily_budget(campaign.meta_campaign_id, new_daily)
+            meta_result = meta.apply_campaign_daily_budget(
+                campaign.meta_campaign_id, new_daily, min_daily=min_daily,
+            )
         except MetaAPIError as e:
             results.append({"campaign_id": campaign.id, "error": str(e)})
             continue
@@ -581,17 +631,20 @@ def get_pacing_summary(account_id):
     on_pace = need_increase = need_decrease = 0
     paced_units = 0  # number of CBO campaigns + active ABO ad sets
 
+    # Sort by (date, id) so that multiple same-day runs use the most recently written row
+    # rather than picking one arbitrarily.
+    sort_key = lambda r: (r.date or datetime.min.date(), r.id or 0)
+
     for campaign in campaigns:
         if campaign.budget_mode == 'ABO':
             for adset in campaign.adsets:
                 if not adset.is_active:
                     continue
                 paced_units += 1
-                # Latest ad-set-level row
                 rows = [p for p in campaign.pacing_data if p.adset_id == adset.id]
                 if not rows:
                     continue
-                latest = sorted(rows, key=lambda r: r.date or datetime.min.date())[-1]
+                latest = sorted(rows, key=sort_key)[-1]
                 if latest.status == "ON_PACE":
                     on_pace += 1
                 elif latest.status == "INCREASE":
@@ -603,7 +656,7 @@ def get_pacing_summary(account_id):
             rows = [p for p in campaign.pacing_data if p.adset_id is None]
             if not rows:
                 continue
-            latest = sorted(rows, key=lambda r: r.date or datetime.min.date())[-1]
+            latest = sorted(rows, key=sort_key)[-1]
             if latest.status == "ON_PACE":
                 on_pace += 1
             elif latest.status == "INCREASE":
@@ -611,7 +664,10 @@ def get_pacing_summary(account_id):
             elif latest.status == "DECREASE":
                 need_decrease += 1
 
-    last_run = account.pacing_runs[-1] if account.pacing_runs else None
+    last_run = (
+        sorted(account.pacing_runs, key=lambda r: r.run_at or datetime.min)[-1]
+        if account.pacing_runs else None
+    )
 
     return jsonify({
         "on_pace": on_pace,

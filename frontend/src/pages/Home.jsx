@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -17,6 +17,9 @@ function Home({ user, onLogout }) {
   const [applying, setApplying] = useState({});
   const [skipped,  setSkipped]  = useState({});
   const [results,  setResults]  = useState({});
+
+  // Search filter — case-insensitive substring match against account / campaign / ad set name.
+  const [search, setSearch] = useState('');
 
   const navigate = useNavigate();
 
@@ -134,6 +137,75 @@ function Home({ user, onLogout }) {
     return `${Math.floor(hrs / 24)}d ago`;
   };
 
+  // ── Totals across every account block ──────────────────────────────────────
+  // Sums the *campaign* monthly budget once (not the ad sets — those are slices of it).
+  // For MTD spend we use latest_pacing.actual_spend on each campaign, which is already a
+  // rollup from Campaign.to_dict() (sums latest-date adset rows for ABO).
+  const totals = useMemo(() => {
+    let monthly = 0;
+    let spent = 0;
+    let campaignCount = 0;
+    let adsetCount = 0;
+    accountBlocks.forEach((acct) => {
+      acct.campaigns.forEach((c) => {
+        campaignCount += 1;
+        monthly += Number(c.monthly_budget) || 0;
+        const lp = c.latest_pacing;
+        if (lp && Number.isFinite(Number(lp.actual_spend))) {
+          spent += Number(lp.actual_spend);
+        }
+        if ((c.budget_mode || 'CBO') === 'ABO') {
+          adsetCount += (c.adsets || []).length;
+        }
+      });
+    });
+    const pct = monthly > 0 ? Math.min(100, (spent / monthly) * 100) : 0;
+    return { monthly, spent, pct, campaignCount, adsetCount };
+  }, [accountBlocks]);
+
+  // ── Search-filtered view of the account blocks ──────────────────────────────
+  // Three rules:
+  //  1. Empty query → show everything.
+  //  2. If the query matches an account name, that whole account stays unchanged.
+  //  3. Otherwise, keep accounts that have at least one matching campaign or ad set,
+  //     and trim each account's campaigns/ad sets to only the matching ones.
+  const filteredBlocks = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return accountBlocks;
+
+    const out = [];
+    accountBlocks.forEach((acct) => {
+      const acctMatches = acct.account_name.toLowerCase().includes(q);
+      if (acctMatches) {
+        out.push(acct);
+        return;
+      }
+      const trimmedCampaigns = [];
+      acct.campaigns.forEach((c) => {
+        const cMatches = (c.campaign_name || '').toLowerCase().includes(q);
+        if ((c.budget_mode || 'CBO') === 'ABO') {
+          const adsetMatches = (c.adsets || []).filter(
+            (a) => (a.adset_name || '').toLowerCase().includes(q),
+          );
+          if (cMatches) {
+            // Whole campaign matches → keep all its ad sets.
+            trimmedCampaigns.push(c);
+          } else if (adsetMatches.length > 0) {
+            // Only some ad sets match → keep the campaign as a parent rollup but
+            // drop the ad sets that don't match.
+            trimmedCampaigns.push({ ...c, adsets: adsetMatches });
+          }
+        } else if (cMatches) {
+          trimmedCampaigns.push(c);
+        }
+      });
+      if (trimmedCampaigns.length > 0) {
+        out.push({ ...acct, campaigns: trimmedCampaigns });
+      }
+    });
+    return out;
+  }, [accountBlocks, search]);
+
   const actionCell = (rowKey, needsAction, onApply) => {
     const res = results[rowKey];
     const isApplying = !!applying[rowKey];
@@ -174,13 +246,113 @@ function Home({ user, onLogout }) {
 
         {error && <div className="bb-alert bb-alert-error">{error}</div>}
 
+        {/* Top stat cards — totals across every account / campaign on this Home view */}
+        {!loading && accountBlocks.length > 0 && (
+          <div className="bb-grid bb-grid-3" style={{ marginBottom: 14 }}>
+            <div className="bb-stat">
+              <span className="bb-stat-label">Monthly Budget</span>
+              <span className="bb-stat-value">{fmt$(totals.monthly)}</span>
+              <span className="bb-stat-sub">
+                Across {totals.campaignCount} campaign{totals.campaignCount === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div className="bb-stat">
+              <span className="bb-stat-label">Current Spend (MTD)</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                <span className="bb-stat-value">{fmt$(totals.spent)}</span>
+                <span style={{
+                  fontSize: 13, fontWeight: 600,
+                  color: totals.pct > 100 ? '#ef4444' : '#10b981',
+                }}>
+                  {totals.pct.toFixed(1)}%
+                </span>
+              </div>
+              <div
+                aria-label="Percent of monthly budget spent so far"
+                style={{
+                  marginTop: 6,
+                  height: 6, width: '100%',
+                  background: 'rgba(0,0,0,0.06)', borderRadius: 999,
+                  overflow: 'hidden',
+                }}
+              >
+                <div style={{
+                  height: '100%',
+                  width: `${Math.min(100, totals.pct)}%`,
+                  background: totals.pct > 100 ? '#ef4444' : '#10b981',
+                  transition: 'width 240ms ease',
+                }} />
+              </div>
+              <span className="bb-stat-sub" style={{ marginTop: 4 }}>
+                of {fmt$(totals.monthly)} budgeted
+              </span>
+            </div>
+
+            <div className="bb-stat">
+              <span className="bb-stat-label">Tracked Units</span>
+              <span className="bb-stat-value">
+                {totals.campaignCount}
+                {totals.adsetCount > 0 && (
+                  <span style={{ fontSize: 18, color: 'var(--bb-text-muted)', fontWeight: 600 }}>
+                    {' '}/ {totals.adsetCount} ad sets
+                  </span>
+                )}
+              </span>
+              <span className="bb-stat-sub">
+                {accountBlocks.length} account{accountBlocks.length === 1 ? '' : 's'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Search bar — filters the account blocks below by account / campaign / ad set name */}
+        {!loading && accountBlocks.length > 0 && (
+          <div style={{ marginBottom: 18, position: 'relative' }}>
+            <input
+              type="search"
+              className="bb-input"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search accounts, campaigns, or ad sets…"
+              style={{ paddingLeft: 36 }}
+            />
+            <span
+              aria-hidden="true"
+              style={{
+                position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+                color: 'var(--bb-text-muted)', fontSize: 14, pointerEvents: 'none',
+              }}
+            >
+              ⌕
+            </span>
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="bb-btn bb-btn-ghost"
+                style={{
+                  position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+                  fontSize: 12, padding: '4px 8px',
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
+
         {loading ? (
           <div className="bb-card bb-section bb-muted">Loading campaigns…</div>
         ) : accountBlocks.length === 0 ? (
           <div className="bb-card bb-section bb-muted">
             No campaigns tracked yet. Go to <Link to="/accounts">Accounts</Link> to add one.
           </div>
-        ) : accountBlocks.map((acct) => (
+        ) : filteredBlocks.length === 0 ? (
+          <div className="bb-card bb-section bb-muted">
+            No accounts, campaigns, or ad sets match "{search}".
+          </div>
+        ) : filteredBlocks.map((acct) => (
           <div key={acct.id} className="bb-card" style={{ marginBottom: 20 }}>
             <div className="bb-section bb-row-between" style={{ paddingBottom: 12 }}>
               <div>

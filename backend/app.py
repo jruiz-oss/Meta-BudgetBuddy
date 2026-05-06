@@ -96,8 +96,28 @@ with app.app_context():
 # max_instances=1 prevents overlapping runs if a previous run is still going.
 
 def _scheduled_pacing_job():
-    """Called by APScheduler. Runs pacing for every account that has campaigns."""
+    """Called by APScheduler. Runs pacing for every account that has campaigns.
+
+    Uses a PostgreSQL advisory lock to ensure only one worker actually runs the job
+    even if BackgroundScheduler ends up started in multiple gunicorn workers. The lock
+    is non-blocking (pg_try_advisory_lock) — losers exit immediately with no work done.
+    """
     with app.app_context():
+        # Try to acquire the run lock. If another worker already has it, bail out.
+        try:
+            with db.engine.connect() as conn:
+                got_lock = conn.execute(
+                    text("SELECT pg_try_advisory_lock(20260506)")
+                ).scalar()
+                if not got_lock:
+                    logging.info("Scheduled pacing skipped — another worker holds the lock.")
+                    return
+        except Exception:
+            # If the lock query itself fails, fall through and run anyway. Better to
+            # potentially double-run once than silently never run.
+            logging.exception("Could not acquire scheduler advisory lock; proceeding anyway.")
+            got_lock = False
+
         try:
             from database import (
                 Account, AccountSettings, Campaign, AdSet,
@@ -114,6 +134,9 @@ def _scheduled_pacing_job():
             days_in_month = (month_end - month_start).days + 1
             days_elapsed = max(1, (yesterday - month_start).days + 1)
             spend_until = max(month_start, yesterday)
+            # Clamp PacingData.date into the current month (otherwise the 1st-of-month
+            # run would store rows dated to the last day of the previous month).
+            snapshot_date = max(month_start, yesterday)
 
             accounts = Account.query.all()
             for account in accounts:
@@ -175,7 +198,7 @@ def _scheduled_pacing_job():
                             display_current = actual_meta_daily if actual_meta_daily is not None else daily_target
                             db.session.add(PacingData(
                                 campaign_id=campaign.id, adset_id=adset.id,
-                                date=yesterday, current_daily_budget=display_current,
+                                date=snapshot_date, current_daily_budget=display_current,
                                 actual_spend=actual_spend, expected_spend=expected_mtd,
                                 pace_ratio=pace_ratio, status=action,
                                 recommended_daily_budget=new_daily, change_percent=change_pct,
@@ -189,6 +212,22 @@ def _scheduled_pacing_job():
                             )
                         except MetaAPIError:
                             continue
+                        # Read live CBO daily so the cap math uses the real Meta value,
+                        # matching the ABO behaviour. Non-fatal if Meta refuses.
+                        live_cbo_daily = None
+                        try:
+                            camp_meta = meta.get_campaign(campaign.meta_campaign_id)
+                            raw_daily = camp_meta.get('daily_budget')
+                            if raw_daily is not None:
+                                try:
+                                    live_cbo_daily = float(raw_daily) / 100.0
+                                    if live_cbo_daily <= 0:
+                                        live_cbo_daily = None
+                                except (TypeError, ValueError):
+                                    live_cbo_daily = None
+                        except MetaAPIError:
+                            pass
+
                         daily_target, expected_mtd, pace_ratio, new_daily, change_pct, action = (
                             _compute_recommendation(
                                 monthly_budget=campaign.monthly_budget,
@@ -196,11 +235,13 @@ def _scheduled_pacing_job():
                                 days_in_month=days_in_month,
                                 days_elapsed=days_elapsed,
                                 settings=settings,
+                                actual_current_daily=live_cbo_daily,
                             )
                         )
+                        cbo_display_current = live_cbo_daily if live_cbo_daily is not None else daily_target
                         db.session.add(PacingData(
                             campaign_id=campaign.id, adset_id=None,
-                            date=yesterday, current_daily_budget=daily_target,
+                            date=snapshot_date, current_daily_budget=cbo_display_current,
                             actual_spend=actual_spend, expected_spend=expected_mtd,
                             pace_ratio=pace_ratio, status=action,
                             recommended_daily_budget=new_daily, change_percent=change_pct,
@@ -226,6 +267,14 @@ def _scheduled_pacing_job():
                 db.session.rollback()
             except Exception:
                 pass
+        finally:
+            # Release the run lock so tomorrow's job (or a manual trigger) can acquire it.
+            if got_lock:
+                try:
+                    with db.engine.connect() as conn:
+                        conn.execute(text("SELECT pg_advisory_unlock(20260506)"))
+                except Exception:
+                    logging.exception("Could not release scheduler advisory lock.")
 
 
 # Only start the scheduler when not in debug/reload mode (avoids double-start).

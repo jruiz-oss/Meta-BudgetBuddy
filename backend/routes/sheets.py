@@ -354,10 +354,48 @@ def write_spend(account_id):
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
 
-    today_str = datetime.utcnow().strftime("%-m/%-d/%Y")  # e.g. "5/5/2026"
+    # %-m / %-d are Linux/macOS specific. Build the date portably so this also works
+    # if anyone runs the backend on Windows for local dev.
+    now = datetime.utcnow()
+    today_str = f"{now.month}/{now.day}/{now.year}"  # e.g. "5/5/2026"
     cell_updates = []
     written = []
     skipped = []
+
+    def _campaign_mtd_spend(c):
+        """Return the MTD spend for a campaign as Meta would report it.
+
+        - CBO: latest campaign-level row (adset_id IS NULL).
+        - ABO: sum of the latest-date adset rows so the sheet shows the campaign total
+               instead of one ad set's spend (the previous behavior wrote one ad set's
+               number for the whole campaign — silent data corruption for ABO).
+        """
+        rows = list(c.pacing_data or [])
+        if not rows:
+            return None
+        if c.budget_mode == 'ABO':
+            adset_rows = [p for p in rows if p.adset_id is not None]
+            if not adset_rows:
+                return None
+            last_date = max((p.date for p in adset_rows if p.date), default=None)
+            if last_date is None:
+                return None
+            # Keep the highest-id row per adset on the latest date so multiple same-day
+            # runs don't double-count.
+            latest_per_adset = {}
+            for p in adset_rows:
+                if p.date != last_date:
+                    continue
+                key = p.adset_id
+                if key not in latest_per_adset or p.id > latest_per_adset[key].id:
+                    latest_per_adset[key] = p
+            return sum(p.actual_spend or 0 for p in latest_per_adset.values())
+        # CBO
+        cbo_rows = sorted(
+            (p for p in rows if p.adset_id is None),
+            key=lambda r: (r.date or datetime.min.date(), r.id or 0),
+        )
+        return cbo_rows[-1].actual_spend if cbo_rows else None
 
     for row in sheet_rows:
         campaign = _match_campaign(row["name"], db_campaigns)
@@ -365,12 +403,12 @@ def write_spend(account_id):
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
 
-        latest_pacing = campaign.pacing_data[-1] if campaign.pacing_data else None
-        if not latest_pacing:
+        spend_value = _campaign_mtd_spend(campaign)
+        if spend_value is None:
             skipped.append({"sheet_name": row["name"], "reason": "No pacing data available yet — run pacing first"})
             continue
 
-        mtd_spend = round(latest_pacing.actual_spend, 2)
+        mtd_spend = round(spend_value, 2)
         r = row["row_index"]
 
         # Col C = MTD spend, Col G = Last Paced date

@@ -133,6 +133,13 @@ def sync_campaigns(account_id):
     # POST: upsert chosen campaigns
     payload = request.get_json(silent=True) or {}
     chosen = payload.get('campaigns', [])
+    # Optional: list of meta_campaign_ids the import modal showed the user. When the
+    # frontend passes this, any currently-tracked campaign whose meta_id is in this list
+    # but is *not* in `campaigns` is treated as a deselection and gets soft-deactivated.
+    # This mirrors the adset reconciliation logic at the campaign level. We only reconcile
+    # against `seen_meta_ids` (not blindly all tracked campaigns) so paused-on-Meta tracked
+    # campaigns — which the modal can't display — aren't accidentally deactivated.
+    seen_meta_ids = set(payload.get('seen_meta_ids') or [])
     if not chosen:
         return jsonify({'error': 'No campaigns provided'}), 400
 
@@ -293,12 +300,31 @@ def sync_campaigns(account_id):
             'details': write_errors,
         }), 500
 
+    # Reconcile: anything the modal *showed* that the user did not include in the POST
+    # is treated as "removed from tracking". Soft-deactivate so we keep history.
+    deactivated = 0
+    if seen_meta_ids:
+        chosen_meta_ids = {v['meta_id'] for v in validated}
+        candidates = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
+        for c in candidates:
+            if (
+                c.meta_campaign_id in seen_meta_ids
+                and c.meta_campaign_id not in chosen_meta_ids
+            ):
+                c.is_active = False
+                # Also flip its adsets off so ABO pacing skips them.
+                for a in c.adsets:
+                    a.is_active = False
+                deactivated += 1
+
     db.session.commit()
 
     return jsonify({
-        'message': f'Synced {created + updated} campaigns',
+        'message': f'Synced {created + updated} campaigns'
+                   + (f' (deactivated {deactivated})' if deactivated else ''),
         'created': created,
         'updated': updated,
+        'deactivated': deactivated,
         'errors': [],
     }), 200
 
@@ -431,8 +457,13 @@ def get_campaign(account_id, campaign_id):
         # to_dict() handles CBO vs ABO roll-up internally.
         camp_dict = campaign.to_dict()
 
-        # Adjustment history (last 10) — include both campaign-level and ad-set-level.
-        adjustments = [adj.to_dict() for adj in campaign.adjustments[-10:]]
+        # Adjustment history (last 10) — sort by applied_at so the most recent really come last.
+        # Relationship-list ordering isn't guaranteed; without sorting the slice can return any 10.
+        sorted_adjustments = sorted(
+            campaign.adjustments,
+            key=lambda a: (a.applied_at or datetime.min, a.id or 0),
+        )
+        adjustments = [adj.to_dict() for adj in sorted_adjustments[-10:]]
         camp_dict['recent_adjustments'] = adjustments
 
         # For ABO: also include per-ad-set detail so the detail page can render

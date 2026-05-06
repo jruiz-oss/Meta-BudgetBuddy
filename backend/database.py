@@ -38,11 +38,21 @@ class Account(db.Model):
     pacing_runs = db.relationship('PacingRun', backref='account', lazy=True, cascade='all, delete-orphan')
 
     def to_dict(self):
-        total_monthly_budget = sum((c.monthly_budget or 0) for c in self.campaigns)
+        # Only count tracked campaigns. "Remove" in the UI sets is_active=False (not a hard
+        # delete), so without this filter the dashboard reports stale campaigns the user
+        # already removed.
+        active_campaigns = [c for c in self.campaigns if c.is_active]
+        total_monthly_budget = sum((c.monthly_budget or 0) for c in active_campaigns)
 
         on_track = over_pacing = under_pacing = 0
-        for c in self.campaigns:
-            latest = c.pacing_data[-1] if getattr(c, 'pacing_data', None) else None
+        for c in active_campaigns:
+            # Sort by (date, id) — relationship order is not guaranteed, and same-day re-runs
+            # were tying on date alone.
+            rows = sorted(
+                (p for p in (c.pacing_data or [])),
+                key=lambda r: (r.date or datetime.min.date(), r.id or 0),
+            )
+            latest = rows[-1] if rows else None
             status = getattr(latest, 'status', None)
             if status == 'ON_PACE':
                 on_track += 1
@@ -66,7 +76,7 @@ class Account(db.Model):
             'account_name': self.account_name,
             'meta_account_id': self.meta_account_id,
             'created_at': self.created_at.isoformat(),
-            'campaign_count': len(self.campaigns),
+            'campaign_count': len(active_campaigns),
             'total_monthly_budget': round(total_monthly_budget, 2),
             'status_category': status_category,
             'pacing_status': {
@@ -163,8 +173,13 @@ class Campaign(db.Model):
                             'status': roll_status,
                         }
         else:
-            # CBO: just the most recent campaign-level PacingData row (adset_id IS NULL).
-            campaign_rows = [p for p in self.pacing_data if p.adset_id is None]
+            # CBO: most recent campaign-level PacingData row (adset_id IS NULL).
+            # Sort explicitly — relationship-list order is not guaranteed, and same-day
+            # re-runs were tying on date alone.
+            campaign_rows = sorted(
+                (p for p in self.pacing_data if p.adset_id is None),
+                key=lambda r: (r.date or datetime.min.date(), r.id or 0),
+            )
             latest = campaign_rows[-1].to_dict() if campaign_rows else None
 
         return {
@@ -246,16 +261,18 @@ class PacingData(db.Model):
     status = db.Column(db.String(50))  # ON_PACE, INCREASE, DECREASE
 
     def to_dict(self):
+        # Use `is not None` for budget fields — `if self.current_daily_budget` would clobber
+        # legitimate $0.00 readings (which can occur when a campaign is paused mid-month).
         return {
             'id': self.id,
             'campaign_id': self.campaign_id,
             'adset_id': self.adset_id,
             'date': self.date.isoformat() if self.date else None,
-            'current_daily_budget': round(self.current_daily_budget, 2) if self.current_daily_budget else None,
+            'current_daily_budget': round(self.current_daily_budget, 2) if self.current_daily_budget is not None else None,
             'actual_spend': round(self.actual_spend, 2),
             'expected_spend': round(self.expected_spend, 2),
             'pace_ratio': round(self.pace_ratio, 3),
-            'recommended_daily_budget': round(self.recommended_daily_budget, 2) if self.recommended_daily_budget else None,
+            'recommended_daily_budget': round(self.recommended_daily_budget, 2) if self.recommended_daily_budget is not None else None,
             'change_percent': round(self.change_percent, 1) if self.change_percent is not None else None,
             'status': self.status,
         }
