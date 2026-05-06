@@ -470,13 +470,14 @@ function Home({ user, onLogout }) {
           <div key={acct.id} className="bb-card" style={{ marginBottom: 20 }}>
             <div className="bb-row-between" style={{
               padding: '12px 20px',
-              background: '#f0f2f4',
+              background: 'linear-gradient(90deg, #e8f0f3 0%, #f0f4f6 100%)',
               borderRadius: '10px 10px 0 0',
-              borderBottom: '1px solid #e2e5e8',
+              borderBottom: '1px solid #cdd8de',
+              borderLeft: '4px solid #004359',
             }}>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: '#0d1f26', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Building2 size={15} aria-hidden="true" />
+                <div style={{ fontWeight: 700, fontSize: 16, color: '#003547', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Building2 size={15} color="#004359" aria-hidden="true" />
                   {acct.account_name}
                 </div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
