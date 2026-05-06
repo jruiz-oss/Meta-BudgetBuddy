@@ -18,6 +18,9 @@ function Home({ user, onLogout }) {
   const [skipped,  setSkipped]  = useState({});
   const [results,  setResults]  = useState({});
 
+  // Confirmation modal
+  const [pendingConfirm, setPendingConfirm] = useState(null); // { accountId, adjustment, rowKey }
+
   // Search filter — case-insensitive substring match against account / campaign / ad set name.
   const [search, setSearch] = useState('');
 
@@ -129,31 +132,46 @@ function Home({ user, onLogout }) {
   const handleApplyCbo = (accountId, campaign) => {
     const lp = campaign.latest_pacing;
     if (!lp) return;
-    applyAdjustment(accountId, {
-      level: 'campaign',
-      campaign_id: campaign.id,
-      campaign_name: campaign.campaign_name,
-      current_daily_budget: lp.current_daily_budget,
-      recommended_daily_budget: lp.recommended_daily_budget,
-      change_percent: lp.change_percent,
-      action: lp.status,
-    }, `c-${campaign.id}`);
+    setPendingConfirm({
+      accountId,
+      rowKey: `c-${campaign.id}`,
+      adjustment: {
+        level: 'campaign',
+        campaign_id: campaign.id,
+        campaign_name: campaign.campaign_name,
+        current_daily_budget: lp.current_daily_budget,
+        recommended_daily_budget: lp.recommended_daily_budget,
+        change_percent: lp.change_percent,
+        action: lp.status,
+      },
+    });
   };
 
   const handleApplyAdset = (accountId, campaign, adset) => {
     const alp = adset.latest_pacing;
     if (!alp) return;
-    applyAdjustment(accountId, {
-      level: 'adset',
-      campaign_id: campaign.id,
-      campaign_name: campaign.campaign_name,
-      adset_id: adset.id,
-      adset_name: adset.adset_name,
-      current_daily_budget: alp.current_daily_budget,
-      recommended_daily_budget: alp.recommended_daily_budget,
-      change_percent: alp.change_percent,
-      action: alp.action || alp.status,
-    }, `a-${adset.id}`);
+    setPendingConfirm({
+      accountId,
+      rowKey: `a-${adset.id}`,
+      adjustment: {
+        level: 'adset',
+        campaign_id: campaign.id,
+        campaign_name: campaign.campaign_name,
+        adset_id: adset.id,
+        adset_name: adset.adset_name,
+        current_daily_budget: alp.current_daily_budget,
+        recommended_daily_budget: alp.recommended_daily_budget,
+        change_percent: alp.change_percent,
+        action: alp.action || alp.status,
+      },
+    });
+  };
+
+  const handleConfirmApply = () => {
+    if (!pendingConfirm) return;
+    const { accountId, adjustment, rowKey } = pendingConfirm;
+    setPendingConfirm(null);
+    applyAdjustment(accountId, adjustment, rowKey);
   };
 
   const fmt$ = (n, dec = 0) =>
@@ -576,6 +594,69 @@ function Home({ user, onLogout }) {
           </div>
         ))}
       </main>
+
+      {/* ── Apply confirmation modal ── */}
+      {pendingConfirm && (() => {
+        const adj = pendingConfirm.adjustment;
+        const isAdset = adj.level === 'adset' || !!adj.adset_id;
+        const up = (adj.change_percent || 0) > 0;
+        return (
+          <div className="bb-modal-backdrop" onClick={() => setPendingConfirm(null)}>
+            <div className="bb-modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+              <div className="bb-modal-head">
+                <div className="bb-modal-title">Confirm budget change in Meta</div>
+                <button className="bb-icon-btn" onClick={() => setPendingConfirm(null)}>×</button>
+              </div>
+
+              <div className="bb-modal-body">
+                <div className="bb-alert bb-alert-warn" style={{ marginBottom: 16 }}>
+                  This will push <strong>1 budget change</strong> directly to Meta via the API.
+                  This cannot be undone automatically — you'd need to revert manually in Ads Manager.
+                </div>
+
+                <table className="bb-table">
+                  <thead>
+                    <tr>
+                      <th>Target</th>
+                      <th>Current Daily</th>
+                      <th>New Daily</th>
+                      <th>Change</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>
+                          {isAdset ? adj.adset_name : adj.campaign_name}
+                        </div>
+                        {isAdset && (
+                          <div className="bb-muted" style={{ fontSize: 11 }}>
+                            Ad set in {adj.campaign_name}
+                          </div>
+                        )}
+                      </td>
+                      <td className="num">${(adj.current_daily_budget || 0).toFixed(2)}</td>
+                      <td className="num">${(adj.recommended_daily_budget || 0).toFixed(2)}</td>
+                      <td>
+                        <span className={`bb-change ${up ? 'bb-change-up' : 'bb-change-down'}`}>
+                          {up ? '↗ +' : '↘ '}{(adj.change_percent || 0).toFixed(1)}%
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bb-modal-foot">
+                <button className="bb-btn" onClick={() => setPendingConfirm(null)}>Cancel</button>
+                <button className="bb-btn bb-btn-primary" onClick={handleConfirmApply}>
+                  Yes, push to Meta
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
