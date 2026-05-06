@@ -327,75 +327,70 @@ def sync_budgets(account_id):
     }), 200
 
 
-@sheets_bp.route("/<int:account_id>/write-spend", methods=["POST"])
-@login_required
-def write_spend(account_id):
-    """
-    Write MTD spend (col C) and today's date as Last Paced (col G) back to the sheet
-    for all campaigns that have a recent PacingData snapshot and a sheet row match.
-    Uses batch_update to minimise API calls.
-    """
-    if not _user_owns_account(account_id):
-        return jsonify({"error": "Not found"}), 404
+def _campaign_mtd_spend(c):
+    """Return the MTD spend for a campaign as Meta would report it.
 
+    - CBO: latest campaign-level row (adset_id IS NULL).
+    - ABO: sum of the latest-date adset rows so the sheet shows the campaign total
+           instead of one ad set's spend.
+    """
+    rows = list(c.pacing_data or [])
+    if not rows:
+        return None
+    if c.budget_mode == 'ABO':
+        adset_rows = [p for p in rows if p.adset_id is not None]
+        if not adset_rows:
+            return None
+        last_date = max((p.date for p in adset_rows if p.date), default=None)
+        if last_date is None:
+            return None
+        # Keep the highest-id row per adset on the latest date so multiple same-day
+        # runs don't double-count.
+        latest_per_adset = {}
+        for p in adset_rows:
+            if p.date != last_date:
+                continue
+            key = p.adset_id
+            if key not in latest_per_adset or p.id > latest_per_adset[key].id:
+                latest_per_adset[key] = p
+        return sum(p.actual_spend or 0 for p in latest_per_adset.values())
+    # CBO
+    cbo_rows = sorted(
+        (p for p in rows if p.adset_id is None),
+        key=lambda r: (r.date or datetime.min.date(), r.id or 0),
+    )
+    return cbo_rows[-1].actual_spend if cbo_rows else None
+
+
+def write_spend_for_account(account_id):
+    """Push MTD spend + today's date into the configured sheet for one account.
+
+    Single source of truth used by:
+      - the manual "Write Spend to Sheet" button (POST /api/sheets/<id>/write-spend)
+      - /api/pacing/<id>/run, opportunistically after a successful run
+      - the daily background scheduler in app.py
+
+    Returns a result dict (same shape across all callers). Raises ValueError when
+    something is misconfigured (e.g. sheet not set, tab not found, credentials bad)
+    so callers can decide whether to surface the error or swallow it.
+    """
     settings = AccountSettings.query.filter_by(account_id=account_id).first()
     if not settings or not (settings.google_sheet_id or "").strip():
-        return jsonify({"error": "Google Sheet not configured."}), 400
+        raise ValueError("Google Sheet not configured.")
 
-    try:
-        gc = _get_gspread_client()
-        spreadsheet = gc.open_by_key(settings.google_sheet_id)
-        ws, tab_name = _open_month_worksheet(spreadsheet)
-    except (ValueError, RuntimeError) as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        return jsonify({"error": f"Could not open sheet: {e}"}), 400
+    gc = _get_gspread_client()
+    spreadsheet = gc.open_by_key(settings.google_sheet_id)
+    ws, tab_name = _open_month_worksheet(spreadsheet)
 
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
 
-    # %-m / %-d are Linux/macOS specific. Build the date portably so this also works
-    # if anyone runs the backend on Windows for local dev.
+    # %-m / %-d are Linux/macOS specific. Build portably for Windows local dev too.
     now = datetime.utcnow()
-    today_str = f"{now.month}/{now.day}/{now.year}"  # e.g. "5/5/2026"
+    today_str = f"{now.month}/{now.day}/{now.year}"
     cell_updates = []
     written = []
     skipped = []
-
-    def _campaign_mtd_spend(c):
-        """Return the MTD spend for a campaign as Meta would report it.
-
-        - CBO: latest campaign-level row (adset_id IS NULL).
-        - ABO: sum of the latest-date adset rows so the sheet shows the campaign total
-               instead of one ad set's spend (the previous behavior wrote one ad set's
-               number for the whole campaign — silent data corruption for ABO).
-        """
-        rows = list(c.pacing_data or [])
-        if not rows:
-            return None
-        if c.budget_mode == 'ABO':
-            adset_rows = [p for p in rows if p.adset_id is not None]
-            if not adset_rows:
-                return None
-            last_date = max((p.date for p in adset_rows if p.date), default=None)
-            if last_date is None:
-                return None
-            # Keep the highest-id row per adset on the latest date so multiple same-day
-            # runs don't double-count.
-            latest_per_adset = {}
-            for p in adset_rows:
-                if p.date != last_date:
-                    continue
-                key = p.adset_id
-                if key not in latest_per_adset or p.id > latest_per_adset[key].id:
-                    latest_per_adset[key] = p
-            return sum(p.actual_spend or 0 for p in latest_per_adset.values())
-        # CBO
-        cbo_rows = sorted(
-            (p for p in rows if p.adset_id is None),
-            key=lambda r: (r.date or datetime.min.date(), r.id or 0),
-        )
-        return cbo_rows[-1].actual_spend if cbo_rows else None
 
     for row in sheet_rows:
         campaign = _match_campaign(row["name"], db_campaigns)
@@ -410,11 +405,9 @@ def write_spend(account_id):
 
         mtd_spend = round(spend_value, 2)
         r = row["row_index"]
-
         # Col C = MTD spend, Col G = Last Paced date
         cell_updates.append({"range": f"C{r}", "values": [[mtd_spend]]})
         cell_updates.append({"range": f"G{r}", "values": [[today_str]]})
-
         written.append({
             "campaign_name": campaign.campaign_name,
             "sheet_name": row["name"],
@@ -426,11 +419,31 @@ def write_spend(account_id):
     if cell_updates:
         ws.batch_update(cell_updates)
 
-    return jsonify({
-        "message": f"Wrote spend for {len(written)} campaign(s) to '{tab_name}'",
+    return {
         "sheet_tab": tab_name,
         "written_count": len(written),
         "skipped_count": len(skipped),
         "written": written,
         "skipped": skipped,
+    }
+
+
+@sheets_bp.route("/<int:account_id>/write-spend", methods=["POST"])
+@login_required
+def write_spend(account_id):
+    """Manual write-back endpoint. Wraps write_spend_for_account with HTTP error handling."""
+    if not _user_owns_account(account_id):
+        return jsonify({"error": "Not found"}), 404
+
+    try:
+        result = write_spend_for_account(account_id)
+    except (ValueError, RuntimeError) as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("write_spend_for_account failed for account %s", account_id)
+        return jsonify({"error": f"Could not open sheet: {e}"}), 400
+
+    return jsonify({
+        "message": f"Wrote spend for {result['written_count']} campaign(s) to '{result['sheet_tab']}'",
+        **result,
     }), 200

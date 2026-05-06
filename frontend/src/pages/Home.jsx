@@ -246,23 +246,27 @@ function Home({ user, onLogout }) {
 
         {error && <div className="bb-alert bb-alert-error">{error}</div>}
 
-        {/* Top stat cards — totals across every account / campaign on this Home view */}
+        {/* Top stat cards — compact totals across every account / campaign on this Home view */}
         {!loading && accountBlocks.length > 0 && (
-          <div className="bb-grid bb-grid-3" style={{ marginBottom: 14 }}>
-            <div className="bb-stat">
-              <span className="bb-stat-label">Monthly Budget</span>
-              <span className="bb-stat-value">{fmt$(totals.monthly)}</span>
-              <span className="bb-stat-sub">
-                Across {totals.campaignCount} campaign{totals.campaignCount === 1 ? '' : 's'}
+          <div
+            className="bb-grid bb-grid-3"
+            style={{ marginBottom: 12, gap: 10 }}
+          >
+            {/* Compact override: smaller padding + smaller value font than the default bb-stat */}
+            <div className="bb-stat" style={{ padding: '10px 14px', gap: 2 }}>
+              <span className="bb-stat-label" style={{ fontSize: 10 }}>Monthly Budget</span>
+              <span className="bb-stat-value" style={{ fontSize: 20 }}>{fmt$(totals.monthly)}</span>
+              <span className="bb-stat-sub" style={{ fontSize: 11 }}>
+                {totals.campaignCount} campaign{totals.campaignCount === 1 ? '' : 's'}
               </span>
             </div>
 
-            <div className="bb-stat">
-              <span className="bb-stat-label">Current Spend (MTD)</span>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                <span className="bb-stat-value">{fmt$(totals.spent)}</span>
+            <div className="bb-stat" style={{ padding: '10px 14px', gap: 2 }}>
+              <span className="bb-stat-label" style={{ fontSize: 10 }}>Spend (MTD)</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span className="bb-stat-value" style={{ fontSize: 20 }}>{fmt$(totals.spent)}</span>
                 <span style={{
-                  fontSize: 13, fontWeight: 600,
+                  fontSize: 11, fontWeight: 600,
                   color: totals.pct > 100 ? '#ef4444' : '#10b981',
                 }}>
                   {totals.pct.toFixed(1)}%
@@ -271,8 +275,8 @@ function Home({ user, onLogout }) {
               <div
                 aria-label="Percent of monthly budget spent so far"
                 style={{
-                  marginTop: 6,
-                  height: 6, width: '100%',
+                  marginTop: 4,
+                  height: 4, width: '100%',
                   background: 'rgba(0,0,0,0.06)', borderRadius: 999,
                   overflow: 'hidden',
                 }}
@@ -284,22 +288,19 @@ function Home({ user, onLogout }) {
                   transition: 'width 240ms ease',
                 }} />
               </div>
-              <span className="bb-stat-sub" style={{ marginTop: 4 }}>
-                of {fmt$(totals.monthly)} budgeted
-              </span>
             </div>
 
-            <div className="bb-stat">
-              <span className="bb-stat-label">Tracked Units</span>
-              <span className="bb-stat-value">
+            <div className="bb-stat" style={{ padding: '10px 14px', gap: 2 }}>
+              <span className="bb-stat-label" style={{ fontSize: 10 }}>Tracked Units</span>
+              <span className="bb-stat-value" style={{ fontSize: 20 }}>
                 {totals.campaignCount}
                 {totals.adsetCount > 0 && (
-                  <span style={{ fontSize: 18, color: 'var(--bb-text-muted)', fontWeight: 600 }}>
+                  <span style={{ fontSize: 13, color: 'var(--bb-text-muted)', fontWeight: 600 }}>
                     {' '}/ {totals.adsetCount} ad sets
                   </span>
                 )}
               </span>
-              <span className="bb-stat-sub">
+              <span className="bb-stat-sub" style={{ fontSize: 11 }}>
                 {accountBlocks.length} account{accountBlocks.length === 1 ? '' : 's'}
               </span>
             </div>

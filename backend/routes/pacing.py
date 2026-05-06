@@ -427,6 +427,26 @@ def run_pacing(account_id):
     db.session.add(pacing_run)
     db.session.commit()
 
+    # Auto-write MTD spend to the configured Google Sheet, if any. Best-effort:
+    # a sheet failure must not invalidate the pacing run the user just ran successfully.
+    # Only auto-writes for full-account runs (skip when scoped to a single campaign,
+    # since the per-campaign Detail page run shouldn't rewrite the entire sheet).
+    sheet_writeback = None
+    if not single_campaign_id:
+        sheet_settings = AccountSettings.query.filter_by(account_id=account_id).first()
+        if sheet_settings and (sheet_settings.google_sheet_id or "").strip():
+            try:
+                # Imported lazily to avoid a circular import at module-load time.
+                from routes.sheets import write_spend_for_account
+                sheet_writeback = write_spend_for_account(account_id)
+                logger.info(
+                    "Sheet auto-write: %s rows written, %s skipped (account %s)",
+                    sheet_writeback["written_count"], sheet_writeback["skipped_count"], account_id,
+                )
+            except Exception as e:
+                logger.warning("Sheet auto-write failed for account %s: %s", account_id, e)
+                sheet_writeback = {"error": str(e)}
+
     return jsonify({
         "message": "Pacing run completed",
         "account_id": account_id,
@@ -435,6 +455,7 @@ def run_pacing(account_id):
         "adjustments_needed": adjustments_needed,
         "recommendations": recommendations,
         "failures": failures,
+        "sheet_writeback": sheet_writeback,
     }), 200
 
 

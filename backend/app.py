@@ -261,6 +261,29 @@ def _scheduled_pacing_job():
             db.session.commit()
             logging.info("Scheduled pacing run completed at %s UTC", datetime.utcnow().isoformat())
 
+            # After pacing data is committed, push MTD spend back to each account's
+            # Google Sheet. Best-effort per account so a single bad sheet doesn't break
+            # the whole job. The PacingData rows are already saved by this point.
+            try:
+                from routes.sheets import write_spend_for_account
+                for account in accounts:
+                    settings = AccountSettings.query.filter_by(account_id=account.id).first()
+                    if not settings or not (settings.google_sheet_id or "").strip():
+                        continue
+                    try:
+                        result = write_spend_for_account(account.id)
+                        logging.info(
+                            "Daily sheet write-back: account %s → %s wrote, %s skipped",
+                            account.id, result["written_count"], result["skipped_count"],
+                        )
+                    except Exception as sheet_err:
+                        logging.warning(
+                            "Daily sheet write-back failed for account %s: %s",
+                            account.id, sheet_err,
+                        )
+            except Exception:
+                logging.exception("Daily sheet write-back loop crashed")
+
         except Exception:
             logging.exception("Scheduled pacing run failed")
             try:
