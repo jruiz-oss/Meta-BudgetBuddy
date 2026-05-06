@@ -159,11 +159,17 @@ function Home({ user, onLogout }) {
   const fmt$ = (n, dec = 0) =>
     `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
 
-  const pillForStatus = (s) => {
+  const pillForStatus = (s, paceRatio) => {
     const u = (s || '').toUpperCase();
-    if (u === 'ON_PACE')  return { cls: 'bb-pill bb-pill-on',   label: 'On Pace' };
-    if (u === 'INCREASE') return { cls: 'bb-pill bb-pill-up',   label: 'Increase' };
-    if (u === 'DECREASE') return { cls: 'bb-pill bb-pill-down', label: 'Decrease' };
+    if (u === 'ON_PACE') return { cls: 'bb-pill bb-pill-on', label: 'On Pace' };
+    if (u === 'INCREASE' || u === 'DECREASE') {
+      const ratio = paceRatio || 0;
+      const pct   = Math.round(Math.abs((ratio - 1) * 100));
+      const label = u === 'INCREASE'
+        ? `${pct}% underpacing`
+        : `${pct}% overpacing`;
+      return { cls: 'bb-pill bb-pill-off', label };
+    }
     return { cls: 'bb-pill bb-pill-muted', label: '—' };
   };
 
@@ -505,7 +511,7 @@ function Home({ user, onLogout }) {
                       const adsetRows = (campaign.adsets || []).map((adset) => {
                         const alp        = adset.latest_pacing;
                         const aStatus    = alp?.action || alp?.status || '';
-                        const aPill      = pillForStatus(aStatus);
+                        const aPill      = pillForStatus(aStatus, alp?.pace_ratio);
                         const needsAction = alp && aStatus.toUpperCase() !== 'ON_PACE';
                         const rowKey     = `a-${adset.id}`;
                         const adsetMo    = campaign.monthly_budget * (adset.allocation_pct / 100);
@@ -539,7 +545,7 @@ function Home({ user, onLogout }) {
 
                     // CBO
                     const status     = lp?.status || '';
-                    const pill       = pillForStatus(status);
+                    const pill       = pillForStatus(status, lp?.pace_ratio);
                     const needsAction = lp && status.toUpperCase() !== 'ON_PACE';
                     const rowKey     = `c-${campaign.id}`;
 

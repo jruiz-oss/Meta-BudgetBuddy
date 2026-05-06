@@ -41,6 +41,8 @@
   --bb-pill-up-fg: #1e40af;
   --bb-pill-down: #fef3c7;
   --bb-pill-down-fg: #92400e;
+  --bb-pill-off: #fee2e2;
+  --bb-pill-off-fg: #991b1b;
 
   /* Sizing — sidebar matches design 240px */
   --bb-sidebar-width: 240px;
@@ -193,6 +195,7 @@ a {
 .bb-pill-on    { background: var(--bb-pill-on);   color: var(--bb-pill-on-fg); }
 .bb-pill-up    { background: var(--bb-pill-up);   color: var(--bb-pill-up-fg); }
 .bb-pill-down  { background: var(--bb-pill-down); color: var(--bb-pill-down-fg); }
+.bb-pill-off   { background: var(--bb-pill-off);  color: var(--bb-pill-off-fg); font-weight: 600; }
 .bb-pill-muted { background: #f3f4f6; color: #4b5563; }
 
 .bb-input, .bb-select {

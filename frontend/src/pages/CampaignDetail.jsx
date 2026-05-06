@@ -270,11 +270,17 @@ function CampaignDetail({ user, onLogout }) {
   };
 
   // ── helpers ───────────────────────────────────────────────
-  const pillForStatus = (status) => {
+  const pillForStatus = (status, paceRatio) => {
     const s = (status || '').toUpperCase();
-    if (s === 'ON_PACE')  return { cls: 'bb-pill bb-pill-on',   label: 'On Pace' };
-    if (s === 'INCREASE') return { cls: 'bb-pill bb-pill-up',   label: 'Increase' };
-    if (s === 'DECREASE') return { cls: 'bb-pill bb-pill-down', label: 'Decrease' };
+    if (s === 'ON_PACE') return { cls: 'bb-pill bb-pill-on', label: 'On Pace' };
+    if (s === 'INCREASE' || s === 'DECREASE') {
+      const ratio = paceRatio || 0;
+      const pct   = Math.round(Math.abs((ratio - 1) * 100));
+      const label = s === 'INCREASE'
+        ? `${pct}% underpacing`
+        : `${pct}% overpacing`;
+      return { cls: 'bb-pill bb-pill-off', label };
+    }
     return { cls: 'bb-pill bb-pill-muted', label: '—' };
   };
 
@@ -289,7 +295,7 @@ function CampaignDetail({ user, onLogout }) {
   // not `action`. Reading `action` here was the cause of the "Apply on ON_PACE campaigns" bug.
   const action        = (lp?.status || '').toUpperCase();
   const isOnPace      = action === 'ON_PACE';
-  const pill          = pillForStatus(action);
+  const pill          = pillForStatus(action, paceRatio);
 
   const today         = new Date();
   const daysInMonth   = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
@@ -596,7 +602,7 @@ function CampaignDetail({ user, onLogout }) {
                 {campaign.adsets.map((a) => {
                   const alp          = a.latest_pacing;
                   const alpAction    = (alp?.action || alp?.status || '').toUpperCase();
-                  const aPill        = pillForStatus(alpAction);
+                  const aPill        = pillForStatus(alpAction, alp?.pace_ratio);
                   const adsetMonthly = campaign.monthly_budget * (a.allocation_pct / 100);
                   const isApplying   = !!adsetApplying[a.id];
                   const isRejected   = !!adsetRejected[a.id];

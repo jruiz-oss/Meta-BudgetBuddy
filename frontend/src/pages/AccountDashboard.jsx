@@ -349,11 +349,17 @@ function AccountDashboard({ user, onLogout }) {
     return s;
   }, [campaigns]);
 
-  const pillForStatus = (status) => {
+  const pillForStatus = (status, paceRatio) => {
     const s = (status || '').toUpperCase();
-    if (s === 'ON_PACE')  return { cls: 'bb-pill bb-pill-on',   text: 'ON_PACE' };
-    if (s === 'INCREASE') return { cls: 'bb-pill bb-pill-up',   text: 'INCREASE' };
-    if (s === 'DECREASE') return { cls: 'bb-pill bb-pill-down', text: 'DECREASE' };
+    if (s === 'ON_PACE') return { cls: 'bb-pill bb-pill-on', text: 'On Pace' };
+    if (s === 'INCREASE' || s === 'DECREASE') {
+      const ratio = paceRatio || 0;
+      const pct   = Math.round(Math.abs((ratio - 1) * 100));
+      const text  = s === 'INCREASE'
+        ? `${pct}% underpacing`
+        : `${pct}% overpacing`;
+      return { cls: 'bb-pill bb-pill-off', text };
+    }
     return { cls: 'bb-pill bb-pill-muted', text: '—' };
   };
 
@@ -545,7 +551,7 @@ function AccountDashboard({ user, onLogout }) {
                               ${(a.recommended_daily_budget || 0).toFixed(2)}
                               <div>{changeIndicator(a.change_percent)}</div>
                             </td>
-                            <td><span className={pillForStatus(action).cls}>{pillForStatus(action).text}</span></td>
+                            <td><span className={pillForStatus(action, a.pace_ratio).cls}>{pillForStatus(action, a.pace_ratio).text}</span></td>
                           </tr>
                         );
                       });
@@ -568,7 +574,7 @@ function AccountDashboard({ user, onLogout }) {
                           ${(r.recommended_daily_budget || 0).toFixed(2)}
                           <div>{changeIndicator(r.change_percent)}</div>
                         </td>
-                        <td><span className={pillForStatus(action).cls}>{pillForStatus(action).text}</span></td>
+                        <td><span className={pillForStatus(action, r.pace_ratio).cls}>{pillForStatus(action, r.pace_ratio).text}</span></td>
                       </tr>
                     )];
                   })}
@@ -610,7 +616,7 @@ function AccountDashboard({ user, onLogout }) {
                 {campaigns.map((c) => {
                   const lp = c.latest_pacing;
                   const status = lp ? (lp.status || '').toUpperCase() : null;
-                  const pill = pillForStatus(status);
+                  const pill = pillForStatus(status, lp?.pace_ratio);
                   const flightStatus = (c.flight_status || '').toUpperCase();
                   const isLive = flightStatus === 'ACTIVE' || flightStatus === 'LIVE';
                   const mode = c.budget_mode || 'CBO';
