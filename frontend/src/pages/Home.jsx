@@ -471,6 +471,7 @@ function Home({ user, onLogout }) {
                     <th>Budget</th>
                     <th>MTD Spend</th>
                     <th>Pace</th>
+                    <th>Current Daily</th>
                     <th>Rec. Daily</th>
                     <th>Status</th>
                     <th>Action</th>
@@ -494,6 +495,7 @@ function Home({ user, onLogout }) {
                           <td className="num">{fmt$(campaign.monthly_budget)}/mo</td>
                           <td className="num">{lp ? fmt$(lp.actual_spend) : '—'}</td>
                           <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
+                          <td className="num bb-muted">—</td>
                           <td className="num bb-muted">—</td>
                           <td><span className="bb-pill bb-pill-muted">rollup</span></td>
                           <td><span className="bb-muted" style={{ fontSize: 12 }}>per ad set →</span></td>
@@ -520,6 +522,9 @@ function Home({ user, onLogout }) {
                             <td className="num">{fmt$(adsetMo)}/mo</td>
                             <td className="num">{alp ? fmt$(alp.actual_spend, 2) : '—'}</td>
                             <td className="num">{alp ? `${(alp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
+                            <td className="num">
+                              {alp?.current_daily_budget != null ? fmt$(alp.current_daily_budget, 2) : '—'}
+                            </td>
                             <td className="num">
                               {alp?.recommended_daily_budget != null ? fmt$(alp.recommended_daily_budget, 2) : '—'}
                             </td>
@@ -550,6 +555,9 @@ function Home({ user, onLogout }) {
                         <td className="num">{fmt$(campaign.monthly_budget)}/mo</td>
                         <td className="num">{lp ? fmt$(lp.actual_spend) : '—'}</td>
                         <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
+                        <td className="num">
+                          {lp?.current_daily_budget != null ? fmt$(lp.current_daily_budget, 2) : '—'}
+                        </td>
                         <td className="num">
                           {lp?.recommended_daily_budget != null ? fmt$(lp.recommended_daily_budget, 2) : '—'}
                         </td>
