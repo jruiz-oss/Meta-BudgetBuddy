@@ -162,6 +162,13 @@ a {
 }
 .bb-btn-primary:hover { background: var(--bb-primary-hover); border-color: var(--bb-primary-hover); }
 
+.bb-btn-apply {
+  background: #00bdf2;
+  color: #fff;
+  border-color: #00bdf2;
+}
+.bb-btn-apply:hover { background: #00a3d0; border-color: #00a3d0; }
+
 .bb-btn-secondary {
   background: #fff;
   color: var(--bb-text);

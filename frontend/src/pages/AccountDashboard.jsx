@@ -479,7 +479,7 @@ function AccountDashboard({ user, onLogout }) {
                     ↓ Download Run Log
                   </button>
                   <button
-                    className="bb-btn bb-btn-primary"
+                    className="bb-btn bb-btn-apply"
                     onClick={handleApplyAll}
                     disabled={applying || lastRun.adjustments_needed === 0}
                   >
@@ -730,7 +730,7 @@ function AccountDashboard({ user, onLogout }) {
 
               <div className="bb-modal-foot">
                 <button className="bb-btn" onClick={() => setShowConfirm(false)}>Cancel</button>
-                <button className="bb-btn bb-btn-primary" onClick={handleConfirmApply}>
+                <button className="bb-btn bb-btn-apply" onClick={handleConfirmApply}>
                   Yes, push to Meta
                 </button>
               </div>

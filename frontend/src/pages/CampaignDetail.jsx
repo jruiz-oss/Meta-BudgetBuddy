@@ -402,7 +402,11 @@ function CampaignDetail({ user, onLogout }) {
               {hasPacing ? `${(paceRatio * 100).toFixed(0)}%` : '—'}
             </span>
             {hasPacing && (
-              <span className="bb-stat-sub">{paceRatio >= 1 ? 'ahead' : 'behind'} of target</span>
+              <span className="bb-stat-sub">
+                {paceRatio === 1
+                  ? 'exactly on target'
+                  : `${Math.abs((paceRatio - 1) * 100).toFixed(0)}% ${paceRatio >= 1 ? 'ahead of' : 'behind'} target`}
+              </span>
             )}
           </div>
         </div>
@@ -438,6 +442,62 @@ function CampaignDetail({ user, onLogout }) {
                 {summaryText() && (
                   <div className="cd-summary-text">{summaryText()}</div>
                 )}
+
+                {/* ── Spend progress chart ── */}
+                {campaign.monthly_budget > 0 && (() => {
+                  const budget      = campaign.monthly_budget;
+                  const monthPct    = Math.min(100, (daysElapsed / daysInMonth) * 100);
+                  const expectedPct = Math.min(100, (expectedSpend / budget) * 100);
+                  const actualPct   = Math.min(100, (actualSpend  / budget) * 100);
+                  const barColor    = paceRatio >= 1 ? '#10b981' : '#3b82f6';
+                  const barStyle    = { height: 10, background: 'var(--bb-border)', borderRadius: 999, overflow: 'hidden', marginTop: 4 };
+                  const fillStyle   = (pct, color) => ({ height: '100%', width: `${pct}%`, background: color, borderRadius: 999, transition: 'width 400ms ease' });
+                  const rowLabel    = { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--bb-text-muted)', marginBottom: 2 };
+                  return (
+                    <div style={{ marginTop: 20, borderTop: '1px solid var(--bb-divider)', paddingTop: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--bb-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+                        Budget Progress
+                      </div>
+
+                      {/* Month elapsed */}
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={rowLabel}>
+                          <span>Month elapsed</span>
+                          <span>Day {daysElapsed} / {daysInMonth} ({monthPct.toFixed(0)}%)</span>
+                        </div>
+                        <div style={barStyle}>
+                          <div style={fillStyle(monthPct, '#94a3b8')} />
+                        </div>
+                      </div>
+
+                      {/* Expected spend */}
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={rowLabel}>
+                          <span>Expected spend</span>
+                          <span>{fmt$(expectedSpend)} ({expectedPct.toFixed(0)}%)</span>
+                        </div>
+                        <div style={barStyle}>
+                          <div style={fillStyle(expectedPct, '#cbd5e1')} />
+                        </div>
+                      </div>
+
+                      {/* Actual spend */}
+                      <div style={{ marginBottom: 6 }}>
+                        <div style={{ ...rowLabel, color: barColor, fontWeight: 600 }}>
+                          <span>Actual spend</span>
+                          <span>{fmt$(actualSpend)} ({actualPct.toFixed(0)}%)</span>
+                        </div>
+                        <div style={barStyle}>
+                          <div style={fillStyle(actualPct, barColor)} />
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--bb-text-muted)' }}>
+                        of {fmt$(budget)} monthly budget
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -478,7 +538,7 @@ function CampaignDetail({ user, onLogout }) {
                       </div>
                     </div>
                     <button
-                      className="bb-btn bb-btn-primary cd-apply-btn"
+                      className="bb-btn bb-btn-apply cd-apply-btn"
                       onClick={handleApply}
                       disabled={applying}
                     >
@@ -668,7 +728,7 @@ function CampaignDetail({ user, onLogout }) {
                           ) : needsAction ? (
                             <div style={{ display: 'flex', gap: 6 }}>
                               <button
-                                className="bb-btn bb-btn-primary"
+                                className="bb-btn bb-btn-apply"
                                 style={{ fontSize: 11, padding: '3px 10px' }}
                                 onClick={() => handleApplyAdset(a)}
                                 disabled={isApplying}
