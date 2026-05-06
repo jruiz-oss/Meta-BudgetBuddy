@@ -161,14 +161,12 @@ function Home({ user, onLogout }) {
 
   const pillForStatus = (s, paceRatio) => {
     const u = (s || '').toUpperCase();
-    if (u === 'ON_PACE') return { cls: 'bb-pill bb-pill-on', label: 'On Pace' };
-    if (u === 'INCREASE' || u === 'DECREASE') {
+    if (u === 'ON_PACE' || u === 'INCREASE' || u === 'DECREASE') {
       const ratio = paceRatio || 0;
       const pct   = Math.round(Math.abs((ratio - 1) * 100));
-      const label = u === 'INCREASE'
-        ? `${pct}% underpacing`
-        : `${pct}% overpacing`;
-      return { cls: 'bb-pill bb-pill-off', label };
+      const label = ratio >= 1 ? `${pct}% over` : `${pct}% under`;
+      const cls   = u === 'ON_PACE' ? 'bb-pill bb-pill-on' : 'bb-pill bb-pill-off';
+      return { cls, label };
     }
     return { cls: 'bb-pill bb-pill-muted', label: '—' };
   };

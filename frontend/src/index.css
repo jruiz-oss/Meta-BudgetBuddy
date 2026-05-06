@@ -184,6 +184,7 @@ a {
 .bb-btn-danger:hover { background: #fef2f2; }
 
 .bb-pill {
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   padding: 3px 10px;
@@ -195,7 +196,7 @@ a {
 .bb-pill-on    { background: var(--bb-pill-on);   color: var(--bb-pill-on-fg); }
 .bb-pill-up    { background: var(--bb-pill-up);   color: var(--bb-pill-up-fg); }
 .bb-pill-down  { background: var(--bb-pill-down); color: var(--bb-pill-down-fg); }
-.bb-pill-off   { background: var(--bb-pill-off);  color: var(--bb-pill-off-fg); font-weight: 600; }
+.bb-pill-off   { background: var(--bb-pill-off);  color: var(--bb-pill-off-fg); font-weight: 600; white-space: nowrap; }
 .bb-pill-muted { background: #f3f4f6; color: #4b5563; }
 
 .bb-input, .bb-select {

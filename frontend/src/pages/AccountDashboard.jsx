@@ -351,14 +351,12 @@ function AccountDashboard({ user, onLogout }) {
 
   const pillForStatus = (status, paceRatio) => {
     const s = (status || '').toUpperCase();
-    if (s === 'ON_PACE') return { cls: 'bb-pill bb-pill-on', text: 'On Pace' };
-    if (s === 'INCREASE' || s === 'DECREASE') {
+    if (s === 'ON_PACE' || s === 'INCREASE' || s === 'DECREASE') {
       const ratio = paceRatio || 0;
       const pct   = Math.round(Math.abs((ratio - 1) * 100));
-      const text  = s === 'INCREASE'
-        ? `${pct}% underpacing`
-        : `${pct}% overpacing`;
-      return { cls: 'bb-pill bb-pill-off', text };
+      const text  = ratio >= 1 ? `${pct}% over` : `${pct}% under`;
+      const cls   = s === 'ON_PACE' ? 'bb-pill bb-pill-on' : 'bb-pill bb-pill-off';
+      return { cls, text };
     }
     return { cls: 'bb-pill bb-pill-muted', text: '—' };
   };
