@@ -474,20 +474,18 @@ function Home({ user, onLogout }) {
           <div key={acct.id} className="bb-card" style={{ marginBottom: 20 }}>
             <div className="bb-row-between" style={{
               padding: '12px 20px',
-              background: 'linear-gradient(90deg, #004359 0%, #00627f 100%)',
+              background: '#f0f2f4',
               borderRadius: '10px 10px 0 0',
+              borderBottom: '1px solid #e2e5e8',
+              borderLeft: '4px solid #004359',
             }}>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: '#fff' }}>{acct.account_name}</div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginTop: 2 }}>
-                  Last pacing run: <strong style={{ color: 'rgba(255,255,255,0.9)' }}>{timeAgo(acct.last_run)}</strong>
+                <div style={{ fontWeight: 700, fontSize: 15, color: '#0d1f26' }}>{acct.account_name}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                  Last pacing run: <strong style={{ color: '#374151' }}>{timeAgo(acct.last_run)}</strong>
                 </div>
               </div>
-              <Link to={`/account/${acct.id}`} className="bb-btn bb-btn-secondary" style={{
-                background: 'rgba(255,255,255,0.12)',
-                borderColor: 'rgba(255,255,255,0.25)',
-                color: '#fff',
-              }}>Dashboard →</Link>
+              <Link to={`/account/${acct.id}`} className="bb-btn bb-btn-secondary">Dashboard →</Link>
             </div>
 
             {acct.campaigns.length === 0 ? (
