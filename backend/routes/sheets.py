@@ -100,9 +100,20 @@ def _sheet_row_matches_account(scope_cell: str, account: Account) -> bool:
     """Blank column D → row applies to whichever Budget Buddy account is syncing (legacy).
 
     Otherwise the cell must match this account's name (case-insensitive) or Meta ad account id.
+
+    If column D contains a numeric value (e.g. a Daily Spend formula like $9.65), it is
+    NOT treated as an account scope — the row applies to all accounts. Account scopes are
+    always text (account names or Meta IDs), never numbers.
     """
     if scope_cell is None or not str(scope_cell).strip():
         return True
+    # If the cell is numeric (e.g. a formula column like Daily Spend), ignore it for scoping.
+    cleaned = str(scope_cell).strip().replace("$", "").replace(",", "")
+    try:
+        float(cleaned)
+        return True  # Numeric value — not an account scope, legacy behaviour
+    except ValueError:
+        pass
     if not account:
         return False
     s = str(scope_cell).strip()
