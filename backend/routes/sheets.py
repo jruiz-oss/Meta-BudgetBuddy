@@ -355,6 +355,53 @@ def _match_campaign(sheet_name: str, db_campaigns: list):
     return None
 
 
+def _match_all_campaigns(sheet_name: str, db_campaigns: list) -> list:
+    """Return ALL campaigns that are a credible match for a sheet row name.
+
+    Used by write-spend so that one sheet row (e.g. "Camelback - Weddings")
+    can collect spend from multiple Meta campaigns (e.g. "Commit 2026: Weddings
+    - Traffic" + "Commit 2026: Wedding Brochure") and write their combined MTD.
+
+    Exact / case-insensitive / unique-substring matches return only that one
+    campaign (no ambiguity).  When there are ties in the fuzzy-score layer —
+    which is exactly what happens when two campaigns share a keyword like
+    "wedding" — all tied top-scorers above the threshold are returned.
+    """
+    if not sheet_name or not db_campaigns:
+        return []
+
+    campaigns = sorted(db_campaigns, key=lambda c: (c.campaign_name or "").lower())
+
+    # Exact
+    for c in campaigns:
+        if c.campaign_name == sheet_name:
+            return [c]
+
+    sheet_lower = sheet_name.lower()
+    # Case-insensitive exact
+    for c in campaigns:
+        if c.campaign_name.lower() == sheet_lower:
+            return [c]
+
+    # Unique substring
+    substring_hits = [
+        c for c in campaigns
+        if sheet_lower in c.campaign_name.lower() or c.campaign_name.lower() in sheet_lower
+    ]
+    if len(substring_hits) == 1:
+        return substring_hits
+
+    pool = substring_hits if len(substring_hits) > 1 else campaigns
+    scored = [(_word_overlap_score(sheet_name, c.campaign_name), c) for c in pool]
+    scored.sort(key=lambda x: (-x[0], (x[1].campaign_name or "").lower()))
+    best_score = scored[0][0]
+    if best_score < _FUZZY_MATCH_THRESHOLD:
+        return []
+    # Return ALL campaigns that share the top score (handles ties like
+    # "Weddings - Traffic" + "Wedding Brochure" both scoring 0.5).
+    return [c for score, c in scored if score >= best_score - _SCORE_TIE_EPS]
+
+
 def _match_adset(needle_name: str, adsets: list):
     """Match a Notes-column label to an AdSet (same rules as _match_campaign)."""
     if not needle_name or not adsets:
@@ -969,28 +1016,40 @@ def write_spend_for_account(account_id):
             })
             continue
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
-        campaign = _match_campaign(match_name, db_campaigns)
-        if not campaign:
+        matched_campaigns = _match_all_campaigns(match_name, db_campaigns)
+        if not matched_campaigns:
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
 
-        spend_value = _campaign_mtd_spend(campaign)
-        if spend_value is None:
+        # Collect spend from all matched campaigns and sum them so that one
+        # sheet row can represent multiple Meta campaigns (e.g. "Weddings" row
+        # = "Weddings - Traffic" + "Wedding Brochure").
+        total_spend = 0.0
+        spends_found = 0
+        campaign_names = []
+        for campaign in matched_campaigns:
+            spend_value = _campaign_mtd_spend(campaign)
+            if spend_value is not None:
+                total_spend += spend_value
+                spends_found += 1
+                campaign_names.append(campaign.campaign_name)
+
+        if spends_found == 0:
             skipped.append({"sheet_name": row["name"], "reason": "No pacing data available yet — run pacing first"})
             continue
 
-        mtd_spend = round(spend_value, 2)
+        mtd_spend = round(total_spend, 2)
         r = row["row_index"]
         # Col C = MTD spend, Col G = Last Paced date
         cell_updates.append({"range": f"C{r}", "values": [[mtd_spend]]})
         cell_updates.append({"range": f"G{r}", "values": [[today_str]]})
         written.append({
-            "campaign_name": campaign.campaign_name,
+            "campaign_name": " + ".join(campaign_names),
             "sheet_name": row["name"],
             "mtd_spend": mtd_spend,
             "last_paced": today_str,
             "row_index": r,
-            "match_type": _match_type_label(match_name, campaign),
+            "match_type": _match_type_label(match_name, matched_campaigns[0]),
         })
 
     if cell_updates:
