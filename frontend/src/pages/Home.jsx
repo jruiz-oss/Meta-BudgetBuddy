@@ -37,6 +37,31 @@ function Home({ user, onLogout }) {
 
   // Manual "Run Pacing for All" state
   const [runningAll, setRunningAll]   = useState(false);
+  const [runProgress, setRunProgress] = useState({ done: 0, total: 0 });
+
+  /**
+   * Run an array of async tasks with at most `limit` in-flight at once.
+   * Returns results in the same order as the input array, matching the
+   * Promise.allSettled shape ({ status, value } | { status, reason }).
+   */
+  const runConcurrent = async (items, fn, limit = 2) => {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < items.length) {
+        const i = nextIndex++;
+        try {
+          results[i] = { status: 'fulfilled', value: await fn(items[i]) };
+        } catch (err) {
+          results[i] = { status: 'rejected', reason: err };
+        }
+        setRunProgress((p) => ({ ...p, done: p.done + 1 }));
+      }
+    };
+    // Spin up `limit` workers — they race through the queue.
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+  };
 
   const navigate = useNavigate();
 
@@ -78,15 +103,18 @@ function Home({ user, onLogout }) {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Manually run pacing for every account in parallel.
+  // Manually run pacing for every account — 2 at a time to avoid hammering
+  // the Google Sheets and Meta APIs simultaneously (which triggers 429 rate-limit
+  // errors, exponential back-off waits, and eventual axios timeouts).
   const handleRunAll = async () => {
     if (runningAll || allAccounts.length === 0) return;
     setRunningAll(true);
+    setRunProgress({ done: 0, total: allAccounts.length });
     try {
-      const settled = await Promise.allSettled(
-        allAccounts.map((a) =>
-          axios.post(`/api/pacing/${a.id}/run`, { run_type: 'MANUAL' })
-        )
+      const settled = await runConcurrent(
+        allAccounts,
+        (a) => axios.post(`/api/pacing/${a.id}/run`, { run_type: 'MANUAL' }),
+        2, // max 2 accounts in-flight at once
       );
       let succeeded = 0;
       let totalCampaigns = 0;
@@ -358,7 +386,9 @@ function Home({ user, onLogout }) {
               title="Pull fresh MTD spend (through yesterday) for every account"
             >
               {runningAll ? <Loader2 size={14} className="bb-spin" /> : <Play size={14} aria-hidden="true" />}
-              {runningAll ? `Running ${allAccounts.length}…` : `Run Pacing (All ${allAccounts.length})`}
+              {runningAll
+                ? `Running ${runProgress.done}/${runProgress.total}…`
+                : `Run Pacing (All ${allAccounts.length})`}
             </button>
             <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
               <LogOut size={14} aria-hidden="true" /> Log out

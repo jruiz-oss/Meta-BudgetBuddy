@@ -39,7 +39,7 @@ export function ToastProvider({ children }) {
   const push = useCallback(
     (variant, message, opts = {}) => {
       const id = nextId++;
-      const ttl = opts.duration ?? (variant === 'error' ? 8000 : 5500);
+      const ttl = opts.duration ?? 10000;
       setToasts((prev) => [...prev, { id, variant, message, title: opts.title }]);
       if (ttl > 0) {
         setTimeout(() => dismiss(id), ttl);
