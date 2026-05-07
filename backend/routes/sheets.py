@@ -362,43 +362,36 @@ def _match_all_campaigns(sheet_name: str, db_campaigns: list) -> list:
     can collect spend from multiple Meta campaigns (e.g. "Commit 2026: Weddings
     - Traffic" + "Commit 2026: Wedding Brochure") and write their combined MTD.
 
-    Exact / case-insensitive / unique-substring matches return only that one
-    campaign (no ambiguity).  When there are ties in the fuzzy-score layer —
-    which is exactly what happens when two campaigns share a keyword like
-    "wedding" — all tied top-scorers above the threshold are returned.
+    Unlike _match_campaign (1-to-1, tie-breaking), this intentionally skips the
+    substring shortcut and goes straight to full fuzzy scoring so that a literal
+    match on one campaign ("weddings" in "Weddings - Traffic") doesn't prevent
+    the stemmed token pass from also catching "Wedding Brochure".  Both score
+    1.0 against the stripped sheet name "Weddings" (shared token: "wedding"),
+    so both are returned and their spends are summed.
     """
     if not sheet_name or not db_campaigns:
         return []
 
     campaigns = sorted(db_campaigns, key=lambda c: (c.campaign_name or "").lower())
 
-    # Exact
+    # Exact (unambiguous — return immediately without scoring)
     for c in campaigns:
         if c.campaign_name == sheet_name:
             return [c]
 
     sheet_lower = sheet_name.lower()
-    # Case-insensitive exact
+    # Case-insensitive exact (unambiguous)
     for c in campaigns:
         if c.campaign_name.lower() == sheet_lower:
             return [c]
 
-    # Unique substring
-    substring_hits = [
-        c for c in campaigns
-        if sheet_lower in c.campaign_name.lower() or c.campaign_name.lower() in sheet_lower
-    ]
-    if len(substring_hits) == 1:
-        return substring_hits
-
-    pool = substring_hits if len(substring_hits) > 1 else campaigns
-    scored = [(_word_overlap_score(sheet_name, c.campaign_name), c) for c in pool]
+    # Full fuzzy scoring — no substring shortcut so stemming catches ties.
+    # Return every campaign that shares the top score above the threshold.
+    scored = [(_word_overlap_score(sheet_name, c.campaign_name), c) for c in campaigns]
     scored.sort(key=lambda x: (-x[0], (x[1].campaign_name or "").lower()))
     best_score = scored[0][0]
     if best_score < _FUZZY_MATCH_THRESHOLD:
         return []
-    # Return ALL campaigns that share the top score (handles ties like
-    # "Weddings - Traffic" + "Wedding Brochure" both scoring 0.5).
     return [c for score, c in scored if score >= best_score - _SCORE_TIE_EPS]
 
 
