@@ -105,7 +105,7 @@ export default function SpendChart({
         {
           label: 'Expected',
           data: expected,
-          borderColor: '#94a3b8',
+          borderColor: 'oklch(75% 0.01 240)',
           backgroundColor: 'transparent',
           borderDash: [5, 4],
           borderWidth: 1.5,
@@ -116,17 +116,17 @@ export default function SpendChart({
         {
           label: 'Actual',
           data: actualSeries,
-          borderColor: '#004359',
-          backgroundColor: 'rgba(0, 67, 89, 0.08)',
+          borderColor: 'oklch(58% 0.18 258)',
+          backgroundColor: 'oklch(58% 0.18 258 / 0.08)',
           borderWidth: 2.5,
           pointRadius: (ctx) => (ctx.dataIndex + 1 === todayDay ? 4 : 0),
-          pointBackgroundColor: '#004359',
+          pointBackgroundColor: 'oklch(58% 0.18 258)',
           pointBorderColor: '#fff',
           pointBorderWidth: 2,
           spanGaps: false,
           fill: {
             target: { value: 0 },
-            above: 'rgba(0, 67, 89, 0.06)',
+            above: 'oklch(58% 0.18 258 / 0.06)',
           },
           tension: 0.18,
           order: 1,
@@ -180,8 +180,8 @@ export default function SpendChart({
         x: {
           grid: { display: false },
           ticks: {
-            color: '#9ca3af',
-            font: { family: 'Inter, system-ui, sans-serif', size: 10 },
+            color: 'oklch(60% 0.012 240)',
+            font: { family: 'Geist, Inter, system-ui, sans-serif', size: 10 },
             maxRotation: 0,
             // Show ~10 ticks on the x axis to keep things readable.
             autoSkip: true,
@@ -190,10 +190,10 @@ export default function SpendChart({
         },
         y: {
           beginAtZero: true,
-          grid: { color: 'rgba(0,0,0,0.06)' },
+          grid: { color: 'oklch(91% 0.006 240)' },
           ticks: {
-            color: '#9ca3af',
-            font: { family: 'Inter, system-ui, sans-serif', size: 10 },
+            color: 'oklch(60% 0.012 240)',
+            font: { family: 'Geist Mono, JetBrains Mono, ui-monospace, monospace', size: 10 },
             callback: (v) => fmt$(v),
           },
         },

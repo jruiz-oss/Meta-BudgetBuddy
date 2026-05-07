@@ -1,144 +1,124 @@
 import React from 'react';
-import { NavLink, useNavigate, useParams } from 'react-router-dom';
-import {
-  Home as HomeIcon,
-  Building2,
-  LayoutDashboard,
-  History as HistoryIcon,
-  Settings as SettingsIcon,
-  Plus,
-  Activity,
-} from 'lucide-react';
-import './Sidebar.css';
+import { NavLink, useParams } from 'react-router-dom';
 
-/**
- * Consistent sidebar — same structure on every page.
- *
- * Props:
- *   user           — { email }
- *   accounts       — list of { id, account_name }
- *   onAddAccount   — opens the Add Account modal (only passed from Home)
- */
+// Deterministic hue from account ID so each account gets a consistent color dot
+function acctHue(id) {
+  const n = parseInt(id, 10) || 0;
+  return (n * 137 + 43) % 360;
+}
+
+// Inline SVG icons
+const IHome = () => (
+  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 12 12 4l9 8"/><path d="M5 10v10h14V10"/>
+  </svg>
+);
+const IBuilding = () => (
+  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2"/>
+  </svg>
+);
+const IGrid = () => (
+  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+    <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+  </svg>
+);
+const IHistory = () => (
+  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>
+  </svg>
+);
+const ISettings = () => (
+  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="3"/>
+    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+  </svg>
+);
+const LogoMark = () => (
+  <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 12h3l2-7 4 14 3-9 2 4h6"/>
+  </svg>
+);
+
 function Sidebar({ user, accounts = [], onAddAccount }) {
-  const navigate  = useNavigate();
   const { accountId } = useParams();
+  const email = user?.email || '';
+  const initials = email ? email.slice(0, 2).toUpperCase() : 'BB';
 
   return (
     <aside className="bb-sidebar">
-      <div className="bb-sidebar-brand">
-        <span className="bb-brand-mark" aria-hidden="true">
-          <Activity size={16} strokeWidth={2.5} />
-        </span>
+      {/* Brand */}
+      <NavLink to="/" className="bb-brand" style={{ textDecoration: 'none' }}>
+        <span style={{ color: 'var(--bb-accent)' }}><LogoMark /></span>
         <span>BudgetBuddy</span>
-      </div>
+      </NavLink>
 
-      {/* ACCOUNTS — scrollable list, fixed label */}
-      <div className="bb-sidebar-section bb-sidebar-section-accounts">
-        <div className="bb-sidebar-label">Accounts</div>
-        <ul className="bb-sidebar-list">
-          {accounts.map((acc) => (
-            <li key={acc.id}>
-              <button
-                type="button"
-                className={`bb-sidebar-item ${String(acc.id) === String(accountId) ? 'is-active' : ''}`}
-                onClick={() => navigate(`/account/${acc.id}`)}
-              >
-                <Building2 size={15} aria-hidden="true" />
-                <span>{acc.account_name}</span>
-              </button>
-            </li>
-          ))}
-          <li>
-            <button
-              type="button"
-              className="bb-sidebar-add"
-              onClick={onAddAccount || (() => navigate('/accounts'))}
-            >
-              <Plus size={13} aria-hidden="true" style={{ marginRight: 4, verticalAlign: -2 }} />
-              Add Account
-            </button>
-          </li>
-        </ul>
-      </div>
+      {/* Accounts list */}
+      <div className="bb-side-section">Accounts</div>
+      {accounts.map((acc) => (
+        <NavLink
+          key={acc.id}
+          to={`/account/${acc.id}`}
+          className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}
+          style={{ '--acct-hue': acctHue(acc.id) }}
+        >
+          <span className="bb-acct-dot" />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+            {acc.account_name}
+          </span>
+        </NavLink>
+      ))}
 
-      {/* NAVIGATION — always the same 4 links */}
-      <div className="bb-sidebar-section">
-        <div className="bb-sidebar-label">Navigation</div>
-        <ul className="bb-sidebar-list">
-          <li>
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
-            >
-              <HomeIcon size={15} aria-hidden="true" />
-              <span>Home</span>
-            </NavLink>
-          </li>
-          <li>
-            <NavLink
-              to="/accounts"
-              className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
-            >
-              <Building2 size={15} aria-hidden="true" />
-              <span>Accounts</span>
-            </NavLink>
-          </li>
-          <li>
-            {accountId ? (
-              <NavLink
-                to={`/account/${accountId}`}
-                end
-                className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
-              >
-                <LayoutDashboard size={15} aria-hidden="true" />
-                <span>Dashboard</span>
-              </NavLink>
-            ) : (
-              <span className="bb-sidebar-item bb-sidebar-item-dim" title="Select an account first">
-                <LayoutDashboard size={15} aria-hidden="true" />
-                <span>Dashboard</span>
-              </span>
-            )}
-          </li>
-          <li>
-            {accountId ? (
-              <NavLink
-                to={`/account/${accountId}/history`}
-                className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
-              >
-                <HistoryIcon size={15} aria-hidden="true" />
-                <span>History</span>
-              </NavLink>
-            ) : (
-              <span className="bb-sidebar-item bb-sidebar-item-dim" title="Select an account first">
-                <HistoryIcon size={15} aria-hidden="true" />
-                <span>History</span>
-              </span>
-            )}
-          </li>
-          <li>
-            {accountId ? (
-              <NavLink
-                to={`/account/${accountId}/settings`}
-                className={({ isActive }) => `bb-sidebar-item${isActive ? ' is-active' : ''}`}
-              >
-                <SettingsIcon size={15} aria-hidden="true" />
-                <span>Settings</span>
-              </NavLink>
-            ) : (
-              <span className="bb-sidebar-item bb-sidebar-item-dim" title="Select an account first">
-                <SettingsIcon size={15} aria-hidden="true" />
-                <span>Settings</span>
-              </span>
-            )}
-          </li>
-        </ul>
-      </div>
+      <div className="bb-nav-divider" />
 
-      <div className="bb-sidebar-user">
-        <div className="bb-sidebar-label">User</div>
-        <div className="bb-sidebar-user-email">{user?.email || '—'}</div>
+      {/* Navigation */}
+      <div className="bb-side-section">Navigation</div>
+      <NavLink to="/" end className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}>
+        <IHome /><span>Home</span>
+      </NavLink>
+      <NavLink to="/accounts" className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}>
+        <IBuilding /><span>Accounts</span>
+      </NavLink>
+
+      {accountId ? (
+        <NavLink to={`/account/${accountId}`} end className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}>
+          <IGrid /><span>Dashboard</span>
+        </NavLink>
+      ) : (
+        <span className="bb-nav-item" style={{ opacity: 0.4, cursor: 'default' }}>
+          <IGrid /><span>Dashboard</span>
+        </span>
+      )}
+
+      {accountId ? (
+        <NavLink to={`/account/${accountId}/history`} className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}>
+          <IHistory /><span>History</span>
+        </NavLink>
+      ) : (
+        <span className="bb-nav-item" style={{ opacity: 0.4, cursor: 'default' }}>
+          <IHistory /><span>History</span>
+        </span>
+      )}
+
+      {accountId ? (
+        <NavLink to={`/account/${accountId}/settings`} className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}>
+          <ISettings /><span>Settings</span>
+        </NavLink>
+      ) : (
+        <span className="bb-nav-item" style={{ opacity: 0.4, cursor: 'default' }}>
+          <ISettings /><span>Settings</span>
+        </span>
+      )}
+
+      {/* User block */}
+      <div className="bb-user">
+        <div className="bb-avatar">{initials}</div>
+        <div className="bb-flex-col" style={{ minWidth: 0 }}>
+          <div style={{ color: 'var(--bb-fg)', fontWeight: 500, fontSize: 'var(--bb-text-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {email || 'User'}
+          </div>
+        </div>
       </div>
     </aside>
   );

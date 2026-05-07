@@ -574,17 +574,52 @@ function AccountDashboard({ user, onLogout }) {
     return <span className="bb-change bb-change-down"><TrendingDown size={10} aria-hidden="true" /> {pct.toFixed(1)}%</span>;
   };
 
+
+  // ── Inline SVG icons for new design ──
+  const IPlay = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg>;
+  const ILogout = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>;
+  const IDownloadCloud = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>;
+  const IHistory = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>;
+  const ISettings = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>;
+  const IDiagnostic = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>;
+  const ICheck = () => <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>;
+  const ITrendUp = () => <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>;
+  const ITrendDown = () => <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 7 6 6 4-4 8 8"/><path d="M14 17h7v-7"/></svg>;
+  const IDownload = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>;
+
+  const statusTone = (status, paceRatio) => {
+    const s = (status || '').toUpperCase();
+    if (s === 'ON_PACE') return 'var(--bb-ok)';
+    if (s === 'INCREASE') return 'var(--bb-warn-cool)';
+    if (s === 'DECREASE') return 'var(--bb-warn)';
+    return 'var(--bb-mute)';
+  };
+  const statusLabel = (status, paceRatio) => {
+    const s = (status || '').toUpperCase();
+    const ratio = paceRatio || 0;
+    const pct = Math.round(Math.abs((ratio - 1) * 100));
+    if (s === 'ON_PACE') return 'On pace';
+    if (s === 'INCREASE') return `${pct}% under`;
+    if (s === 'DECREASE') return `${pct}% over`;
+    return '—';
+  };
+  const StatusPill = ({ status, paceRatio }) => {
+    const tone = statusTone(status, paceRatio);
+    const label = statusLabel(status, paceRatio);
+    const s = (status || '').toUpperCase();
+    const Icon = s === 'ON_PACE' ? ICheck : s === 'INCREASE' ? ITrendUp : ITrendDown;
+    return <span className="bb-status" style={{ '--bb-tone': tone }}><Icon />{label}</span>;
+  };
+
   if (loading) {
     return (
       <div className="bb-app">
         <Sidebar user={user} accounts={accounts} />
         <main className="bb-main">
-          <div className="bb-row-between" style={{ marginBottom: 18 }}>
-            <div>
-              <div className="bb-page-title">Loading…</div>
-            </div>
+          <div className="bb-header">
+            <div><h1 className="bb-h1">Loading…</h1></div>
           </div>
-          <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
+          <div className="bb-state-grid-4" style={{ marginBottom: 20 }}>
             <SkeletonStatTile /><SkeletonStatTile /><SkeletonStatTile /><SkeletonStatTile />
           </div>
           <SkeletonTable rows={5} cols={8} />
@@ -598,99 +633,96 @@ function AccountDashboard({ user, onLogout }) {
       <div className="bb-app">
         <Sidebar user={user} accounts={accounts} />
         <main className="bb-main">
-          <div className="bb-card bb-section">
-            <div className="bb-alert bb-alert-error">Account not found.</div>
-          </div>
+          <div className="bb-alert bb-alert-error">Account not found.</div>
         </main>
       </div>
     );
   }
+
+  const spendPct = stats.monthlyBudget > 0 ? Math.min(100, (stats.totalSpend / stats.monthlyBudget) * 100) : 0;
+  const expectedSoFar = stats.monthlyBudget > 0 ? (stats.monthlyBudget / new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate()) * new Date().getDate() : 0;
+  const spendDelta = expectedSoFar > 0 ? ((stats.totalSpend - expectedSoFar) / expectedSoFar) * 100 : 0;
+  const acctHueVal = ((parseInt(accountId, 10) || 0) * 137 + 43) % 360;
 
   return (
     <div className="bb-app">
       <Sidebar user={user} accounts={accounts} />
 
       <main className="bb-main">
-        <div className="bb-breadcrumb">
-          <Link to="/">Home</Link> / {account.account_name}
+        {/* Breadcrumb */}
+        <div style={{ fontSize: 'var(--bb-text-sm)', color: 'var(--bb-mute)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Link to="/accounts" style={{ color: 'var(--bb-fg-2)', textDecoration: 'none' }}>Accounts</Link>
+          <span>/</span>
+          <span style={{ color: 'var(--bb-fg)' }}>{account.account_name}</span>
         </div>
 
-        <div className="bb-row-between" style={{ marginBottom: 18 }}>
+        {/* Header */}
+        <div className="bb-header">
           <div>
-            <div className="bb-page-title">{account.account_name}</div>
-            <div className="bb-page-subtitle">Meta account ID: {account.meta_account_id || '—'}</div>
+            <h1 className="bb-h1">{account.account_name}</h1>
+            <div className="bb-sub">
+              Meta account ID: <span style={{ fontFamily: 'var(--bb-font-mono)' }}>{account.meta_account_id || '—'}</span>
+              {' · last sync just now'}
+            </div>
           </div>
-          <div className="bb-row">
-            <button className="bb-btn" onClick={openImport}>
-              <DownloadCloud size={14} aria-hidden="true" /> Import from Meta
+          <div className="bb-header-actions">
+            <button className="bb-btn" onClick={openImport}><IDownloadCloud /> Import from Meta</button>
+            <Link to={`/account/${accountId}/history`} className="bb-btn"><IHistory /> History</Link>
+            <Link to={`/account/${accountId}/settings`} className="bb-btn"><ISettings /> Settings</Link>
+            <button className="bb-btn bb-btn-ghost" onClick={handleDownloadDiagnostic} title="Download diagnostic JSON">
+              <IDiagnostic /> Diagnostic
             </button>
-            <Link to={`/account/${accountId}/history`} className="bb-btn">
-              <HistoryIcon size={14} aria-hidden="true" /> History
-            </Link>
-            <Link to={`/account/${accountId}/settings`} className="bb-btn">
-              <SettingsIcon size={14} aria-hidden="true" /> Settings
-            </Link>
-            <button
-              className="bb-btn bb-btn-ghost"
-              onClick={handleDownloadDiagnostic}
-              title="Download a read-only JSON snapshot of this account's campaign health"
-            >
-              <Download size={14} aria-hidden="true" /> Diagnostic
-            </button>
-            <button
-              className="bb-btn bb-btn-primary"
-              onClick={handleRunPacing}
-              disabled={pacingRunning}
-            >
-              {pacingRunning ? <Loader2 size={14} className="bb-spin" /> : <Play size={14} aria-hidden="true" />}
+            <button className="bb-btn bb-btn-primary" onClick={handleRunPacing} disabled={pacingRunning}>
+              {pacingRunning ? <Loader2 size={13} className="bb-spin" /> : <IPlay />}
               {pacingRunning ? 'Running…' : 'Run Pacing'}
             </button>
-            <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
-              <LogOut size={14} aria-hidden="true" /> Log out
-            </button>
+            <button className="bb-btn bb-btn-ghost" onClick={handleLogout}><ILogout /> Log out</button>
           </div>
         </div>
 
         {error && <div className="bb-alert bb-alert-error">{error}</div>}
 
-        {/* 4 stat tiles */}
-        <div className="bb-grid bb-grid-4" style={{ marginBottom: 20 }}>
-          <div className="bb-stat bb-stat-on">
-            <span className="bb-stat-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-              <Check size={11} aria-hidden="true" /> On Pace
-            </span>
-            <span className="bb-stat-value">{stats.onPace}</span>
+        {/* Status cards */}
+        <div className="bb-state-grid-4">
+          <div className="bb-state-card is-ok">
+            <div className="bb-state-label"><ICheck /> On Pace</div>
+            <div className="bb-state-value">{stats.onPace}</div>
+            <div className="bb-state-meta">campaigns hitting target</div>
           </div>
-          <div className="bb-stat bb-stat-under">
-            <span className="bb-stat-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-              <TrendingUp size={11} aria-hidden="true" /> Need Increase
-            </span>
-            <span className="bb-stat-value">{stats.needIncrease}</span>
+          <div className="bb-state-card is-cool">
+            <div className="bb-state-label"><ITrendUp /> Need Increase</div>
+            <div className="bb-state-value">{stats.needIncrease}</div>
+            <div className="bb-state-meta">spending below pace</div>
           </div>
-          <div className="bb-stat bb-stat-over">
-            <span className="bb-stat-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-              <TrendingDown size={11} aria-hidden="true" /> Need Decrease
-            </span>
-            <span className="bb-stat-value">{stats.needDecrease}</span>
+          <div className="bb-state-card is-warn">
+            <div className="bb-state-label"><ITrendDown /> Need Decrease</div>
+            <div className="bb-state-value">{stats.needDecrease}</div>
+            <div className="bb-state-meta">spending above pace</div>
           </div>
-          <div className="bb-stat">
-            <span className="bb-stat-label">Total Spend (MTD)</span>
-            <span className="bb-stat-value">${stats.totalSpend.toFixed(2)}</span>
-            <span className="bb-stat-sub">of ${stats.monthlyBudget.toFixed(0)} monthly</span>
+          <div className="bb-state-card">
+            <div className="bb-state-label">Total Spend (MTD)</div>
+            <div className="bb-state-value">${stats.totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+            <div className="bb-progress" style={{ marginTop: 8 }}>
+              <div className="bb-progress-fill" style={{ width: spendPct + '%' }} />
+            </div>
+            <div className="bb-state-meta" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>of ${stats.monthlyBudget.toLocaleString('en-US', { maximumFractionDigits: 0 })} monthly</span>
+              <span style={{ color: spendDelta > 0 ? 'var(--bb-warn)' : 'var(--bb-warn-cool)', fontVariantNumeric: 'tabular-nums' }}>
+                {spendDelta > 0 ? '+' : ''}{spendDelta.toFixed(1)}% vs. expected
+              </span>
+            </div>
           </div>
         </div>
 
         {/* Pacing-in-progress banner */}
         {pacingRunning && (
-          <div className="bb-card bb-pacing-banner" style={{ marginBottom: 20 }}>
-            <div className="bb-section">
+          <div className="bb-acct" style={{ marginBottom: 16 }}>
+            <div style={{ padding: '16px 20px' }}>
               <div className="bb-pacing-banner-inner">
-                <Loader2 size={22} className="bb-spin" style={{ color: 'var(--bb-primary)' }} />
-                <div className="bb-pacing-banner-text">
+                <Loader2 size={22} className="bb-spin" style={{ color: 'var(--bb-accent)' }} />
+                <div>
                   <div className="bb-pacing-banner-title">Running pacing calculations…</div>
-                  <div className="bb-pacing-banner-sub">
-                    Pulling MTD spend from Meta and computing recommendations for all tracked campaigns.
-                  </div>
+                  <div className="bb-pacing-banner-sub">Pulling MTD spend from Meta and computing recommendations for all tracked campaigns.</div>
                 </div>
               </div>
             </div>
@@ -699,140 +731,138 @@ function AccountDashboard({ user, onLogout }) {
 
         {/* Spend chart */}
         {stats.monthlyBudget > 0 && (
-          <div className="bb-card" style={{ marginBottom: 20 }}>
-            <div className="bb-section">
-              <SpendChart
-                monthlyBudget={stats.monthlyBudget}
-                history={accountHistory}
-                currentMtd={stats.totalSpend}
-                title="Account spend vs. target"
-                height={260}
-              />
+          <div className="bb-acct" style={{ padding: '18px 20px 12px', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div className="bb-summary-label" style={{ marginBottom: 0 }}>
+                <ITrendUp /> Account spend vs. target
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 'var(--bb-text-sm)', color: 'var(--bb-fg-2)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 16, height: 2.5, background: 'var(--bb-accent)', borderRadius: 2, display: 'inline-block' }} /> Actual
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 16, height: 0, borderTop: '1.5px dashed var(--bb-mute)', display: 'inline-block' }} /> Expected
+                </span>
+              </div>
             </div>
+            <SpendChart
+              monthlyBudget={stats.monthlyBudget}
+              history={accountHistory}
+              currentMtd={stats.totalSpend}
+              height={260}
+              title=""
+            />
           </div>
         )}
 
         {/* Latest run summary */}
         {lastRun && (
-          <div className="bb-card" style={{ marginBottom: 20 }}>
-            <div className="bb-section">
-              <div className="bb-section-head">
-                <div>
-                  <div className="bb-section-title">
-                    Latest pacing run — {lastRun.campaigns_processed} campaigns,{' '}
-                    {lastRun.adjustments_needed} need adjusting
-                  </div>
-                  <div className="bb-section-meta">Recommendations from the most recent calculation.</div>
-                </div>
-                <div className="bb-row">
-                  <button
-                    className="bb-btn bb-btn-secondary"
-                    title="Download full run data as JSON"
-                    onClick={() => {
-                      const blob = new Blob([JSON.stringify(lastRun, null, 2)], { type: 'application/json' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `pacing-run-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                    }}
-                  >
-                    <Download size={13} aria-hidden="true" /> Download Run Log
-                  </button>
-                  <button
-                    className="bb-btn bb-btn-apply"
-                    onClick={handleApplyAll}
-                    disabled={applying || lastRun.adjustments_needed === 0}
-                  >
-                    {applying ? <Loader2 size={14} className="bb-spin" /> : <Check size={14} aria-hidden="true" />}
-                    {applying ? 'Applying…' : 'Apply all to Meta'}
-                  </button>
-                </div>
+          <div className="bb-acct" style={{ marginBottom: 16 }}>
+            <div className="bb-acct-head" style={{ cursor: 'default' }}>
+              <div className="bb-acct-bar" style={{ '--acct-hue': acctHueVal }} />
+              <div className="bb-flex-col">
+                <div className="bb-acct-title">Latest pacing run — {lastRun.campaigns_processed} campaigns, {lastRun.adjustments_needed} need adjusting</div>
+                <div className="bb-acct-meta">Recommendations from the most recent calculation.</div>
               </div>
-
-              {lastRun.failures && lastRun.failures.length > 0 && (
-                <div className="bb-alert bb-alert-error">
-                  {lastRun.failures.length} campaign(s) failed:&nbsp;
-                  {lastRun.failures.map((f) => `${f.campaign_name}: ${f.error}`).join(' — ')}
-                </div>
-              )}
+              <div className="bb-acct-spacer" />
+              <button className="bb-btn bb-btn-sm" onClick={() => {
+                const blob = new Blob([JSON.stringify(lastRun, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `pacing-run-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+                a.click(); URL.revokeObjectURL(url);
+              }}>
+                <IDownload /> Download Run Log
+              </button>
+              <button className="bb-apply" onClick={handleApplyAll} disabled={applying || lastRun.adjustments_needed === 0}>
+                {applying ? <Loader2 size={13} className="bb-spin" /> : <ICheck />}
+                {applying ? 'Applying…' : 'Apply all to Meta'}
+              </button>
             </div>
+
+            {lastRun.failures && lastRun.failures.length > 0 && (
+              <div className="bb-alert bb-alert-error" style={{ margin: '8px 18px 0' }}>
+                {lastRun.failures.length} campaign(s) failed: {lastRun.failures.map(f => `${f.campaign_name}: ${f.error}`).join(' — ')}
+              </div>
+            )}
 
             {lastRun.recommendations && lastRun.recommendations.length > 0 && (
               <table className="bb-table">
                 <thead>
                   <tr>
-                    <th>Campaign / Ad set</th>
-                    <th>Mode</th>
-                    <th>MTD Spend</th>
-                    <th>Expected</th>
-                    <th>Pace</th>
-                    <th>Current Daily</th>
-                    <th>Recommended</th>
-                    <th>Action</th>
+                    <th>Campaign / Ad set</th><th>Mode</th><th className="num">MTD Spend</th>
+                    <th className="num">Expected</th><th className="num">Pace</th>
+                    <th className="num">Current Daily</th><th className="num">Recommended</th><th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {lastRun.recommendations.flatMap((r) => {
+                  {lastRun.recommendations.flatMap(r => {
                     const mode = r.budget_mode || 'CBO';
                     if (mode === 'ABO') {
                       const parentRow = (
-                        <tr key={`c-${r.campaign_id}`} className="bb-row-abo-parent">
+                        <tr key={`c-${r.campaign_id}`} style={{ background: 'var(--bb-surface-2)' }}>
                           <td style={{ fontWeight: 600 }}>{r.campaign_name}</td>
-                          <td><span className="bb-mode-badge bb-mode-abo">ABO</span></td>
+                          <td><span className="bb-mode bb-mode-abo">ABO</span></td>
                           <td className="num">${(r.actual_spend || 0).toFixed(2)}</td>
                           <td className="num">${(r.expected_spend || 0).toFixed(2)}</td>
                           <td className="num">{(r.pace_ratio || 0).toFixed(2)}x</td>
-                          <td className="num bb-muted">—</td>
-                          <td className="num bb-muted">—</td>
-                          <td><span className="bb-pill bb-pill-muted">rollup</span></td>
+                          <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
+                          <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
+                          <td><span className="bb-status" style={{ '--bb-tone': 'var(--bb-mute)' }}>rollup</span></td>
                         </tr>
                       );
-                      const adsetRows = (r.adset_level || []).map((a) => {
+                      const adsetRows = (r.adset_level || []).map(a => {
                         const action = (a.action || '').toUpperCase();
-                        const tint =
-                          action === 'INCREASE' ? 'bb-table-row-tint-up' :
-                          action === 'DECREASE' ? 'bb-table-row-tint-down' : '';
-                        const pill = pillForStatus(action, a.pace_ratio);
                         return (
-                          <tr key={`a-${a.adset_id}`} className={tint}>
-                            <td style={{ paddingLeft: 32, color: 'var(--bb-text-muted)' }}>
-                              ↳ {a.adset_name} <span className="bb-muted">({a.allocation_pct}%)</span>
+                          <tr key={`a-${a.adset_id}`} className="bb-row-adset">
+                            <td>
+                              <div className="bb-row-name">
+                                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="bb-arrow"><path d="M5 4v8a3 3 0 0 0 3 3h11"/><path d="m15 11 4 4-4 4"/></svg>
+                                {a.adset_name}
+                                <span className="bb-row-weight">{a.allocation_pct}%</span>
+                              </div>
                             </td>
-                            <td><span className="bb-mode-badge bb-mode-adset">ad&nbsp;set</span></td>
+                            <td><span className="bb-mode bb-mode-adset">ad set</span></td>
                             <td className="num">${(a.actual_spend || 0).toFixed(2)}</td>
                             <td className="num">${(a.expected_spend || 0).toFixed(2)}</td>
-                            <td className="num">{(a.pace_ratio || 0).toFixed(2)}x</td>
+                            <td className="num"><span style={{ color: statusTone(action, a.pace_ratio), fontWeight: 600 }}>{(a.pace_ratio || 0).toFixed(2)}x</span></td>
                             <td className="num">${(a.current_daily_budget || 0).toFixed(2)}</td>
                             <td className="num">
-                              ${(a.recommended_daily_budget || 0).toFixed(2)}
-                              <div><ChangeBadge pct={a.change_percent} /></div>
+                              <div className="bb-rec-cell">
+                                <span>${(a.recommended_daily_budget || 0).toFixed(2)}</span>
+                                {a.change_percent != null && Math.abs(a.change_percent) >= 0.5 && (
+                                  <span className={a.change_percent > 0 ? 'bb-delta up' : 'bb-delta down'}>
+                                    {a.change_percent > 0 ? '↑' : '↓'}{Math.abs(a.change_percent).toFixed(1)}%
+                                  </span>
+                                )}
+                              </div>
                             </td>
-                            <td><span className={pill.cls}><pill.Icon size={11} aria-hidden="true" /> {pill.text}</span></td>
+                            <td><StatusPill status={action} paceRatio={a.pace_ratio} /></td>
                           </tr>
                         );
                       });
                       return [parentRow, ...adsetRows];
                     }
                     const action = (r.action || '').toUpperCase();
-                    const rowTint =
-                      action === 'INCREASE' ? 'bb-table-row-tint-up' :
-                      action === 'DECREASE' ? 'bb-table-row-tint-down' : '';
-                    const pill = pillForStatus(action, r.pace_ratio);
                     return [(
-                      <tr key={`c-${r.campaign_id}`} className={rowTint}>
+                      <tr key={`c-${r.campaign_id}`}>
                         <td style={{ fontWeight: 600 }}>{r.campaign_name}</td>
-                        <td><span className="bb-mode-badge bb-mode-cbo">CBO</span></td>
+                        <td><span className="bb-mode bb-mode-cbo">CBO</span></td>
                         <td className="num">${(r.actual_spend || 0).toFixed(2)}</td>
                         <td className="num">${(r.expected_spend || 0).toFixed(2)}</td>
-                        <td className="num">{(r.pace_ratio || 0).toFixed(2)}x</td>
+                        <td className="num"><span style={{ color: statusTone(action, r.pace_ratio), fontWeight: 600 }}>{(r.pace_ratio || 0).toFixed(2)}x</span></td>
                         <td className="num">${(r.current_daily_budget || 0).toFixed(2)}</td>
                         <td className="num">
-                          ${(r.recommended_daily_budget || 0).toFixed(2)}
-                          <div><ChangeBadge pct={r.change_percent} /></div>
+                          <div className="bb-rec-cell">
+                            <span>${(r.recommended_daily_budget || 0).toFixed(2)}</span>
+                            {r.change_percent != null && Math.abs(r.change_percent) >= 0.5 && (
+                              <span className={r.change_percent > 0 ? 'bb-delta up' : 'bb-delta down'}>
+                                {r.change_percent > 0 ? '↑' : '↓'}{Math.abs(r.change_percent).toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
                         </td>
-                        <td><span className={pill.cls}><pill.Icon size={11} aria-hidden="true" /> {pill.text}</span></td>
+                        <td><StatusPill status={action} paceRatio={r.pace_ratio} /></td>
                       </tr>
                     )];
                   })}
@@ -843,148 +873,134 @@ function AccountDashboard({ user, onLogout }) {
         )}
 
         {/* Tracked campaigns table */}
-        <div className="bb-card">
-          <div className="bb-section">
-            <div className="bb-section-head">
-              <div className="bb-section-title">Tracked campaigns ({campaigns.length})</div>
-              <div className="bb-section-meta">Pulled from Meta via the Import button above.</div>
-            </div>
-            {hiddenCampaigns.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13, color: 'var(--bb-muted)' }}>
-                <span>
-                  {hiddenCampaigns.length} campaign{hiddenCampaigns.length !== 1 ? 's' : ''} hidden — no spend recorded this month.
-                </span>
-                <button
-                  className="bb-btn bb-btn-ghost"
-                  style={{ fontSize: 12, padding: '2px 10px' }}
-                  onClick={() => setShowHidden(h => !h)}
-                >
-                  {showHidden ? 'Hide ended' : 'Show anyway'}
-                </button>
+        <div className="bb-acct">
+          <div className="bb-acct-head" style={{ cursor: 'default' }}>
+            <div className="bb-acct-bar" style={{ '--acct-hue': acctHueVal }} />
+            <div className="bb-flex-col">
+              <div className="bb-acct-title">Tracked campaigns ({campaigns.length})</div>
+              <div className="bb-acct-meta">
+                Pulled from Meta via the Import button above.
+                {hiddenCampaigns.length > 0 && (
+                  <span>
+                    {' · '}{hiddenCampaigns.length} hidden (no spend this month)
+                    <button className="bb-btn bb-btn-ghost bb-btn-sm" style={{ marginLeft: 6 }} onClick={() => setShowHidden(h => !h)}>
+                      {showHidden ? 'Hide ended' : 'Show anyway'}
+                    </button>
+                  </span>
+                )}
               </div>
-            )}
+            </div>
+            <div className="bb-acct-spacer" />
+            <button className="bb-btn bb-btn-sm" onClick={openImport}>+ Add campaign</button>
           </div>
 
           {campaigns.length === 0 && hiddenCampaigns.length === 0 ? (
             <EmptyState
-              icon={Inbox}
+              icon={null}
               title="No campaigns tracked yet"
               body="Click Import from Meta to pull in your campaigns and start pacing."
-              action={{ label: 'Import from Meta', icon: DownloadCloud, onClick: openImport }}
+              action={{ label: 'Import from Meta', onClick: openImport }}
             />
           ) : campaigns.length === 0 && !showHidden ? (
             <EmptyState
-              icon={Inbox}
+              icon={null}
               title="No active campaigns this month"
-              body={`${hiddenCampaigns.length} campaign${hiddenCampaigns.length !== 1 ? 's are' : ' is'} hidden because they show no spend this month.`}
-              action={{ label: 'Show ended campaigns', icon: DownloadCloud, onClick: () => setShowHidden(true) }}
+              body={`${hiddenCampaigns.length} campaign${hiddenCampaigns.length !== 1 ? 's are' : ' is'} hidden — they show no spend this month.`}
+              action={{ label: 'Show ended campaigns', onClick: () => setShowHidden(true) }}
             />
           ) : (
             <table className="bb-table">
               <thead>
                 <tr>
-                  <th>Campaign</th>
-                  <th>Mode</th>
-                  <th>Flight</th>
-                  <th>Monthly Budget</th>
-                  <th>Current Daily</th>
-                  <th>Pace</th>
-                  <th>Recommended Daily</th>
-                  <th>Status</th>
-                  <th></th>
+                  <th>Campaign</th><th>Mode</th><th>Flight</th>
+                  <th className="num">Monthly Budget</th><th className="num">Current Daily</th>
+                  <th className="num">Pace</th><th className="num">Recommended Daily</th>
+                  <th>Status</th><th></th>
                 </tr>
               </thead>
               <tbody>
-                {campaigns.map((c) => {
+                {[...(showHidden ? [...campaigns, ...hiddenCampaigns] : campaigns)].map(c => {
                   const lp = c.latest_pacing;
                   const status = lp ? (lp.status || '').toUpperCase() : null;
-                  const pill = pillForStatus(status, lp?.pace_ratio);
-                  const flightStatus = (c.flight_status || '').toUpperCase();
-                  const isLive = flightStatus === 'ACTIVE' || flightStatus === 'LIVE';
                   const mode = c.budget_mode || 'CBO';
-
-                  return (
-                    <tr key={c.id}>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>
-                          {c.campaign_name}
-                          {isLive && c.flight_type === 'LIMITED' && <span className="bb-flight-live">LIVE</span>}
-                        </div>
-                        {mode === 'ABO' && c.adset_count > 0 && (
-                          <div className="bb-muted" style={{ fontSize: 11, marginTop: 2 }}>
-                            {c.adset_count} ad set{c.adset_count === 1 ? '' : 's'}
+                  if (mode === 'ABO') {
+                    const parentRow = (
+                      <tr key={`c-${c.id}`} style={{ background: 'var(--bb-surface-2)' }}>
+                        <td>
+                          <div className="bb-row-name" style={{ fontWeight: 600 }}>
+                            <Link to={`/account/${accountId}/campaign/${c.id}`} style={{ color: 'var(--bb-fg)', textDecoration: 'none' }}>
+                              {c.campaign_name}
+                            </Link>
                           </div>
-                        )}
-                      </td>
+                        </td>
+                        <td><span className="bb-mode bb-mode-abo">ABO</span></td>
+                        <td><span className="bb-mode bb-mode-adset">{c.flight_type || 'ALWAYS_ON'}</span></td>
+                        <td className="num">${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                        <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
+                        <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
+                        <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
+                        <td>{lp && status ? <StatusPill status={status} paceRatio={lp.pace_ratio} /> : <span style={{ color: 'var(--bb-mute)' }}>rollup</span>}</td>
+                        <td>
+                          <div className="bb-actions">
+                            <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-skip" style={{ textDecoration: 'none' }}>View →</Link>
+                            <button className="bb-skip" style={{ color: 'var(--bb-warn-hot)' }} onClick={() => setRemoveTarget({ id: c.id, name: c.campaign_name })}>Remove</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                    const adsetRows = (c.adsets || []).map(a => (
+                      <tr key={`a-${a.id}`} className="bb-row-adset">
+                        <td>
+                          <div className="bb-row-name">
+                            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="bb-arrow"><path d="M5 4v8a3 3 0 0 0 3 3h11"/><path d="m15 11 4 4-4 4"/></svg>
+                            {a.adset_name}
+                            <span className="bb-row-weight">{(a.allocation_pct || 0).toFixed(0)}%</span>
+                          </div>
+                        </td>
+                        <td><span className="bb-mode bb-mode-adset">ad set</span></td>
+                        <td></td>
+                        <td className="num">${(c.monthly_budget * (a.allocation_pct || 0) / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                        <td className="num">{a.latest_pacing?.current_daily_budget != null ? `$${a.latest_pacing.current_daily_budget.toFixed(2)}` : '—'}</td>
+                        <td className="num">{a.latest_pacing ? <span style={{ color: statusTone(a.latest_pacing.status, a.latest_pacing.pace_ratio), fontWeight: 600 }}>{(a.latest_pacing.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
+                        <td className="num">{a.latest_pacing?.recommended_daily_budget != null ? `$${a.latest_pacing.recommended_daily_budget.toFixed(2)}` : '—'}</td>
+                        <td>{a.latest_pacing ? <StatusPill status={(a.latest_pacing.action || a.latest_pacing.status || '').toUpperCase()} paceRatio={a.latest_pacing.pace_ratio} /> : <span style={{ color: 'var(--bb-mute)' }}>No data</span>}</td>
+                        <td></td>
+                      </tr>
+                    ));
+                    return [parentRow, ...adsetRows];
+                  }
+                  // CBO
+                  return (
+                    <tr key={`c-${c.id}`}>
                       <td>
-                        <span className={`bb-mode-badge ${mode === 'ABO' ? 'bb-mode-abo' : 'bb-mode-cbo'}`}>
-                          {mode}
-                        </span>
-                      </td>
-                      <td>
-                        <span className="bb-pill bb-pill-muted">{c.flight_status || c.flight_type || '—'}</span>
-                      </td>
-                      <td className="num">${(c.monthly_budget || 0).toFixed(0)}</td>
-                      <td className="num">
-                        {lp?.current_daily_budget !== undefined && lp?.current_daily_budget !== null
-                          ? `$${(lp.current_daily_budget || 0).toFixed(2)}`
-                          : (c.current_daily_budget !== undefined ? `$${c.current_daily_budget.toFixed(2)}` : '—')}
-                      </td>
-                      <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
-                      <td className="num">
-                        {lp?.recommended_daily_budget !== undefined && lp?.recommended_daily_budget !== null
-                          ? <>${(lp.recommended_daily_budget).toFixed(2)}<div><ChangeBadge pct={lp.change_percent} /></div></>
-                          : '—'}
-                      </td>
-                      <td>
-                        {lp ? <span className={pill.cls}><pill.Icon size={11} aria-hidden="true" /> {pill.text}</span> : <span className="bb-muted">No data</span>}
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-link">View →</Link>
-                          <button
-                            className="bb-btn bb-btn-danger"
-                            style={{ fontSize: 11, padding: '3px 8px' }}
-                            onClick={() => setRemoveTarget({ id: c.id, name: c.campaign_name })}
-                            title="Remove from pacing"
-                          >
-                            Remove
-                          </button>
+                        <div className="bb-row-name" style={{ fontWeight: 600 }}>
+                          <Link to={`/account/${accountId}/campaign/${c.id}`} style={{ color: 'var(--bb-fg)', textDecoration: 'none' }}>
+                            {c.campaign_name}
+                          </Link>
                         </div>
                       </td>
-                    </tr>
-                  );
-                })}
-                {showHidden && hiddenCampaigns.map((c) => {
-                  const mode = c.budget_mode || 'CBO';
-                  return (
-                    <tr key={`hidden-${c.id}`} style={{ opacity: 0.45 }}>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{c.campaign_name}</div>
-                        <div className="bb-muted" style={{ fontSize: 11, marginTop: 2 }}>No spend this month</div>
+                      <td><span className="bb-mode bb-mode-cbo">CBO</span></td>
+                      <td><span className="bb-mode bb-mode-adset">{c.flight_type || 'ALWAYS_ON'}</span></td>
+                      <td className="num">${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                      <td className="num">{lp?.current_daily_budget != null ? `$${lp.current_daily_budget.toFixed(2)}` : '—'}</td>
+                      <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
+                      <td className="num">
+                        {lp?.recommended_daily_budget != null ? (
+                          <div className="bb-rec-cell">
+                            <span>${lp.recommended_daily_budget.toFixed(2)}</span>
+                            {lp.change_percent != null && Math.abs(lp.change_percent) >= 0.5 && (
+                              <span className={lp.change_percent > 0 ? 'bb-delta up' : 'bb-delta down'}>
+                                {lp.change_percent > 0 ? '↑' : '↓'}{Math.abs(lp.change_percent).toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                        ) : '—'}
                       </td>
+                      <td>{lp && status ? <StatusPill status={status} paceRatio={lp.pace_ratio} /> : <span style={{ color: 'var(--bb-mute)' }}>No data</span>}</td>
                       <td>
-                        <span className={`bb-mode-badge ${mode === 'ABO' ? 'bb-mode-abo' : 'bb-mode-cbo'}`}>
-                          {mode}
-                        </span>
-                      </td>
-                      <td><span className="bb-pill bb-pill-muted">{c.flight_status || c.flight_type || '—'}</span></td>
-                      <td className="num">${(c.monthly_budget || 0).toFixed(0)}</td>
-                      <td className="num">—</td>
-                      <td className="num">—</td>
-                      <td className="num">—</td>
-                      <td><span className="bb-pill bb-pill-muted">Ended</span></td>
-                      <td>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-link">View →</Link>
-                          <button
-                            className="bb-btn bb-btn-danger"
-                            style={{ fontSize: 11, padding: '3px 8px' }}
-                            onClick={() => setRemoveTarget({ id: c.id, name: c.campaign_name })}
-                            title="Remove from pacing"
-                          >
-                            Remove
-                          </button>
+                        <div className="bb-actions">
+                          <Link to={`/account/${accountId}/campaign/${c.id}`} className="bb-skip" style={{ textDecoration: 'none' }}>View →</Link>
+                          <button className="bb-skip" style={{ color: 'var(--bb-warn-hot)' }} onClick={() => setRemoveTarget({ id: c.id, name: c.campaign_name })}>Remove</button>
                         </div>
                       </td>
                     </tr>
@@ -995,74 +1011,6 @@ function AccountDashboard({ user, onLogout }) {
           )}
         </div>
 
-        {/* Apply confirmation modal */}
-        {showConfirm && (
-          <div className="bb-modal-backdrop" onClick={() => setShowConfirm(false)}>
-            <div className="bb-modal" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
-              <div className="bb-modal-head">
-                <div className="bb-modal-title">Confirm budget changes in Meta</div>
-                <button className="bb-icon-btn" onClick={() => setShowConfirm(false)} aria-label="Close">
-                  <X size={18} aria-hidden="true" />
-                </button>
-              </div>
-
-              <div className="bb-modal-body">
-                <div className="bb-alert bb-alert-warn" style={{ marginBottom: 16 }}>
-                  This will push <strong>{pendingAdjustments.length} budget change{pendingAdjustments.length !== 1 ? 's' : ''}</strong> directly
-                  to Meta via the API. This cannot be undone automatically — you would need to revert manually in Ads Manager.
-                </div>
-
-                <table className="bb-table">
-                  <thead>
-                    <tr>
-                      <th>Target</th>
-                      <th>Current Daily</th>
-                      <th>New Daily</th>
-                      <th>Change</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingAdjustments.map((adj, idx) => {
-                      const up = adj.change_percent > 0;
-                      const isAdset = adj.level === 'adset' || !!adj.adset_id;
-                      return (
-                        <tr key={`${adj.level || 'c'}-${adj.adset_id || adj.campaign_id}-${idx}`}>
-                          <td>
-                            <div style={{ fontWeight: 600 }}>
-                              {isAdset ? adj.adset_name : adj.campaign_name}
-                            </div>
-                            {isAdset && (
-                              <div className="bb-muted" style={{ fontSize: 11 }}>
-                                Ad set in {adj.campaign_name}
-                              </div>
-                            )}
-                          </td>
-                          <td className="num">${(adj.current_daily_budget || 0).toFixed(2)}</td>
-                          <td className="num">${(adj.recommended_daily_budget || 0).toFixed(2)}</td>
-                          <td>
-                            <span className={`bb-change ${up ? 'bb-change-up' : 'bb-change-down'}`}>
-                              {up ? <TrendingUp size={11} aria-hidden="true" /> : <TrendingDown size={11} aria-hidden="true" />}
-                              {up ? '+' : ''}{(adj.change_percent || 0).toFixed(1)}%
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="bb-modal-foot">
-                <button className="bb-btn" onClick={() => setShowConfirm(false)}>Cancel</button>
-                <button className="bb-btn bb-btn-apply" onClick={handleConfirmApply}>
-                  <Check size={14} aria-hidden="true" /> Yes, push to Meta
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Remove campaign confirmation modal */}
         {removeTarget && (
           <div className="bb-modal-backdrop" onClick={() => setRemoveTarget(null)}>
             <div className="bb-modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
