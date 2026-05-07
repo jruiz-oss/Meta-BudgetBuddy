@@ -1,5 +1,5 @@
 /**
- * Toast notification system — stacked, auto-dismissing notifications.
+ * Toast notification system — single grouped panel with per-item status rows.
  *
  * Usage:
  *   const toast = useToast();
@@ -10,8 +10,8 @@
  *
  * Wrap the app with <ToastProvider> at the root.
  */
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { CheckCircle2, AlertCircle, Info, AlertTriangle, X } from 'lucide-react';
+import React, { createContext, useCallback, useContext, useState } from 'react';
+import { CheckCircle2, AlertCircle, Info, AlertTriangle, X, Bell } from 'lucide-react';
 
 const ToastContext = createContext(null);
 
@@ -19,15 +19,27 @@ let nextId = 1;
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
+  const [panelLeaving, setPanelLeaving] = useState(false);
 
   const dismiss = useCallback((id) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    setToasts((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      return next;
+    });
+  }, []);
+
+  const dismissAll = useCallback(() => {
+    setPanelLeaving(true);
+    setTimeout(() => {
+      setToasts([]);
+      setPanelLeaving(false);
+    }, 220);
   }, []);
 
   const push = useCallback(
     (variant, message, opts = {}) => {
       const id = nextId++;
-      const ttl = opts.duration ?? (variant === 'error' ? 7000 : 4500);
+      const ttl = opts.duration ?? (variant === 'error' ? 8000 : 5500);
       setToasts((prev) => [...prev, { id, variant, message, title: opts.title }]);
       if (ttl > 0) {
         setTimeout(() => dismiss(id), ttl);
@@ -38,64 +50,93 @@ export function ToastProvider({ children }) {
   );
 
   const value = {
-    success: (msg, opts) => push('success', msg, opts),
-    error:   (msg, opts) => push('error', msg, opts),
-    info:    (msg, opts) => push('info', msg, opts),
-    warn:    (msg, opts) => push('warn', msg, opts),
+    success:    (msg, opts) => push('success', msg, opts),
+    error:      (msg, opts) => push('error',   msg, opts),
+    info:       (msg, opts) => push('info',    msg, opts),
+    warn:       (msg, opts) => push('warn',    msg, opts),
     dismiss,
+    dismissAll,
   };
 
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="bb-toast-stack" role="region" aria-live="polite" aria-label="Notifications">
-        {toasts.map((t) => (
-          <ToastCard key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
-        ))}
-      </div>
+
+      {toasts.length > 0 && (
+        <div
+          className={`bb-toast-panel${panelLeaving ? ' is-leaving' : ''}`}
+          role="region"
+          aria-live="polite"
+          aria-label="Notifications"
+        >
+          {/* Panel header */}
+          <div className="bb-toast-panel-header">
+            <span className="bb-toast-panel-label">
+              <Bell size={12} aria-hidden="true" />
+              Notifications
+            </span>
+            <button
+              className="bb-toast-panel-close-all"
+              onClick={dismissAll}
+              aria-label="Dismiss all notifications"
+              type="button"
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          </div>
+
+          {/* Notification rows */}
+          <div className="bb-toast-panel-body">
+            {toasts.map((t, i) => (
+              <ToastRow
+                key={t.id}
+                toast={t}
+                onDismiss={() => dismiss(t.id)}
+                showDivider={i < toasts.length - 1}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </ToastContext.Provider>
   );
 }
 
-const VARIANT_ICON = {
-  success: CheckCircle2,
-  error:   AlertCircle,
-  info:    Info,
-  warn:    AlertTriangle,
+/* ── per-row variant config ── */
+const VARIANT = {
+  success: { Icon: CheckCircle2, color: '#10b981' },
+  error:   { Icon: AlertCircle,  color: '#ef4444' },
+  warn:    { Icon: AlertTriangle, color: '#f59e0b' },
+  info:    { Icon: Info,          color: '#3b82f6' },
 };
 
-function ToastCard({ toast, onDismiss }) {
-  const Icon = VARIANT_ICON[toast.variant] || Info;
-  const [leaving, setLeaving] = useState(false);
-
-  // animate out before unmount
-  const handleDismiss = () => {
-    setLeaving(true);
-    setTimeout(onDismiss, 180);
-  };
-
-  // mount animation
-  useEffect(() => {
-    // no-op; mount handled via CSS keyframe
-  }, []);
+function ToastRow({ toast, onDismiss, showDivider }) {
+  const cfg = VARIANT[toast.variant] || VARIANT.info;
+  const { Icon, color } = cfg;
 
   return (
-    <div
-      className={`bb-toast bb-toast-${toast.variant} ${leaving ? 'is-leaving' : ''}`}
-      role={toast.variant === 'error' ? 'alert' : 'status'}
-    >
-      <Icon size={18} className="bb-toast-icon" aria-hidden="true" />
-      <div className="bb-toast-body">
-        {toast.title && <div className="bb-toast-title">{toast.title}</div>}
-        <div className="bb-toast-msg">{toast.message}</div>
+    <div className={`bb-toast-row${showDivider ? ' bb-toast-row--divider' : ''}`}>
+      {/* Status icon */}
+      <span className="bb-toast-row-icon" style={{ color }} aria-hidden="true">
+        <Icon size={15} strokeWidth={2.2} />
+      </span>
+
+      {/* Text */}
+      <div className="bb-toast-row-body">
+        {toast.title && (
+          <div className="bb-toast-row-title">{toast.title}</div>
+        )}
+        <div className="bb-toast-row-msg">{toast.message}</div>
       </div>
+
+      {/* Per-row dismiss */}
       <button
-        className="bb-toast-close"
-        onClick={handleDismiss}
-        aria-label="Dismiss notification"
+        className="bb-toast-row-dismiss"
+        onClick={onDismiss}
+        aria-label="Dismiss this notification"
         type="button"
       >
-        <X size={14} aria-hidden="true" />
+        <X size={11} aria-hidden="true" />
       </button>
     </div>
   );
@@ -104,14 +145,8 @@ function ToastCard({ toast, onDismiss }) {
 export function useToast() {
   const ctx = useContext(ToastContext);
   if (!ctx) {
-    // Soft fallback so a misconfigured tree doesn't crash — log instead of throwing.
-    return {
-      success: (m) => console.warn('[toast outside provider]', m),
-      error:   (m) => console.warn('[toast outside provider]', m),
-      info:    (m) => console.warn('[toast outside provider]', m),
-      warn:    (m) => console.warn('[toast outside provider]', m),
-      dismiss: () => {},
-    };
+    const noop = (m) => console.warn('[toast outside provider]', m);
+    return { success: noop, error: noop, info: noop, warn: noop, dismiss: () => {}, dismissAll: () => {} };
   }
   return ctx;
 }
