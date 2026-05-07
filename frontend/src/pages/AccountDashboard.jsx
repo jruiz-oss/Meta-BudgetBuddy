@@ -2,11 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
-import {
-  Play, Check, X, LogOut, Download, Plus, Inbox, Loader2,
-  TrendingUp, TrendingDown, Minus,
-  History as HistoryIcon, Settings as SettingsIcon, DownloadCloud,
-} from 'lucide-react';
+import { X, Plus, Inbox, Loader2 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { SkeletonStatTile, SkeletonTable } from '../components/Skeleton';
 import { EmptyState } from '../components/EmptyState';
@@ -42,8 +38,6 @@ function AccountDashboard({ user, onLogout }) {
   const [pacingRunning, setPacingRunning] = useState(false);
   const [lastRun, setLastRun] = useState(null);
   const [applying, setApplying] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [pendingAdjustments, setPendingAdjustments] = useState([]);
 
   // Remove-campaign confirmation modal (replaces window.confirm)
   const [removeTarget, setRemoveTarget] = useState(null);
@@ -248,7 +242,7 @@ function AccountDashboard({ user, onLogout }) {
     }
   };
 
-  const handleApplyAll = () => {
+  const handleApplyAll = async () => {
     if (!lastRun || !lastRun.recommendations) return;
     const adjustments = [];
     lastRun.recommendations.forEach((r) => {
@@ -285,16 +279,10 @@ function AccountDashboard({ user, onLogout }) {
       toast.info('Nothing to apply — everything is on pace.');
       return;
     }
-    setPendingAdjustments(adjustments);
-    setShowConfirm(true);
-  };
-
-  const handleConfirmApply = async () => {
-    setShowConfirm(false);
     setApplying(true);
     setError('');
     try {
-      const response = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments: pendingAdjustments });
+      const response = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments });
       const { applied_count: applied = 0, results = [] } = response.data;
       const failures = results.filter((r) => r.error);
       const skipped = results.filter((r) => r.skipped);
@@ -331,7 +319,6 @@ function AccountDashboard({ user, onLogout }) {
       toast.error(msg, { title: 'Apply failed' });
     } finally {
       setApplying(false);
-      setPendingAdjustments([]);
     }
   };
 
@@ -554,26 +541,6 @@ function AccountDashboard({ user, onLogout }) {
     });
     return s;
   }, [campaigns]);
-
-  const pillForStatus = (status, paceRatio) => {
-    const s = (status || '').toUpperCase();
-    if (s === 'ON_PACE' || s === 'INCREASE' || s === 'DECREASE') {
-      const ratio = paceRatio || 0;
-      const pct   = Math.round(Math.abs((ratio - 1) * 100));
-      const text  = ratio >= 1 ? `${pct}% over` : `${pct}% under`;
-      const cls   = s === 'ON_PACE' ? 'bb-pill bb-pill-on' : 'bb-pill bb-pill-off';
-      const Icon  = s === 'ON_PACE' ? Check : ratio >= 1 ? TrendingUp : TrendingDown;
-      return { cls, text, Icon };
-    }
-    return { cls: 'bb-pill bb-pill-muted', text: '—', Icon: Minus };
-  };
-
-  const ChangeBadge = ({ pct }) => {
-    if (pct == null || Math.abs(pct) < 0.5) return <span className="bb-change bb-change-flat"><Minus size={10} aria-hidden="true" /> No change</span>;
-    if (pct > 0) return <span className="bb-change bb-change-up"><TrendingUp size={10} aria-hidden="true" /> +{pct.toFixed(1)}%</span>;
-    return <span className="bb-change bb-change-down"><TrendingDown size={10} aria-hidden="true" /> {pct.toFixed(1)}%</span>;
-  };
-
 
   // ── Inline SVG icons for new design ──
   const IPlay = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg>;

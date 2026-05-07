@@ -90,7 +90,6 @@ const timeAgo = (isoStr) => {
 function statusTone(status, paceRatio) {
   const s = (status || '').toUpperCase();
   if (s === 'ON_PACE') return 'var(--bb-ok)';
-  const ratio = paceRatio || 0;
   if (s === 'INCREASE') return 'var(--bb-warn-cool)';
   if (s === 'DECREASE') return 'var(--bb-warn)';
   return 'var(--bb-mute)';
