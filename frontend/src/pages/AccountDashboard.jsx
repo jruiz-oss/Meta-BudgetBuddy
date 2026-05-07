@@ -56,7 +56,16 @@ function AccountDashboard({ user, onLogout }) {
   const [metaCampaigns, setMetaCampaigns] = useState([]);
   const [importSelections, setImportSelections] = useState({});
 
-  useEffect(() => { fetchAll(); }, [accountId]);
+  useEffect(() => {
+    // Clear stale data from the previous account so it never flashes on screen
+    setCampaigns([]);
+    setHiddenCampaigns([]);
+    setAccountHistory([]);
+    setLastRun(null);
+    setAccount(null);
+    setError('');
+    fetchAll();
+  }, [accountId]);
 
   const fetchAll = async (force = false) => {
     const cacheKey = `dashboard-${accountId}`;
