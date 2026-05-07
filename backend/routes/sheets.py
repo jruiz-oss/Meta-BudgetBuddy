@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request, session
@@ -38,6 +39,29 @@ from routes.auth import login_required
 logger = logging.getLogger(__name__)
 
 sheets_bp = Blueprint("sheets", __name__, url_prefix="/api/sheets")
+
+
+def _sheets_retry(fn, *args, max_retries=4, **kwargs):
+    """Call a gspread function with exponential backoff on 429 quota errors.
+
+    Waits 15 s → 30 s → 60 s between retries. After max_retries failures the
+    last exception is re-raised so callers can surface a clean error message.
+    """
+    for attempt in range(max_retries):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            is_quota = "429" in str(exc) or "quota" in str(exc).lower()
+            if is_quota and attempt < max_retries - 1:
+                wait = 15 * (2 ** attempt)   # 15 s, 30 s, 60 s
+                logger.warning(
+                    "Google Sheets 429 rate-limit hit (attempt %d/%d); "
+                    "retrying in %s s…",
+                    attempt + 1, max_retries, wait,
+                )
+                time.sleep(wait)
+            else:
+                raise
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +166,7 @@ def _get_meta_section(worksheet):
       { row_index (1-based int), name (str), account_scope (str),
         monthly_budget (float|None), mtd_spend (float|None), notes (str), last_paced (str) }
     """
-    all_values = worksheet.get_all_values()
+    all_values = _sheets_retry(worksheet.get_all_values)
     STOP_KEYWORDS = {"linkedin", "tiktok"}
 
     meta_idx = None
@@ -169,12 +193,9 @@ def _get_meta_section(worksheet):
     if first_sr > last_sr:
         return []
 
-    range_a1 = f"A{first_sr}:G{last_sr}"
-    try:
-        grid = worksheet.get_values(range_a1)
-    except Exception as e:
-        logger.warning("get_values(%s) failed, falling back to jagged scan: %s", range_a1, e)
-        grid = []
+    # Slice the already-fetched all_values instead of making a second API call.
+    # first_sr and last_sr are 1-based; Python slicing is 0-based exclusive end.
+    grid = all_values[first_sr - 1 : last_sr]
 
     rows = []
     if grid:
@@ -628,7 +649,7 @@ def sync_budgets_for_account(account_id):
         raise ValueError("Account not found.")
 
     gc = _get_gspread_client()
-    spreadsheet = gc.open_by_key(settings.google_sheet_id)
+    spreadsheet = _sheets_retry(gc.open_by_key, settings.google_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet)
 
     sheet_rows = _get_meta_section(ws)
@@ -825,7 +846,7 @@ def write_spend_for_account(account_id):
         raise ValueError("Account not found.")
 
     gc = _get_gspread_client()
-    spreadsheet = gc.open_by_key(settings.google_sheet_id)
+    spreadsheet = _sheets_retry(gc.open_by_key, settings.google_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet)
 
     sheet_rows = _get_meta_section(ws)
@@ -880,7 +901,7 @@ def write_spend_for_account(account_id):
     if cell_updates:
         # USER_ENTERED lets the Sheets API parse numeric strings correctly and
         # avoids RAW-mode quirks where Google Sheets can misinterpret the value.
-        ws.batch_update(cell_updates, value_input_option="USER_ENTERED")
+        _sheets_retry(ws.batch_update, cell_updates, value_input_option="USER_ENTERED")
 
         # Stamp column-C spend cells with an explicit 2-decimal number format so
         # that existing integer-formatted cells don't truncate e.g. 80.41 → 80.
