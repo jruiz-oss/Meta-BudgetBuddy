@@ -103,9 +103,10 @@ function Home({ user, onLogout }) {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Manually run pacing for every account — 2 at a time to avoid hammering
-  // the Google Sheets and Meta APIs simultaneously (which triggers 429 rate-limit
-  // errors, exponential back-off waits, and eventual axios timeouts).
+  // Manually run pacing for every account — sequentially (1 at a time) to ensure
+  // Google Sheets and Meta API calls never overlap, eliminating 429 rate-limit
+  // errors and the exponential back-off waits that blow past the axios timeout.
+  // Each call gets 120 s — enough headroom for 2 full Sheets retry cycles (15+30 s).
   const handleRunAll = async () => {
     if (runningAll || allAccounts.length === 0) return;
     setRunningAll(true);
@@ -113,8 +114,8 @@ function Home({ user, onLogout }) {
     try {
       const settled = await runConcurrent(
         allAccounts,
-        (a) => axios.post(`/api/pacing/${a.id}/run`, { run_type: 'MANUAL' }),
-        2, // max 2 accounts in-flight at once
+        (a) => axios.post(`/api/pacing/${a.id}/run`, { run_type: 'MANUAL' }, { timeout: 120_000 }),
+        1, // sequential — one account at a time
       );
       let succeeded = 0;
       let totalCampaigns = 0;
