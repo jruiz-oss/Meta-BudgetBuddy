@@ -54,21 +54,23 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
         <span>BudgetBuddy</span>
       </NavLink>
 
-      {/* Accounts list */}
-      <div className="bb-side-section">Accounts</div>
-      {accounts.map((acc) => (
-        <NavLink
-          key={acc.id}
-          to={`/account/${acc.id}`}
-          className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}
-          style={{ '--acct-hue': acctHue(acc.id) }}
-        >
-          <span className="bb-acct-dot" />
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-            {acc.account_name}
-          </span>
-        </NavLink>
-      ))}
+      {/* Accounts list — scrollable, takes available space */}
+      <div className="bb-sidebar-accounts">
+        <div className="bb-side-section">Accounts</div>
+        {accounts.map((acc) => (
+          <NavLink
+            key={acc.id}
+            to={`/account/${acc.id}`}
+            className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}
+            style={{ '--acct-hue': acctHue(acc.id) }}
+          >
+            <span className="bb-acct-dot" />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+              {acc.account_name}
+            </span>
+          </NavLink>
+        ))}
+      </div>
 
       <div className="bb-nav-divider" />
 

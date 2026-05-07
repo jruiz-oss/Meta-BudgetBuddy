@@ -103,7 +103,15 @@ code { font-family: var(--bb-font-mono, ui-monospace, monospace); }
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow: hidden;
+}
+.bb-sidebar-accounts {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .bb-brand {
   display: flex;
@@ -738,8 +746,8 @@ code { font-family: var(--bb-font-mono, ui-monospace, monospace); }
 .bb-flex-col { display: flex; flex-direction: column; gap: 1px; }
 
 /* scrollbars */
-.bb-sidebar::-webkit-scrollbar { width: 6px; }
-.bb-sidebar::-webkit-scrollbar-thumb { background: var(--bb-line); border-radius: 3px; }
+.bb-sidebar-accounts::-webkit-scrollbar { width: 6px; }
+.bb-sidebar-accounts::-webkit-scrollbar-thumb { background: var(--bb-line); border-radius: 3px; }
 
 /* selection */
 ::selection { background: color-mix(in oklch, var(--bb-accent) 30%, transparent); }
