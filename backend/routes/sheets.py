@@ -131,13 +131,18 @@ def _sheet_row_matches_account(scope_cell: str, account: Account) -> bool:
     """
     if scope_cell is None or not str(scope_cell).strip():
         return True
-    # If the cell is numeric (e.g. a formula column like Daily Spend), ignore it for scoping.
+    # If the cell is numeric (e.g. a Daily Spend formula like $9.65), ignore it for scoping.
     cleaned = str(scope_cell).strip().replace("$", "").replace(",", "")
     try:
         float(cleaned)
         return True  # Numeric value — not an account scope, legacy behaviour
     except ValueError:
         pass
+    # Treat Google Sheets formula errors (#DIV/0!, #N/A, #VALUE!, #REF!, etc.) as non-scope.
+    # Column D in this sheet contains a daily-spend formula; when the budget cell (B) is
+    # blank or zero the formula resolves to an error string rather than an account name.
+    if cleaned.strip().startswith('#'):
+        return True
     if not account:
         return False
     s = str(scope_cell).strip()
