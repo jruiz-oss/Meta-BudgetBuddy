@@ -389,15 +389,19 @@ def _match_adset(needle_name: str, adsets: list):
 
 
 def _parse_allocations_from_notes(notes: str):
-    """Try to read adset allocation %s out of a Notes-column cell.
+    """Try to read allocation %s out of a Notes-column cell.
 
-    Convention: chunks separated by ``/`` or newlines, each shaped like
-    ``"<name> - <pct>%"``.
+    Handles two formats (can be mixed within the same cell):
 
-      "Pays to Play - 40% / Sports Bar - 30% / Free Slot Play - 30%"
-        → [("Pays to Play", 40.0), ("Sports Bar", 30.0), ("Free Slot Play", 30.0)]
+      Format A — ABO adset style:  ``"<name> - <pct>%"``
+        "Pays to Play - 40% / Sports Bar - 30% / Free Slot Play - 30%"
+          → [("Pays to Play", 40.0), ("Sports Bar", 30.0), ("Free Slot Play", 30.0)]
 
-    Returns ``None`` if any chunk doesn't match the pattern, or if the parsed
+      Format B — CBO campaign split:  ``"<pct>% to <name>"``
+        "70% to Weddings / 30% to Wedding Brochure"
+          → [("Weddings", 70.0), ("Wedding Brochure", 30.0)]
+
+    Returns ``None`` if any chunk doesn't match either pattern, or if the parsed
     %s don't sum to ~100 (±1.5). This is conservative on purpose — flight notes
     like "Cinco De Mayo (5/2 End)" must not be misread as allocations.
     """
@@ -405,22 +409,26 @@ def _parse_allocations_from_notes(notes: str):
         return None
 
     import re
-    # Split on " / " or newlines (some users put each on its own line)
     chunks = [c.strip() for c in re.split(r"\s*/\s*|\n", notes) if c.strip()]
     if not chunks:
         return None
 
-    pattern = re.compile(r"^(.+?)\s*[-–—]\s*(\d+(?:\.\d+)?)\s*%\s*$")
+    # Format A: "Name - 40%"  (any dash variant)
+    pat_a = re.compile(r"^(.+?)\s*[-–—]\s*(\d+(?:\.\d+)?)\s*%\s*$")
+    # Format B: "70% to Name"
+    pat_b = re.compile(r"^(\d+(?:\.\d+)?)\s*%\s+to\s+(.+?)\s*$", re.IGNORECASE)
+
     parsed = []
     for chunk in chunks:
-        m = pattern.match(chunk)
-        if not m:
-            return None  # any non-conforming chunk → bail (don't risk misreading flight notes)
-        name = m.group(1).strip()
-        try:
-            pct = float(m.group(2))
-        except ValueError:
-            return None
+        m = pat_a.match(chunk)
+        if m:
+            name, pct = m.group(1).strip(), float(m.group(2))
+        else:
+            m2 = pat_b.match(chunk)
+            if m2:
+                pct, name = float(m2.group(1)), m2.group(2).strip()
+            else:
+                return None  # non-conforming chunk → bail (flight notes, dates, etc.)
         if not name or pct < 0 or pct > 100:
             return None
         parsed.append((name, pct))
@@ -729,17 +737,58 @@ def sync_budgets_for_account(account_id):
 
         # Campaign-level budget
         if row["monthly_budget"] is not None:
-            old_budget = campaign.monthly_budget
-            new_budget = row["monthly_budget"]
-            if old_budget != new_budget:
-                campaign.monthly_budget = new_budget
-                updated.append({
-                    "campaign_name": campaign.campaign_name,
-                    "sheet_name": row["name"],
-                    "old_budget": old_budget,
-                    "new_budget": new_budget,
-                    "match_type": _match_type_label(match_name, campaign),
-                })
+            total_budget = row["monthly_budget"]
+
+            # CBO budget split — notes like "70% to Weddings / 30% to Wedding Brochure"
+            # distribute the row's total budget across multiple CBO campaigns by %.
+            # Example: one sheet row covers two campaigns; notes define the split.
+            cbo_split_applied = False
+            if campaign.budget_mode == 'CBO':
+                split_allocs = _parse_allocations_from_notes(row.get("notes", ""))
+                if split_allocs:
+                    split_proposed = []
+                    split_ok = True
+                    for alloc_name, alloc_pct in split_allocs:
+                        matched_c = _match_campaign(alloc_name, db_campaigns)
+                        if not matched_c:
+                            split_ok = False
+                            break
+                        split_proposed.append((matched_c, alloc_pct, alloc_name))
+                    # Reject if two chunks resolve to the same campaign
+                    if split_ok:
+                        seen_ids = set()
+                        for c, _, _ in split_proposed:
+                            if c.id in seen_ids:
+                                split_ok = False
+                                break
+                            seen_ids.add(c.id)
+                    if split_ok and split_proposed:
+                        for c, pct, alloc_name in split_proposed:
+                            new_budget = round(total_budget * pct / 100, 2)
+                            old_budget = c.monthly_budget
+                            if old_budget != new_budget:
+                                c.monthly_budget = new_budget
+                                updated.append({
+                                    "campaign_name": c.campaign_name,
+                                    "sheet_name": row["name"],
+                                    "old_budget": old_budget,
+                                    "new_budget": new_budget,
+                                    "match_type": "cbo_split",
+                                    "split_pct": pct,
+                                })
+                        cbo_split_applied = True
+
+            if not cbo_split_applied:
+                old_budget = campaign.monthly_budget
+                if old_budget != total_budget:
+                    campaign.monthly_budget = total_budget
+                    updated.append({
+                        "campaign_name": campaign.campaign_name,
+                        "sheet_name": row["name"],
+                        "old_budget": old_budget,
+                        "new_budget": total_budget,
+                        "match_type": _match_type_label(match_name, campaign),
+                    })
         else:
             skipped.append({"sheet_name": row["name"], "reason": "No budget value in column B"})
 
