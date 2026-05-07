@@ -432,6 +432,49 @@ def _parse_allocations_from_notes(notes: str):
     return parsed
 
 
+def _strip_account_prefix(sheet_name: str, current_account, all_accounts: list) -> str:
+    """Strip the account-identifier prefix from a sheet row name before campaign matching.
+
+    Sheet rows often follow "AccountPrefix - Campaign Name" format. Without stripping,
+    the prefix token bleeds into the word-overlap score and causes false matches.
+    Example: "Camelback - Meetings" would match "Commit 2026: Camelback Mountain
+    Adventures" on the shared "camelback" token (score 0.5) even though "Meetings"
+    and "Mountain Adventures" are completely different campaigns.
+
+    After stripping: "Meetings" has zero overlap with "Mountain Adventures" → no match.
+    "Lodge" matches only "Lodge - Sales". "Aquatopia" matches only "Aquatopia - Traffic".
+
+    Strips only when:
+      1. Name contains " - " (has a prefix segment)
+      2. Prefix fuzzy-matches the current account (≥ threshold)
+      3. No other account matches the prefix better
+
+    Returns the original name unchanged when stripping is inappropriate.
+    """
+    if not sheet_name or ' - ' not in sheet_name:
+        return sheet_name
+
+    prefix = sheet_name.split(' - ')[0].strip()
+    if not prefix:
+        return sheet_name
+
+    current_score = _word_overlap_score(prefix, current_account.account_name or "")
+    if current_score < _FUZZY_MATCH_THRESHOLD:
+        return sheet_name  # prefix doesn't match current account — leave intact
+
+    for acct in all_accounts:
+        if acct.id == current_account.id:
+            continue
+        if _word_overlap_score(prefix, acct.account_name or "") > current_score:
+            return sheet_name  # another account owns this prefix — leave intact
+
+    # Strip "Prefix - " from the front
+    stripped = sheet_name[len(prefix):].lstrip()
+    if stripped.startswith('-'):
+        stripped = stripped[1:].lstrip()
+    return stripped if stripped else sheet_name
+
+
 def _row_prefix_matches_account(sheet_name: str, current_account, all_accounts: list) -> bool:
     """Account-prefix scoping for sheets that use "AccountPrefix - Campaign Name" naming.
 
@@ -598,7 +641,8 @@ def preview_matches(account_id):
                 "match_type": "account_scope_mismatch",
             })
             continue
-        campaign = _match_campaign(row["name"], db_campaigns)
+        match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
+        campaign = _match_campaign(match_name, db_campaigns)
         matches.append({
             "sheet_name": row["name"],
             "account_scope": scope,
@@ -608,7 +652,7 @@ def preview_matches(account_id):
             "row_index": row["row_index"],
             "matched_campaign_id": campaign.id if campaign else None,
             "matched_campaign_name": campaign.campaign_name if campaign else None,
-            "match_type": _match_type_label(row["name"], campaign),
+            "match_type": _match_type_label(match_name, campaign),
         })
 
     bad_types = {"none", "account_scope_mismatch"}
@@ -677,7 +721,8 @@ def sync_budgets_for_account(account_id):
                 "reason": "Row name prefix matches a different account — row skipped",
             })
             continue
-        campaign = _match_campaign(row["name"], db_campaigns)
+        match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
+        campaign = _match_campaign(match_name, db_campaigns)
         if not campaign:
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
@@ -693,7 +738,7 @@ def sync_budgets_for_account(account_id):
                     "sheet_name": row["name"],
                     "old_budget": old_budget,
                     "new_budget": new_budget,
-                    "match_type": _match_type_label(row["name"], campaign),
+                    "match_type": _match_type_label(match_name, campaign),
                 })
         else:
             skipped.append({"sheet_name": row["name"], "reason": "No budget value in column B"})
@@ -874,7 +919,8 @@ def write_spend_for_account(account_id):
                 "reason": "Row name prefix matches a different account — row skipped",
             })
             continue
-        campaign = _match_campaign(row["name"], db_campaigns)
+        match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
+        campaign = _match_campaign(match_name, db_campaigns)
         if not campaign:
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
@@ -895,7 +941,7 @@ def write_spend_for_account(account_id):
             "mtd_spend": mtd_spend,
             "last_paced": today_str,
             "row_index": r,
-            "match_type": _match_type_label(row["name"], campaign),
+            "match_type": _match_type_label(match_name, campaign),
         })
 
     if cell_updates:
