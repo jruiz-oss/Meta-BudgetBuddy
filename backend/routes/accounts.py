@@ -206,10 +206,17 @@ def _auto_import_campaigns(account):
 @login_required
 def get_accounts():
     user_id = session['user_id']
-    accounts = Account.query.filter_by(user_id=user_id).all()
-    # Use lite=True — the list view doesn't need the per-account pacing roll-up,
-    # which was triggering N+1 lazy loads of every campaign's pacing_data.
-    return jsonify({'accounts': [acc.to_dict(lite=True) for acc in accounts]}), 200
+    # Eager-load campaigns → pacing_data so to_dict() doesn't trigger N+1 lazy loads.
+    # The FK indexes from session-9 make these joins fast even with 20+ accounts.
+    accounts = (
+        Account.query
+        .filter_by(user_id=user_id)
+        .options(
+            selectinload(Account.campaigns).selectinload(Campaign.pacing_data),
+        )
+        .all()
+    )
+    return jsonify({'accounts': [acc.to_dict() for acc in accounts]}), 200
 
 
 @accounts_bp.route('/<int:account_id>', methods=['GET'])

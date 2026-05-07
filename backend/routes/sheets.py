@@ -411,6 +411,48 @@ def _parse_allocations_from_notes(notes: str):
     return parsed
 
 
+def _row_prefix_matches_account(sheet_name: str, current_account, all_accounts: list) -> bool:
+    """Account-prefix scoping for sheets that use "AccountPrefix - Campaign Name" naming.
+
+    Many sheets embed a short account identifier at the start of each row name, e.g.:
+      "Amara - Amara Resort and Spa - Commit 2026: Boosting"  → Amara account only
+      "Commit - 2026: Boosted Posts"                          → Commit Agency only
+      "Camelback - Lodge"                                     → Camelback account only
+
+    This is important when the agency name ("Commit") appears in campaign names
+    across many accounts — without prefix scoping, "Commit - 2026: Boosted Posts"
+    would fuzzy-match Amara's "Commit 2026: Boosting" campaign via word overlap.
+
+    Returns False (skip this row) only when:
+      - The row name contains " - " (has a prefix segment), AND
+      - That prefix is a significantly better fuzzy match for a *different* account
+        than for the current account.
+
+    Returns True in all other cases (no prefix, ambiguous prefix, prefix matches
+    current account).
+    """
+    if not sheet_name or ' - ' not in sheet_name:
+        return True
+
+    prefix = sheet_name.split(' - ')[0].strip()
+    if not prefix:
+        return True
+
+    current_score = _word_overlap_score(prefix, current_account.account_name or "")
+
+    for acct in all_accounts:
+        if acct.id == current_account.id:
+            continue
+        other_score = _word_overlap_score(prefix, acct.account_name or "")
+        # Skip this row if another account is a clearly better match for the prefix.
+        # Require both: other_score exceeds current AND clears the fuzzy threshold,
+        # so a prefix like "Boost" that loosely matches many accounts doesn't over-filter.
+        if other_score > current_score and other_score >= _FUZZY_MATCH_THRESHOLD:
+            return False
+
+    return True
+
+
 def _match_type_label(sheet_name: str, campaign) -> str:
     if campaign is None:
         return "none"
@@ -504,11 +546,25 @@ def preview_matches(account_id):
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     account = Account.query.get(account_id)
+    all_user_accounts = Account.query.filter_by(user_id=account.user_id).all()
 
     matches = []
     for row in sheet_rows:
         scope = row.get("account_scope") or ""
         if not _sheet_row_matches_account(scope, account):
+            matches.append({
+                "sheet_name": row["name"],
+                "account_scope": scope,
+                "monthly_budget": row["monthly_budget"],
+                "mtd_spend": row["mtd_spend"],
+                "last_paced": row["last_paced"],
+                "row_index": row["row_index"],
+                "matched_campaign_id": None,
+                "matched_campaign_name": None,
+                "match_type": "account_scope_mismatch",
+            })
+            continue
+        if not _row_prefix_matches_account(row["name"], account, all_user_accounts):
             matches.append({
                 "sheet_name": row["name"],
                 "account_scope": scope,
@@ -577,6 +633,10 @@ def sync_budgets_for_account(account_id):
 
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
+    # Used by prefix scoping — so rows like "Commit - Campaign" are only processed
+    # for the Commit Agency account, not for Amara or other accounts whose campaigns
+    # happen to contain the word "Commit".
+    all_user_accounts = Account.query.filter_by(user_id=account.user_id).all()
 
     updated = []          # campaign budget changes
     allocations_updated = []  # adset allocation changes
@@ -588,6 +648,12 @@ def sync_budgets_for_account(account_id):
             skipped.append({
                 "sheet_name": row["name"],
                 "reason": "Column D does not match this Budget Buddy account — row skipped",
+            })
+            continue
+        if not _row_prefix_matches_account(row["name"], account, all_user_accounts):
+            skipped.append({
+                "sheet_name": row["name"],
+                "reason": "Row name prefix matches a different account — row skipped",
             })
             continue
         campaign = _match_campaign(row["name"], db_campaigns)
@@ -764,6 +830,7 @@ def write_spend_for_account(account_id):
 
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
+    all_user_accounts = Account.query.filter_by(user_id=account.user_id).all()
 
     # %-m / %-d are Linux/macOS specific. Build portably for Windows local dev too.
     now = datetime.utcnow()
@@ -778,6 +845,12 @@ def write_spend_for_account(account_id):
             skipped.append({
                 "sheet_name": row["name"],
                 "reason": "Column D does not match this Budget Buddy account — row skipped",
+            })
+            continue
+        if not _row_prefix_matches_account(row["name"], account, all_user_accounts):
+            skipped.append({
+                "sheet_name": row["name"],
+                "reason": "Row name prefix matches a different account — row skipped",
             })
             continue
         campaign = _match_campaign(row["name"], db_campaigns)
