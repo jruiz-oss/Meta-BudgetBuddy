@@ -1,4 +1,5 @@
 <svg viewBox="0 0 240 260" xmlns="http://www.w3.org/2000/svg">
+  <rect width="240" height="260" fill="white"/>
   <g fill="none" stroke-linejoin="round" stroke-linecap="round">
     <polygon points="120,20 213,70 213,190 120,240 27,190 27,70"
              stroke="#0B1A4F" stroke-width="13"/>
