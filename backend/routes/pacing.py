@@ -301,7 +301,7 @@ def run_pacing(account_id):
     user = _current_user()
     if not user:
         return jsonify({"error": "Not authenticated"}), 401
-    account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+    account = Account.query.filter_by(id=account_id).first()
     if not account:
         return jsonify({"error": "Account not found"}), 404
 
@@ -677,7 +677,7 @@ def apply_recommendations(account_id):
     user = _current_user()
     if not user:
         return jsonify({"error": "Not authenticated"}), 401
-    account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+    account = Account.query.filter_by(id=account_id).first()
     if not account:
         return jsonify({"error": "Account not found"}), 404
 
@@ -881,7 +881,7 @@ def get_pacing_summary(account_id):
     user = _current_user()
     if not user:
         return jsonify({"error": "Not authenticated"}), 401
-    account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+    account = Account.query.filter_by(id=account_id).first()
     if not account:
         return jsonify({"error": "Account not found"}), 404
 

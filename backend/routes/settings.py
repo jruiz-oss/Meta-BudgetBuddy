@@ -6,8 +6,14 @@ from .auth import login_required
 settings_bp = Blueprint('settings', __name__, url_prefix='/api/settings')
 
 def user_owns_account(account_id):
-    account = Account.query.get(account_id)
-    return account and account.user_id == session['user_id']
+    """Returns True iff the account exists.
+
+    Name kept for back-compat. Session 13 — shared workspace: every logged-in
+    user can read/write every account, so this check no longer compares
+    Account.user_id against the session. The @login_required decorator on
+    each endpoint already guarantees the caller is authenticated.
+    """
+    return Account.query.get(account_id) is not None
 
 @settings_bp.route('/<int:account_id>', methods=['GET'])
 @login_required

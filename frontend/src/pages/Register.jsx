@@ -7,6 +7,9 @@ function Register({ onRegisterSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  // Shared-workspace gate (session 13). The backend validates this against the
+  // INVITE_CODE env var on Railway. Required for new agency teammates to sign up.
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -26,7 +29,11 @@ function Register({ onRegisterSuccess }) {
 
     setLoading(true);
     try {
-      const response = await axios.post('/api/auth/register', { email, password });
+      const response = await axios.post('/api/auth/register', {
+        email,
+        password,
+        invite_code: inviteCode,
+      });
       if (response.status === 201) {
         onRegisterSuccess();
         navigate('/');
@@ -87,6 +94,23 @@ function Register({ onRegisterSuccess }) {
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
             />
+          </div>
+
+          <div className="bb-form-group">
+            <label htmlFor="inviteCode" className="bb-form-label">Invite code</label>
+            <input
+              id="inviteCode"
+              type="text"
+              className="bb-input"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value)}
+              autoComplete="off"
+              spellCheck="false"
+              placeholder="Ask a teammate for the current code"
+            />
+            <div className="bb-form-help">
+              Required for the agency workspace. Get the current code from someone on the team.
+            </div>
           </div>
 
           <button

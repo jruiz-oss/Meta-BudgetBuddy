@@ -199,6 +199,11 @@ FLASK_ENV=production
 CORS_ORIGINS=https://your-frontend.vercel.app
 GOOGLE_CREDENTIALS_JSON=<full contents of service account JSON key>
 
+# Required for the shared-workspace gate (session 13). When set, registration
+# requires this code in the request body (sent by the new "Invite code" field
+# on the Register page). If unset, registration is open — only safe for local dev.
+INVITE_CODE=<pick any string, share with teammates out-of-band>
+
 # Optional — daily digest email (session 8). All five required to send mail.
 SMTP_HOST=smtp.resend.com           # or smtp.sendgrid.net, smtp.gmail.com, etc.
 SMTP_PORT=587                       # 465 = SSL, 587 = STARTTLS
@@ -271,6 +276,21 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 ## Recent Changes Log
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
+
+- [x] **2026-05-08 (session 13 — Opus)** — Shared "agency master dashboard" + invite-code signup gate.
+  - **Why.** Jorge wanted the app to behave as a single agency workspace: when a coworker creates an account, they should immediately see every Meta ad account that anyone on the team has linked, not just their own. Per-user data scoping was leftover from when the app was a personal tool. To stop randoms from registering, signup is now gated by an invite code shared out-of-band with teammates.
+  - **`backend/routes/auth.py`** — added `_expected_invite_code()` (reads `INVITE_CODE` env var). `register()` now requires `invite_code` in the JSON body and returns `403 {"error": "Invalid invite code…"}` on mismatch. If `INVITE_CODE` is unset (e.g. local dev), the gate is disabled and registration works as before. Login is untouched — it's the *signup* that's gated.
+  - **Per-user scoping removed across every route.** All endpoints still require auth (`@login_required`), but they no longer compare `Account.user_id` against the session. `Account.user_id` stays on the model for audit and to drive `Account.effective_meta_token` (the linker's global token is the fallback when no per-account token override is set).
+    - `routes/accounts.py` — `get_accounts` returns every account, sorted by name. `get_account / update_account / delete_account / account_summary / refresh_campaigns / account_diagnostic` only check existence.
+    - `routes/campaigns.py` — every `Account.query.filter_by(id=…, user_id=user.id)` collapsed to `filter_by(id=…)`. `get_all_campaigns` (the Home endpoint) drops the `filter_by(user_id=uid)` and returns every account in one shot.
+    - `routes/pacing.py` — three identical sites in `/run`, `/apply`, `/summary` collapsed.
+    - `routes/settings.py` and `routes/history.py` — `user_owns_account()` helper kept (so call sites don't have to change) but body simplified to `Account.query.get(account_id) is not None`.
+    - `routes/sheets.py` — `_user_owns_account()` similarly simplified. The three `Account.query.filter_by(user_id=account.user_id).all()` calls used for prefix-scope matching now read `Account.query.all()` — correct for the shared model and means a row labeled "Commit - Foo" still gets routed to the Commit account regardless of who linked it.
+  - **`frontend/src/pages/Register.jsx`** — new "Invite code" input below "Confirm Password". Sent in the POST body as `invite_code`. Backend's 403 message ("Invalid invite code. Ask a teammate for the current code.") surfaces directly in the existing error banner.
+  - ⚠️ **Set `INVITE_CODE` on Railway before deploying.** Pick anything you'd be comfortable putting in a 1Password note for the team. After it's set, redeploys take effect immediately — existing logged-in sessions are unaffected.
+  - ⚠️ **No DB migration required.** Pure code change. Existing accounts you already linked will be visible to every teammate after the first login post-deploy.
+  - ⚠️ **Token fallback still keys on the linker.** When User A links an account without setting a per-account token, the account uses User A's `global_meta_token`. If User A is later deleted or rotates their Meta token, the account will need either its own per-account token (Account → settings) or someone else to take over the global token. For an internal tool with a stable token-holder, this is fine — flag worth knowing.
+  - ⚠️ **Behavior change:** the Home page now lists every account. If you had 3 accounts and a teammate had 2, you both now see all 5. Same for /history, /settings, /sheets etc.
 
 - [x] **2026-05-08 (session 12 — Opus)** — Pacing math now mirrors the Google Sheet exactly. Removed every safety guard the sheet doesn't have.
   - **Why.** Jorge's "Social Budget Pacing" sheet computes recommended daily as `(Monthly Budget − MTD Spend) / Days Remaining` (cells D16 / D3) and splits ABO across ad sets by allocation %. The app was diverging in three ways: (1) `_compute_recommendation` skipped the recompute and returned current Meta daily when pace was within ±5% (tolerance band), so on-pace campaigns showed stale numbers; (2) ABO computed each ad set independently rather than splitting a campaign-level total — gave $6.49/$9.79 instead of the sheet's $6.51/$9.77 for Commit; (3) ±25% per-run cap and $5 minimum daily floor existed in the app but nowhere in the sheet. Confirmed with user — they want the app to mirror the sheet exactly, no exceptions.
@@ -378,6 +398,7 @@ Vercel redeploys the frontend automatically on push to `main`.
 
 ## Known Issues / Open TODOs
 
+- [ ] **Set `INVITE_CODE` env var on Railway before pushing session-13 code** — without it, anyone can register. With it, teammates need the code (share via 1Password / Slack DM / out-of-band).
 - [ ] **Run the ABO migration in Neon before deploying session-7 code** — see SQL block above. Once that's done, the new code is safe to push.
 - [ ] **Run the digest migration in Neon before deploying session-8 code** — `ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS daily_digest_enabled BOOLEAN NOT NULL DEFAULT FALSE;`
 - [ ] **Run `npm install` in `frontend/`** to pick up `lucide-react`.

@@ -205,15 +205,14 @@ def _auto_import_campaigns(account):
 @accounts_bp.route('', methods=['GET'])
 @login_required
 def get_accounts():
-    user_id = session['user_id']
-    # Eager-load campaigns → pacing_data so to_dict() doesn't trigger N+1 lazy loads.
-    # The FK indexes from session-9 make these joins fast even with 20+ accounts.
+    # Shared workspace (session 13): every logged-in user sees every account
+    # in the DB. Account.user_id is preserved for audit + token fallback only.
     accounts = (
         Account.query
-        .filter_by(user_id=user_id)
         .options(
             selectinload(Account.campaigns).selectinload(Campaign.pacing_data),
         )
+        .order_by(Account.account_name.asc())
         .all()
     )
     return jsonify({'accounts': [acc.to_dict() for acc in accounts]}), 200
@@ -223,7 +222,7 @@ def get_accounts():
 @login_required
 def get_account(account_id):
     account = Account.query.get(account_id)
-    if not account or account.user_id != session['user_id']:
+    if not account:
         return jsonify({'error': 'Not found'}), 404
     # lite=True skips the pacing_data N+1 walk — callers that need pacing roll-ups
     # should use /api/campaigns/<id> or /api/pacing/<id>/summary instead.
@@ -284,7 +283,7 @@ def create_account():
 @login_required
 def update_account(account_id):
     account = Account.query.get(account_id)
-    if not account or account.user_id != session['user_id']:
+    if not account:
         return jsonify({'error': 'Not found'}), 404
 
     data = request.get_json() or {}
@@ -302,7 +301,7 @@ def update_account(account_id):
 @login_required
 def delete_account(account_id):
     account = Account.query.get(account_id)
-    if not account or account.user_id != session['user_id']:
+    if not account:
         return jsonify({'error': 'Not found'}), 404
 
     db.session.delete(account)
@@ -314,7 +313,7 @@ def delete_account(account_id):
 @login_required
 def account_summary(account_id):
     account = Account.query.get(account_id)
-    if not account or account.user_id != session['user_id']:
+    if not account:
         return jsonify({'error': 'Not found'}), 404
 
     campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
@@ -359,7 +358,7 @@ def account_summary(account_id):
 def refresh_campaigns(account_id):
     """Re-run auto-import for an existing account (syncs new/changed campaigns from Meta)."""
     account = Account.query.get(account_id)
-    if not account or account.user_id != session['user_id']:
+    if not account:
         return jsonify({'error': 'Not found'}), 404
 
     imported, errors = _auto_import_campaigns(account)
@@ -412,7 +411,7 @@ def refresh_campaigns(account_id):
 def account_diagnostic(account_id):
     """Read-only health snapshot of one account. See module-level comment above."""
     account = Account.query.get(account_id)
-    if not account or account.user_id != session['user_id']:
+    if not account:
         return jsonify({'error': 'Not found'}), 404
 
     # Eager-load everything to_dict touches so we don't fan out N+1 inside

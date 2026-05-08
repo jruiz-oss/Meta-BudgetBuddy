@@ -585,8 +585,13 @@ def _match_type_label(sheet_name: str, campaign) -> str:
 
 
 def _user_owns_account(account_id: int) -> bool:
-    account = Account.query.get(account_id)
-    return bool(account and account.user_id == session.get("user_id"))
+    """Returns True iff the account exists.
+
+    Name kept for back-compat. Session 13 — shared workspace: every logged-in
+    user can read/write every account's sheet config and run sync against it.
+    The @login_required decorator on each endpoint guarantees auth.
+    """
+    return Account.query.get(account_id) is not None
 
 
 def _open_month_worksheet(spreadsheet):
@@ -663,7 +668,9 @@ def preview_matches(account_id):
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     account = Account.query.get(account_id)
-    all_user_accounts = Account.query.filter_by(user_id=account.user_id).all()
+    # Session 13 — shared workspace: prefix scoping considers every account
+    # in the DB, not just the originally-linked user's accounts.
+    all_user_accounts = Account.query.all()
 
     matches = []
     for row in sheet_rows:
@@ -754,7 +761,9 @@ def sync_budgets_for_account(account_id):
     # Used by prefix scoping — so rows like "Commit - Campaign" are only processed
     # for the Commit Agency account, not for Amara or other accounts whose campaigns
     # happen to contain the word "Commit".
-    all_user_accounts = Account.query.filter_by(user_id=account.user_id).all()
+    # Session 13 — shared workspace: prefix scoping considers every account
+    # in the DB, not just the originally-linked user's accounts.
+    all_user_accounts = Account.query.all()
 
     updated = []          # campaign budget changes
     allocations_updated = []  # adset allocation changes
@@ -990,7 +999,9 @@ def write_spend_for_account(account_id):
 
     sheet_rows = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
-    all_user_accounts = Account.query.filter_by(user_id=account.user_id).all()
+    # Session 13 — shared workspace: prefix scoping considers every account
+    # in the DB, not just the originally-linked user's accounts.
+    all_user_accounts = Account.query.all()
 
     # %-m / %-d are Linux/macOS specific. Build portably for Windows local dev too.
     now = datetime.utcnow()

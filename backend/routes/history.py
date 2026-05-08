@@ -18,8 +18,13 @@ def _clamp_limit(value, default):
 
 
 def user_owns_account(account_id):
-    account = Account.query.get(account_id)
-    return account and account.user_id == session['user_id']
+    """Returns True iff the account exists.
+
+    Name kept for back-compat. Session 13 — shared workspace: history is
+    visible to every logged-in user. The @login_required decorator on each
+    endpoint already guarantees the caller is authenticated.
+    """
+    return Account.query.get(account_id) is not None
 
 
 @history_bp.route('/<int:account_id>/summary', methods=['GET'])

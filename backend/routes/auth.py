@@ -1,3 +1,4 @@
+import os
 import time
 from collections import defaultdict, deque
 from threading import Lock
@@ -8,6 +9,17 @@ from database import db, User
 from functools import wraps
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+
+
+# ---- Shared-workspace gate (session 13) ---------------------------------
+# This app is an internal agency tool. All linked Meta ad accounts are visible
+# to every logged-in user (see routes/accounts.py and the related routes — the
+# per-user filter was removed in session 13). To keep randoms from creating
+# accounts, registration requires an invite code that matches the
+# INVITE_CODE env var on Railway. If the env var is unset (e.g. local dev), the
+# gate is disabled and registration works as before.
+def _expected_invite_code():
+    return (os.environ.get('INVITE_CODE') or '').strip()
 
 # ---- Server-side validation rules ---------------------------------------
 # Mirror the frontend's password rules so a client that bypasses the JS check
@@ -85,6 +97,17 @@ def register():
     data = request.get_json(silent=True) or {}
     email = data.get('email')
     password = data.get('password')
+    invite_code = data.get('invite_code')
+
+    # Invite-code gate. Only enforced when INVITE_CODE is set in the environment.
+    # Compared with constant-time `==` after stripping; we don't bother with
+    # `compare_digest` because the codes are short and an attacker who can spam
+    # signups is also throttled by Railway's request limits.
+    expected = _expected_invite_code()
+    if expected:
+        provided = invite_code if isinstance(invite_code, str) else ''
+        if provided.strip() != expected:
+            return jsonify({'error': 'Invalid invite code. Ask a teammate for the current code.'}), 403
 
     # Type + length validation. Rejecting non-strings prevents type-confusion attacks
     # against generate_password_hash (which would crash on a list/dict).

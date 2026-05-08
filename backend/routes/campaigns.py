@@ -30,7 +30,14 @@ def _internal_error(err, context):
 
 
 def _current_user():
-    """Fetch the User row for the current session, or None."""
+    """Fetch the User row for the current session, or None.
+
+    Note (session 13 — shared workspace): account access is no longer scoped
+    to the current user. Every endpoint here uses `@login_required` to confirm
+    the caller is logged in, then operates on accounts by id alone. The
+    Account.user_id column is still recorded at create time for audit + to
+    drive token fallback in `Account.effective_meta_token`.
+    """
     uid = session.get('user_id')
     return User.query.get(uid) if uid else None
 
@@ -56,7 +63,7 @@ def sync_campaigns(account_id):
     user = _current_user()
     if not user:
         return jsonify({'error': 'Not authenticated'}), 401
-    account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+    account = Account.query.filter_by(id=account_id).first()
     if not account:
         return jsonify({'error': 'Account not found'}), 404
 
@@ -351,9 +358,12 @@ def sync_campaigns(account_id):
 def get_all_campaigns():
     """
     Return all active campaigns (with latest pacing + adsets) across every
-    account that belongs to the current user — in one round trip with eager
-    loading. This is what the Home page hits; replaces the old N+1 fan-out
-    of `/accounts` + `/campaigns/<id>` + `/pacing/<id>/summary` per account.
+    account in the workspace — in one round trip with eager loading. This is
+    what the Home page hits; replaces the old N+1 fan-out of `/accounts` +
+    `/campaigns/<id>` + `/pacing/<id>/summary` per account.
+
+    Session 13 — shared workspace: this used to be filtered to the current
+    user's accounts. It now returns every account in the DB.
     """
     try:
         uid = session.get('user_id')
@@ -377,7 +387,6 @@ def get_all_campaigns():
 
         accounts = (
             Account.query
-            .filter_by(user_id=uid)
             .options(
                 selectinload(Account.campaigns).selectinload(Campaign.pacing_data),
                 selectinload(Account.campaigns).selectinload(Campaign.adsets).selectinload(AdSet.pacing_data),
@@ -510,7 +519,7 @@ def get_account_pacing_history(account_id):
         user = _current_user()
         if not user:
             return jsonify({'error': 'Not authenticated'}), 401
-        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        account = Account.query.filter_by(id=account_id).first()
         if not account:
             return jsonify({'error': 'Account not found'}), 404
 
@@ -566,7 +575,7 @@ def get_campaigns(account_id):
         user = _current_user()
         if not user:
             return jsonify({'error': 'Not authenticated'}), 401
-        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        account = Account.query.filter_by(id=account_id).first()
 
         if not account:
             return jsonify({'error': 'Account not found'}), 404
@@ -665,7 +674,7 @@ def get_campaign(account_id, campaign_id):
         user = _current_user()
         if not user:
             return jsonify({'error': 'Not authenticated'}), 401
-        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        account = Account.query.filter_by(id=account_id).first()
 
         if not account:
             return jsonify({'error': 'Account not found'}), 404
@@ -706,7 +715,7 @@ def get_pacing_history(account_id, campaign_id):
         user = _current_user()
         if not user:
             return jsonify({'error': 'Not authenticated'}), 401
-        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        account = Account.query.filter_by(id=account_id).first()
         if not account:
             return jsonify({'error': 'Account not found'}), 404
 
@@ -733,7 +742,7 @@ def create_campaign(account_id):
         user = _current_user()
         if not user:
             return jsonify({'error': 'Not authenticated'}), 401
-        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        account = Account.query.filter_by(id=account_id).first()
 
         if not account:
             return jsonify({'error': 'Account not found'}), 404
@@ -777,7 +786,7 @@ def update_campaign(account_id, campaign_id):
         user = _current_user()
         if not user:
             return jsonify({'error': 'Not authenticated'}), 401
-        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        account = Account.query.filter_by(id=account_id).first()
 
         if not account:
             return jsonify({'error': 'Account not found'}), 404
@@ -822,7 +831,7 @@ def delete_campaign(account_id, campaign_id):
         user = _current_user()
         if not user:
             return jsonify({'error': 'Not authenticated'}), 401
-        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        account = Account.query.filter_by(id=account_id).first()
 
         if not account:
             return jsonify({'error': 'Account not found'}), 404
@@ -862,7 +871,7 @@ def update_adset_allocations(account_id, campaign_id):
         if not user:
             return jsonify({'error': 'Not authenticated'}), 401
 
-        account = Account.query.filter_by(id=account_id, user_id=user.id).first()
+        account = Account.query.filter_by(id=account_id).first()
         if not account:
             return jsonify({'error': 'Account not found'}), 404
 
