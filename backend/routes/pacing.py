@@ -38,7 +38,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, current_app, jsonify, request, session
 from sqlalchemy.orm import selectinload
 
 from database import (
@@ -174,49 +174,61 @@ def _compute_recommendation(
 # Parallel Meta-fetch helpers
 # ----------------------------------------------------------------------
 
-def _fetch_cbo_data(meta, campaign, month_start, spend_until):
+def _fetch_cbo_data(flask_app, meta, campaign, month_start, spend_until):
     """
     Fetch MTD spend + live daily budget for a CBO campaign.
     Both Meta calls run concurrently inside a small inner thread pool.
+
+    Worker threads from the outer ThreadPoolExecutor in run_pacing don't
+    inherit the Flask request context, so we push an app context here.
+    Without it, any SQLAlchemy attribute access on `campaign` (lazy-loaded
+    relationships, etc.) would raise "Working outside of application context".
 
     Returns:
         {'spend': float, 'live_daily': float|None}   on success
         {'error': str}                                if the spend call fails
                                                       (live_daily failure is non-fatal)
     """
-    with ThreadPoolExecutor(max_workers=2) as inner:
-        spend_f = inner.submit(
-            meta.get_campaign_spend,
-            campaign.meta_campaign_id, month_start, spend_until,
-        )
-        camp_f = inner.submit(
-            meta.get_campaign,
-            campaign.meta_campaign_id,
-        )
-        try:
-            spend = spend_f.result()
-        except Exception as e:
-            camp_f.cancel()
-            return {'error': str(e)}
+    with flask_app.app_context():
+        with ThreadPoolExecutor(max_workers=2) as inner:
+            spend_f = inner.submit(
+                meta.get_campaign_spend,
+                campaign.meta_campaign_id, month_start, spend_until,
+            )
+            camp_f = inner.submit(
+                meta.get_campaign,
+                campaign.meta_campaign_id,
+            )
+            try:
+                spend = spend_f.result()
+            except Exception as e:
+                camp_f.cancel()
+                return {'error': str(e)}
 
-        live_daily = None
-        try:
-            camp_meta = camp_f.result()
-            raw = camp_meta.get('daily_budget')
-            if raw is not None:
-                v = float(raw) / 100.0
-                if v > 0:
-                    live_daily = v
-        except Exception:
-            pass  # non-fatal — _compute_recommendation falls back to daily_target
+            live_daily = None
+            try:
+                camp_meta = camp_f.result()
+                raw = camp_meta.get('daily_budget')
+                if raw is not None:
+                    v = float(raw) / 100.0
+                    if v > 0:
+                        live_daily = v
+            except Exception:
+                pass  # non-fatal — _compute_recommendation falls back to daily_target
 
-    return {'spend': spend, 'live_daily': live_daily}
+        return {'spend': spend, 'live_daily': live_daily}
 
 
-def _fetch_abo_data(meta, campaign, month_start, spend_until):
+def _fetch_abo_data(flask_app, meta, campaign, month_start, spend_until):
     """
     Fetch live adset budgets + per-adset MTD spend for an ABO campaign.
     Per-adset spend calls run concurrently.
+
+    Worker threads from the outer ThreadPoolExecutor in run_pacing don't
+    inherit the Flask request context, so we push an app context here. The
+    `campaign.adsets` access below is a SQLAlchemy lazy-load that requires
+    a session bound to a Flask app — without the context push it raises
+    "Working outside of application context".
 
     Returns:
         {'live_daily_map': {meta_adset_id: float},
@@ -224,48 +236,49 @@ def _fetch_abo_data(meta, campaign, month_start, spend_until):
          'active_adsets':  [AdSet, ...]}
     or {'error': str} if the campaign has no active ad sets.
     """
-    active_adsets = [a for a in campaign.adsets if a.is_active]
-    if not active_adsets:
-        return {'error': 'ABO campaign has no active ad sets tracked.'}
+    with flask_app.app_context():
+        active_adsets = [a for a in campaign.adsets if a.is_active]
+        if not active_adsets:
+            return {'error': 'ABO campaign has no active ad sets tracked.'}
 
-    # Live adset budgets (non-fatal).
-    live_daily_map = {}
-    try:
-        live_adsets = meta.list_adsets_for_campaign(campaign.meta_campaign_id, only_active=False)
-        for la in live_adsets:
-            raw = la.get('daily_budget')
-            if raw is not None:
+        # Live adset budgets (non-fatal).
+        live_daily_map = {}
+        try:
+            live_adsets = meta.list_adsets_for_campaign(campaign.meta_campaign_id, only_active=False)
+            for la in live_adsets:
+                raw = la.get('daily_budget')
+                if raw is not None:
+                    try:
+                        live_daily_map[la['id']] = float(raw) / 100.0
+                    except (TypeError, ValueError):
+                        pass
+        except MetaAPIError as e:
+            logger.warning(
+                "Could not fetch live adset budgets for campaign %s: %s", campaign.id, e,
+            )
+
+        # Per-adset spend — parallelised, tracked individually.
+        adset_spends = {}
+        workers = min(len(active_adsets), 8)
+        with ThreadPoolExecutor(max_workers=workers) as inner:
+            fut_map = {
+                inner.submit(
+                    meta.get_adset_spend,
+                    adset.meta_adset_id, month_start, spend_until,
+                ): adset
+                for adset in active_adsets
+            }
+            for fut, adset in fut_map.items():
                 try:
-                    live_daily_map[la['id']] = float(raw) / 100.0
-                except (TypeError, ValueError):
-                    pass
-    except MetaAPIError as e:
-        logger.warning(
-            "Could not fetch live adset budgets for campaign %s: %s", campaign.id, e,
-        )
+                    adset_spends[adset.id] = fut.result()
+                except Exception as e:
+                    adset_spends[adset.id] = {'error': str(e)}
 
-    # Per-adset spend — parallelised, tracked individually.
-    adset_spends = {}
-    workers = min(len(active_adsets), 8)
-    with ThreadPoolExecutor(max_workers=workers) as inner:
-        fut_map = {
-            inner.submit(
-                meta.get_adset_spend,
-                adset.meta_adset_id, month_start, spend_until,
-            ): adset
-            for adset in active_adsets
+        return {
+            'live_daily_map': live_daily_map,
+            'adset_spends': adset_spends,
+            'active_adsets': active_adsets,
         }
-        for fut, adset in fut_map.items():
-            try:
-                adset_spends[adset.id] = fut.result()
-            except Exception as e:
-                adset_spends[adset.id] = {'error': str(e)}
-
-    return {
-        'live_daily_map': live_daily_map,
-        'adset_spends': adset_spends,
-        'active_adsets': active_adsets,
-    }
 
 
 # ----------------------------------------------------------------------
@@ -334,7 +347,14 @@ def run_pacing(account_id):
     # the snapshot date into the current month.
     snapshot_date = max(month_start, yesterday)
 
-    campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
+    # Eager-load adsets so worker threads don't trigger lazy-loads when accessing
+    # campaign.adsets — that's a Flask app context error waiting to happen.
+    campaigns = (
+        Campaign.query
+        .filter_by(account_id=account_id, is_active=True)
+        .options(selectinload(Campaign.adsets))
+        .all()
+    )
     included = [c for c in campaigns if _campaign_should_run_today(c, today)]
 
     # Optional: scope the run to a single campaign (used by the Campaign Detail page).
@@ -359,13 +379,17 @@ def run_pacing(account_id):
 
     if campaigns_with_meta_id:
         outer_workers = min(len(campaigns_with_meta_id), 10)
+        # Hand the actual Flask app object to each worker so it can push its own
+        # app context. current_app is a request-bound proxy and won't follow the
+        # work onto a thread.
+        flask_app = current_app._get_current_object()
         with ThreadPoolExecutor(max_workers=outer_workers) as pool:
             fut_map = {}
             for campaign in campaigns_with_meta_id:
                 if campaign.budget_mode == 'ABO':
-                    f = pool.submit(_fetch_abo_data, meta, campaign, month_start, spend_until)
+                    f = pool.submit(_fetch_abo_data, flask_app, meta, campaign, month_start, spend_until)
                 else:
-                    f = pool.submit(_fetch_cbo_data, meta, campaign, month_start, spend_until)
+                    f = pool.submit(_fetch_cbo_data, flask_app, meta, campaign, month_start, spend_until)
                 fut_map[f] = campaign
 
             for fut, campaign in fut_map.items():
