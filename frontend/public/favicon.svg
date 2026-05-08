@@ -1,41 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-
-  <!-- Hexagon fill — brand dark teal -->
-  <polygon
-    points="32,3 58,18 58,46 32,61 6,46 6,18"
-    fill="#111111"
-    stroke="#111111"
-    stroke-width="2"
-    stroke-linejoin="round"
-  />
-
-  <!-- Speedometer arc — white, center (32,27), radius 13 -->
-  <!-- from 125° (lower-left) to 297° (upper-right), CCW large arc -->
-  <!-- start: (32+13·cos125°, 27+13·sin125°) = (24.5,37.6) -->
-  <!-- end:   (32+13·cos297°, 27+13·sin297°) = (37.9,15.2) -->
-  <path
-    d="M 24.5 37.6 A 13 13 0 1 0 37.9 15.2"
-    fill="none"
-    stroke="#1877F2"
-    stroke-width="3.5"
-    stroke-linecap="round"
-  />
-
-  <!-- Tick 1 -->
-  <g transform="translate(43.5,16.5) rotate(315)">
-    <rect x="-1.5" y="-4" width="3" height="8" rx="1.5" fill="white"/>
+<svg viewBox="0 0 240 260" xmlns="http://www.w3.org/2000/svg">
+  <g fill="none" stroke-linejoin="round" stroke-linecap="round">
+    <polygon points="120,20 213,70 213,190 120,240 27,190 27,70"
+             stroke="#0B1A4F" stroke-width="13"/>
+    <path d="M 55 102 A 62 62 0 0 1 130 54"
+          stroke="#1E5BFF" stroke-width="11"/>
+    <line x1="148" y1="60" x2="161" y2="48" stroke="#0B1A4F" stroke-width="9"/>
+    <line x1="166" y1="71" x2="180" y2="60" stroke="#0B1A4F" stroke-width="9"/>
+    <line x1="182" y1="84" x2="195" y2="74" stroke="#0B1A4F" stroke-width="9"/>
   </g>
-  <!-- Tick 2 -->
-  <g transform="translate(47,22) rotate(338)">
-    <rect x="-1.5" y="-3.5" width="3" height="7" rx="1.5" fill="white"/>
-  </g>
-
-  <!-- "BB" text at bottom -->
-  <text x="32" y="55"
-    font-family="'Arial Black',sans-serif"
-    font-size="13" font-weight="900"
-    text-anchor="middle">
-    <tspan fill="white">B</tspan><tspan fill="#1877F2">B</tspan>
-  </text>
-
+  <text x="120" y="194" text-anchor="middle" font-weight="800" font-size="146"
+        fill="#0B1A4F"
+        style="font-family:'Plus Jakarta Sans',system-ui,sans-serif;letter-spacing:-2px;">B</text>
 </svg>

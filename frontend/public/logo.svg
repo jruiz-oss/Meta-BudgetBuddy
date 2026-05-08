@@ -1,48 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 565">
-
-  <!-- Hexagon border — pointy-top, center (260,278), circumradius 228 -->
-  <polygon
-    points="260,50 457,164 457,392 260,506 63,392 63,164"
-    fill="white"
-    stroke="#111111"
-    stroke-width="22"
-    stroke-linejoin="round"
-  />
-
-  <!-- Speedometer arc — gauge center (260,208), radius 100          -->
-  <!-- from 125° (lower-left) to 297° (upper-right), CCW large arc  -->
-  <path
-    d="M 202.6 289.9 A 100 100 0 1 0 305.4 117.1"
-    fill="none"
-    stroke="#1877F2"
-    stroke-width="12"
-    stroke-linecap="round"
-  />
-
-  <!-- Tick 1 — 315°, r=116 -->
-  <g transform="translate(342,126) rotate(315)">
-    <rect x="-5" y="-12" width="10" height="24" rx="5" fill="#1a2060"/>
+<svg viewBox="0 0 240 260" xmlns="http://www.w3.org/2000/svg">
+  <g fill="none" stroke-linejoin="round" stroke-linecap="round">
+    <polygon points="120,20 213,70 213,190 120,240 27,190 27,70"
+             stroke="#0B1A4F" stroke-width="13"/>
+    <path d="M 55 102 A 62 62 0 0 1 130 54"
+          stroke="#1E5BFF" stroke-width="11"/>
+    <line x1="148" y1="60" x2="161" y2="48" stroke="#0B1A4F" stroke-width="9"/>
+    <line x1="166" y1="71" x2="180" y2="60" stroke="#0B1A4F" stroke-width="9"/>
+    <line x1="182" y1="84" x2="195" y2="74" stroke="#0B1A4F" stroke-width="9"/>
   </g>
-
-  <!-- Tick 2 — 338°, r=120 -->
-  <g transform="translate(371,163) rotate(338)">
-    <rect x="-4.5" y="-11" width="9" height="22" rx="4.5" fill="#1a2060"/>
-  </g>
-
-  <!-- Logotype: "Budget" (black) + "Buddy" (blue), centered -->
-  <text x="260" y="402"
-    font-family="'Geist','Arial Black','Helvetica Neue',sans-serif"
-    font-size="88" font-weight="800"
-    text-anchor="middle" letter-spacing="-1">
-    <tspan fill="#111111">Budget</tspan><tspan fill="#1877F2">Buddy</tspan>
-  </text>
-
-  <!-- Subtitle: "for Meta " (grey) + "∞" (Meta blue) -->
-  <text x="260" y="463"
-    font-family="'Geist',Arial,Helvetica,sans-serif"
-    font-size="40" font-weight="400"
-    text-anchor="middle" letter-spacing="0.5">
-    <tspan fill="#444444">for Meta </tspan><tspan fill="#1877F2">&#x221E;</tspan>
-  </text>
-
+  <text x="120" y="194" text-anchor="middle" font-weight="800" font-size="146"
+        fill="#0B1A4F"
+        style="font-family:'Plus Jakarta Sans',system-ui,sans-serif;letter-spacing:-2px;">B</text>
 </svg>

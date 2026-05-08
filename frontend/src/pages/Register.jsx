@@ -49,7 +49,7 @@ function Register({ onRegisterSuccess }) {
     <div className="bb-auth-shell">
       <div className="bb-auth-card">
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
-          <img src="/logo.svg" alt="BudgetBuddy" style={{ width: 200, height: 'auto' }} />
+          <img src="/logo.svg" alt="BudgetBuddy" style={{ width: 80, height: 'auto' }} />
         </div>
         <div className="bb-auth-subtitle">Create your account</div>
 
