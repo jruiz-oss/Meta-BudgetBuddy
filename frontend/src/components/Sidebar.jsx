@@ -44,8 +44,8 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
   return (
     <aside className="bb-sidebar">
       {/* Brand */}
-      <NavLink to="/" className="bb-brand" style={{ textDecoration: 'none' }}>
-        <img src="/logo-full.svg" alt="BudgetBuddy" style={{ width: 150, height: 'auto' }} />
+      <NavLink to="/" className="bb-brand" style={{ textDecoration: 'none', padding: '8px 10px' }}>
+        <img src="/logo-full.svg" alt="BudgetBuddy" style={{ width: 105, height: 'auto' }} />
       </NavLink>
 
       {/* Accounts list — scrollable, takes available space */}
