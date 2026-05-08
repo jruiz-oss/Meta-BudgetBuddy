@@ -1012,3 +1012,72 @@ button.bb-row-weight:focus-visible {
 
 /* num cell alignment */
 td.num, th.num { text-align: right; }
+
+/* ── toast panel ── */
+.bb-toast-panel {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  width: 320px;
+  background: var(--bb-surface);
+  border: 1px solid var(--bb-line);
+  border-radius: var(--bb-radius);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  overflow: hidden;
+  animation: bb-toast-in 0.18s ease;
+}
+.bb-toast-panel.is-leaving {
+  animation: bb-toast-out 0.22s ease forwards;
+}
+@keyframes bb-toast-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+@keyframes bb-toast-out {
+  from { opacity: 1; transform: translateY(0)   scale(1);    }
+  to   { opacity: 0; transform: translateY(-8px) scale(0.97); }
+}
+.bb-toast-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--bb-line);
+  background: var(--bb-surface-2);
+}
+.bb-toast-panel-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--bb-mute);
+}
+.bb-toast-panel-close-all {
+  background: none; border: none; cursor: pointer;
+  color: var(--bb-mute); padding: 2px; line-height: 1;
+  display: grid; place-items: center;
+}
+.bb-toast-panel-close-all:hover { color: var(--bb-fg); }
+.bb-toast-panel-body { padding: 4px 0; }
+.bb-toast-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px;
+}
+.bb-toast-row--divider {
+  border-bottom: 1px solid var(--bb-line);
+}
+.bb-toast-row-icon {
+  flex-shrink: 0; margin-top: 1px;
+  display: grid; place-items: center;
+}
+.bb-toast-row-body { flex: 1; min-width: 0; }
+.bb-toast-row-title {
+  font-size: 12px; font-weight: 600; color: var(--bb-fg); margin-bottom: 2px;
+}
+.bb-toast-row-msg {
+  font-size: 12px; color: var(--bb-fg-2); line-height: 1.45;
+  word-break: break-word;
+}
+.bb-toast-row-dismiss {
+  background: none; border: none; cursor: pointer; flex-shrink: 0;
+  color: var(--bb-mute); padding: 2px; line-height: 1;
+  display: grid; place-items: center; margin-top: 1px;
+}
+.bb-toast-row-dismiss:hover { color: var(--bb-fg); }
