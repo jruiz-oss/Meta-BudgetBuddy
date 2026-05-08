@@ -7,7 +7,7 @@ import logging
 
 from flask import Blueprint, request, jsonify, session
 from sqlalchemy import func
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, with_loader_criteria
 from database import db, Account, AdSet, Campaign, PacingData, PacingRun, User
 from meta_client import MetaAPIError, MetaClient
 from routes.auth import login_required
@@ -363,6 +363,18 @@ def get_all_campaigns():
         # Eager-load EVERYTHING we'll touch in to_dict() to avoid lazy-loaded N+1
         # queries inside the loops below. selectinload issues one query per
         # relationship instead of one per parent row.
+        #
+        # with_loader_criteria limits ALL PacingData loads in this query to the
+        # last 45 days. Without this filter, selectinload pulled every historical
+        # row for every campaign (potentially 365 days × N campaigns), causing the
+        # Home page to load slowly with large accounts. 45 days covers:
+        #   • All current-month rows (for is_zero_spend)
+        #   • The most recent prior-month row (for the "month hasn't paced yet" fallback)
+        #   • The most recent rows needed by to_dict() for CBO/ABO roll-ups
+        today = datetime.utcnow().date()
+        month_start = today.replace(day=1)
+        pacing_cutoff = today - timedelta(days=45)
+
         accounts = (
             Account.query
             .filter_by(user_id=uid)
@@ -370,12 +382,11 @@ def get_all_campaigns():
                 selectinload(Account.campaigns).selectinload(Campaign.pacing_data),
                 selectinload(Account.campaigns).selectinload(Campaign.adsets).selectinload(AdSet.pacing_data),
                 selectinload(Account.pacing_runs),
+                with_loader_criteria(PacingData, PacingData.date >= pacing_cutoff),
             )
             .all()
         )
         result = []
-        today = datetime.utcnow().date()
-        month_start = today.replace(day=1)
 
         for account in accounts:
             # Most recent pacing run for this account (already loaded above).
