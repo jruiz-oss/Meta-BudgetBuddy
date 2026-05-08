@@ -476,6 +476,23 @@ code { font-family: var(--bb-font-mono, ui-monospace, monospace); }
   border: 1px solid var(--bb-line);
   border-radius: 3px;
 }
+/* Editable allocation badge — appears on ABO ad set rows on Home */
+button.bb-row-weight {
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+button.bb-row-weight:hover {
+  background: var(--bb-accent-soft);
+  border-color: var(--bb-accent);
+  color: var(--bb-accent);
+}
+button.bb-row-weight:focus-visible {
+  outline: none;
+  border-color: var(--bb-accent);
+  box-shadow: 0 0 0 2px var(--bb-accent-soft);
+}
 
 /* mode pill */
 .bb-mode {

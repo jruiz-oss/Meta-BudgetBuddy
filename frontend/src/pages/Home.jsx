@@ -128,7 +128,7 @@ function ChangeBadge({ pct }) {
 
 // ── Account section with collapse ────────────────────────────
 function AccountSection({ acct, applying, skipped, results, search,
-  onApplyCbo, onApplyAdset, onSkip, onUnskip, onApplyAll }) {
+  onApplyCbo, onApplyAdset, onSkip, onUnskip, onApplyAll, onEditAlloc }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const q = search.trim().toLowerCase();
@@ -294,7 +294,14 @@ function AccountSection({ acct, applying, skipped, results, search,
                           <div className="bb-row-name">
                             <span className="bb-arrow"><IArrowSub /></span>
                             {adset.adset_name}
-                            <span className="bb-row-weight">{(adset.allocation_pct || 0).toFixed(0)}%</span>
+                            <button
+                              type="button"
+                              className="bb-row-weight"
+                              title="Click to edit allocation"
+                              onClick={(e) => { e.stopPropagation(); onEditAlloc(acct.id, campaign, adset.id); }}
+                            >
+                              {(adset.allocation_pct || 0).toFixed(0)}%
+                            </button>
                           </div>
                         </td>
                         <td><span className="bb-mode bb-mode-adset">ad set</span></td>
@@ -396,6 +403,137 @@ function ActionCell({ rowKey, res, isApplying, isSkipped, needsAction, onApply, 
   );
 }
 
+// ── Allocation editor (inline ABO % editing from Home) ─────────
+function AllocationEditorModal({ accountId, campaign, focusAdsetId, onClose, onSaved, toast }) {
+  const adsets = useMemo(
+    () => (campaign.adsets || []).filter(a => a.is_active !== false),
+    [campaign]
+  );
+  const [values, setValues] = useState(() => {
+    const o = {};
+    adsets.forEach(a => { o[a.id] = (a.allocation_pct || 0).toFixed(2).replace(/\.?0+$/, ''); });
+    return o;
+  });
+  const [saving, setSaving] = useState(false);
+
+  const total = Object.values(values).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+  const validTotal = Math.abs(total - 100) <= 1.5;
+  const anyEmpty = Object.values(values).some(v => v === '' || isNaN(parseFloat(v)));
+  const monthly = campaign.monthly_budget || 0;
+
+  const splitEvenly = () => {
+    const n = adsets.length;
+    if (n === 0) return;
+    const even = +(100 / n).toFixed(2);
+    const remainder = +(100 - even * n).toFixed(2);
+    const o = {};
+    adsets.forEach((a, i) => {
+      const v = i === 0 ? +(even + remainder).toFixed(2) : even;
+      o[a.id] = String(v);
+    });
+    setValues(o);
+  };
+
+  const handleSave = async () => {
+    if (!validTotal || anyEmpty || saving) return;
+    setSaving(true);
+    try {
+      await axios.put(`/api/campaigns/${accountId}/${campaign.id}/adsets`, {
+        adsets: adsets.map(a => ({ id: a.id, allocation_pct: parseFloat(values[a.id]) })),
+      });
+      toast.success('Allocations updated', { title: campaign.campaign_name });
+      onSaved();
+      onClose();
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message || 'Save failed';
+      toast.error(msg, { title: 'Save failed' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bb-modal-backdrop" onClick={onClose}>
+      <div className="bb-modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+        <div className="bb-modal-head">
+          <div className="bb-modal-title">Edit allocations · {campaign.campaign_name}</div>
+          <button className="bb-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="bb-modal-body">
+          <div style={{ fontSize: 'var(--bb-text-sm)', color: 'var(--bb-mute)', marginBottom: 12 }}>
+            These percentages split this campaign's monthly budget of{' '}
+            <strong style={{ color: 'var(--bb-fg)' }}>{fmtMo(monthly)}</strong> across its ad sets. Must sum to 100% (±1.5%).
+          </div>
+          <table className="bb-table">
+            <thead>
+              <tr>
+                <th>Ad set</th>
+                <th className="num" style={{ width: 130 }}>Allocation</th>
+                <th className="num">Monthly</th>
+              </tr>
+            </thead>
+            <tbody>
+              {adsets.map(a => {
+                const pct = parseFloat(values[a.id]);
+                const mo = monthly * ((isNaN(pct) ? 0 : pct) / 100);
+                const isFocus = a.id === focusAdsetId;
+                return (
+                  <tr key={a.id} style={isFocus ? { background: 'var(--bb-accent-soft)' } : null}>
+                    <td>{a.adset_name}</td>
+                    <td className="num">
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <input
+                          autoFocus={isFocus}
+                          className="bb-input"
+                          style={{ width: 80, textAlign: 'right', padding: '5px 8px' }}
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="100"
+                          value={values[a.id] ?? ''}
+                          onChange={e => setValues(p => ({ ...p, [a.id]: e.target.value }))}
+                          onFocus={e => e.target.select()}
+                        />
+                        <span style={{ color: 'var(--bb-mute)' }}>%</span>
+                      </div>
+                    </td>
+                    <td className="num">{fmtMo(mo)}</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ borderTop: '2px solid var(--bb-line)' }}>
+                <td style={{ fontWeight: 600, color: 'var(--bb-mute)' }}>Total</td>
+                <td className="num" style={{ fontWeight: 600, color: validTotal ? 'var(--bb-ok)' : 'var(--bb-warn)' }}>
+                  {total.toFixed(2)}%
+                </td>
+                <td className="num" style={{ color: 'var(--bb-mute)' }}>
+                  {fmtMo(monthly * total / 100)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          {!validTotal && !anyEmpty && (
+            <div className="bb-alert bb-alert-warn" style={{ marginTop: 12 }}>
+              Allocations must sum to 100% (±1.5%). Current total: <strong>{total.toFixed(2)}%</strong>.
+            </div>
+          )}
+        </div>
+        <div className="bb-modal-foot">
+          <button className="bb-btn bb-btn-ghost" type="button" onClick={splitEvenly} disabled={saving}>
+            Split evenly
+          </button>
+          <span className="bb-spacer" />
+          <button className="bb-btn" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="bb-apply" onClick={handleSave} disabled={!validTotal || anyEmpty || saving}>
+            {saving ? <Loader2 size={11} className="bb-spin" /> : <ICheck />}
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────
 function Home({ user, onLogout }) {
   const toast = useToast();
@@ -407,6 +545,7 @@ function Home({ user, onLogout }) {
   const [skipped,  setSkipped]  = useState({});
   const [results,  setResults]  = useState({});
   const [pendingConfirm, setPendingConfirm] = useState(null);
+  const [editingAlloc, setEditingAlloc] = useState(null); // { accountId, campaign, focusAdsetId }
   const [search, setSearch] = useState('');
   const [runningAll, setRunningAll]   = useState(false);
   const [runProgress, setRunProgress] = useState({ done: 0, total: 0 });
@@ -745,10 +884,24 @@ function Home({ user, onLogout }) {
               onSkip={rk => setSkipped(p => ({ ...p, [rk]: true }))}
               onUnskip={rk => setSkipped(p => ({ ...p, [rk]: false }))}
               onApplyAll={handleApplyAll}
+              onEditAlloc={(accountId, campaign, focusAdsetId) =>
+                setEditingAlloc({ accountId, campaign, focusAdsetId })}
             />
           ))
         )}
       </main>
+
+      {/* Allocation editor modal (inline ABO % edit from Home) */}
+      {editingAlloc && (
+        <AllocationEditorModal
+          accountId={editingAlloc.accountId}
+          campaign={editingAlloc.campaign}
+          focusAdsetId={editingAlloc.focusAdsetId}
+          onClose={() => setEditingAlloc(null)}
+          onSaved={() => { invalidateCache('home-data'); fetchAll(true); }}
+          toast={toast}
+        />
+      )}
 
       {/* Apply confirmation modal */}
       {pendingConfirm && (() => {
