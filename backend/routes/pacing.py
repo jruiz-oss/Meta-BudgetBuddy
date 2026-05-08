@@ -9,16 +9,29 @@ apply_recommendations pushes the recommended daily budgets back to Meta:
   - CBO adjustments hit the campaign's daily_budget (with adset-split fallback).
   - ABO adjustments hit each ad set's daily_budget directly.
 
-Math:
-  daily_target  = monthly_budget / days_in_month
-  expected_mtd  = daily_target * days_elapsed
-  pace_ratio    = actual_spend / expected_mtd
-  ideal_daily   = max(0, monthly_budget - actual_spend) / days_remaining
-                  (i.e. "what daily run-rate hits the monthly target if I keep it for the rest of the month")
+Math (matches the "Social Budget Pacing" Google Sheet exactly):
+  daily_target  = monthly_budget / days_in_month        (informational only)
+  expected_mtd  = daily_target * days_elapsed           (informational only)
+  pace_ratio    = actual_spend / expected_mtd           (informational only — shown in UI)
 
-  - If |pace - 1.0| * 100 <= settings.pace_tolerance_percent → ON_PACE, no change
-  - Otherwise, change is capped at ± settings.max_daily_change_percent of daily_target
-  - Final value is floored at settings.min_daily_budget
+  recommended_daily = max(0, monthly_budget - actual_spend) / days_remaining
+                      (sheet's =(B-C)/D3 formula)
+
+  ABO: the campaign-level recommended_daily is computed against TOTAL ad-set
+       spend, then split across ad sets by allocation_pct (sheet's =D16*0.4 etc.).
+       Per-ad-set pace ratios are still shown for diagnostic purposes, but the
+       recommendation comes from the campaign-level number split by allocation.
+
+  Status:
+    - ON_PACE  when |recommended − current_daily| < $0.01
+    - INCREASE when recommended > current_daily
+    - DECREASE when recommended < current_daily
+
+  No tolerance band, no max-change cap, no min-daily floor — the sheet doesn't
+  have any of these and the user wants the app to mirror it exactly. The
+  pace_tolerance_percent, max_daily_change_percent, and min_daily_budget fields
+  on AccountSettings are retained for backwards compatibility but no longer
+  affect the recommendation.
 """
 
 import logging
@@ -102,12 +115,27 @@ def _compute_recommendation(
     actual_current_daily=None,
 ):
     """
-    Core pacing math. Returns:
+    Core pacing math, mirroring the Google Sheet exactly.
+
+    Sheet formula (cell D in any Meta row):
+        recommended_daily = (Monthly Budget − MTD Spend) / Days Remaining
+    where Days Remaining = EOMONTH(yesterday) − yesterday, i.e. the count of
+    days from today through month-end inclusive.
+
+    Returns:
       (daily_target, expected_mtd, pace_ratio, recommended_daily, change_pct, action)
 
-    actual_current_daily: the real daily budget currently set in Meta (pass for ABO ad sets).
-      When provided it is used as the reference for the ±cap and for change_pct so the
-      output tells the user "your Meta budget changes by X%". Falls back to daily_target.
+    daily_target / expected_mtd / pace_ratio are kept for the UI's diagnostic
+    columns; they don't influence the recommendation any more.
+
+    actual_current_daily: the real daily budget currently set in Meta. Used only
+      as the reference for change_pct and for the INCREASE/DECREASE/ON_PACE
+      label. Falls back to daily_target when not supplied.
+
+    Note: settings is accepted for signature compatibility but its
+    pace_tolerance_percent, max_daily_change_percent, and min_daily_budget
+    fields are intentionally ignored — the sheet does not honor them and the
+    app is required to match the sheet exactly.
     """
     days_in_month = max(1, days_in_month)
     days_elapsed = max(1, min(days_in_month, days_elapsed))
@@ -117,47 +145,27 @@ def _compute_recommendation(
     expected_mtd = daily_target * days_elapsed
     pace_ratio = (actual_spend / expected_mtd) if expected_mtd > 0 else 1.0
 
-    tolerance = float(getattr(settings, 'pace_tolerance_percent', 5.0) or 5.0)
-    max_change = float(getattr(settings, 'max_daily_change_percent', 25.0) or 25.0)
-    min_daily  = float(getattr(settings, 'min_daily_budget', 5.0) or 5.0)
+    # Sheet formula: =(B - C) / D3
+    # No tolerance band, no cap, no floor.
+    remaining_budget = max(0.0, monthly_budget - actual_spend)
+    recommended = remaining_budget / days_remaining if days_remaining > 0 else daily_target
 
-    # Use the actual Meta daily as the reference for cap / change_pct when provided.
-    # This ensures change_pct reflects what will actually change in Meta, not a comparison
-    # against an internal allocation target the user never set directly.
+    # Reference daily for change_pct and the action label.
     ref_daily = (actual_current_daily
                  if (actual_current_daily is not None and actual_current_daily > 0)
                  else daily_target)
 
-    # Inside tolerance band — no change.
-    pct_off_pace = abs(pace_ratio - 1.0) * 100.0
-    if pct_off_pace <= tolerance:
-        return daily_target, expected_mtd, pace_ratio, ref_daily, 0.0, 'ON_PACE'
-
-    # Outside tolerance: ideal run-rate to hit monthly_budget by month end.
-    remaining_budget = max(0.0, monthly_budget - actual_spend)
-    ideal_daily = remaining_budget / days_remaining if days_remaining > 0 else daily_target
-
-    # Cap the swing relative to ref_daily so one run can't move budgets wildly.
-    if ref_daily > 0:
-        delta_pct = (ideal_daily - ref_daily) / ref_daily * 100.0
-        capped_pct = max(-max_change, min(max_change, delta_pct))
-        recommended = ref_daily * (1.0 + capped_pct / 100.0)
-    else:
-        recommended = ideal_daily
-
-    # Record direction BEFORE applying the floor so the floor can't flip a DECREASE
-    # recommendation into an INCREASE just because min_daily_budget > ideal_daily.
-    pre_floor = recommended
-    recommended = max(min_daily, recommended)
-
     change_pct = (recommended - ref_daily) / ref_daily * 100.0 if ref_daily > 0 else 0.0
 
-    if pre_floor > ref_daily * 1.005:
-        action = 'INCREASE'
-    elif pre_floor < ref_daily * 0.995:
-        action = 'DECREASE'
-    else:
+    # Status is now a pure comparison of recommendation vs current Meta daily.
+    # Sub-cent differences are below Meta's storage resolution, so they round
+    # to ON_PACE rather than fluttering between INCREASE/DECREASE.
+    if abs(recommended - ref_daily) < 0.01:
         action = 'ON_PACE'
+    elif recommended > ref_daily:
+        action = 'INCREASE'
+    else:
+        action = 'DECREASE'
 
     return daily_target, expected_mtd, pace_ratio, recommended, change_pct, action
 
@@ -390,18 +398,20 @@ def run_pacing(account_id):
             continue
 
         if campaign.budget_mode == 'ABO':
-            # ---- ABO: per-ad-set pacing ----
+            # ---- ABO: campaign-level recommendation, then split by allocation % ----
+            # This mirrors the Google Sheet exactly:
+            #   D16 = (B16 - C16) / D3   (campaign-level recommended daily)
+            #   K16 = D16 * 0.4          (40% adset's share)
+            #   M16 = D16 * 0.6          (60% adset's share)
             active_adsets  = data['active_adsets']
             live_daily_map = data['live_daily_map']
             adset_spends   = data['adset_spends']
 
-            adset_recs = []
-            campaign_actual_total = 0.0
-
+            # First pass: gather actual spend per ad set, sum to campaign total.
+            # Ad sets whose spend fetch failed are recorded as failures and skipped
+            # for the recommendation, but their absence doesn't block the rest.
+            adset_actuals = {}     # adset.id → float
             for adset in active_adsets:
-                allocated_budget = campaign.monthly_budget * (adset.allocation_pct / 100.0)
-                actual_meta_daily = live_daily_map.get(adset.meta_adset_id)  # None if unavailable
-
                 spend_result = adset_spends.get(adset.id, {'error': 'Not fetched'})
                 if isinstance(spend_result, dict) and 'error' in spend_result:
                     failures.append({
@@ -412,22 +422,60 @@ def run_pacing(account_id):
                         "error": spend_result['error'],
                     })
                     continue
-                actual_spend = spend_result
-                campaign_actual_total += actual_spend
+                adset_actuals[adset.id] = float(spend_result)
 
-                (
-                    daily_target, expected_mtd, pace_ratio,
-                    new_daily, change_pct, action,
-                ) = _compute_recommendation(
-                    monthly_budget=allocated_budget,
-                    actual_spend=actual_spend,
-                    days_in_month=days_in_month,
-                    days_elapsed=days_elapsed,
-                    settings=settings,
-                    actual_current_daily=actual_meta_daily,
+            campaign_actual_total = sum(adset_actuals.values())
+
+            # Campaign-level recommended daily: sheet's =(B - C) / D3.
+            campaign_remaining_budget = max(0.0, campaign.monthly_budget - campaign_actual_total)
+            days_remaining = max(1, days_in_month - days_elapsed)
+            campaign_recommended_daily = (
+                campaign_remaining_budget / days_remaining if days_remaining > 0 else 0.0
+            )
+
+            # Second pass: split the campaign-level number by allocation % and
+            # build per-ad-set rows. Per-ad-set pace ratio is still computed
+            # against per-ad-set spend (informational only — what the user sees
+            # in the Pace column).
+            adset_recs = []
+            for adset in active_adsets:
+                if adset.id not in adset_actuals:
+                    continue  # spend fetch failed; already in failures list
+                actual_spend = adset_actuals[adset.id]
+                actual_meta_daily = live_daily_map.get(adset.meta_adset_id)
+
+                # Diagnostic columns (per-adset, for the UI's Pace column).
+                allocated_budget = campaign.monthly_budget * (adset.allocation_pct / 100.0)
+                allocated_daily_target = (
+                    allocated_budget / days_in_month if days_in_month > 0 else 0.0
+                )
+                allocated_expected_mtd = allocated_daily_target * days_elapsed
+                pace_ratio = (
+                    actual_spend / allocated_expected_mtd
+                    if allocated_expected_mtd > 0 else 1.0
                 )
 
-                display_current = actual_meta_daily if actual_meta_daily is not None else daily_target
+                # Sheet behavior: per-adset recommendation = campaign-level × allocation %.
+                new_daily = campaign_recommended_daily * (adset.allocation_pct / 100.0)
+
+                # Action label is a pure comparison vs the live Meta daily.
+                ref_daily = (actual_meta_daily
+                             if (actual_meta_daily is not None and actual_meta_daily > 0)
+                             else allocated_daily_target)
+                if abs(new_daily - ref_daily) < 0.01:
+                    action = 'ON_PACE'
+                elif new_daily > ref_daily:
+                    action = 'INCREASE'
+                else:
+                    action = 'DECREASE'
+                change_pct = (
+                    (new_daily - ref_daily) / ref_daily * 100.0 if ref_daily > 0 else 0.0
+                )
+
+                display_current = (
+                    actual_meta_daily if actual_meta_daily is not None
+                    else allocated_daily_target
+                )
 
                 adset_recs.append({
                     "adset_id": adset.id,
@@ -436,7 +484,7 @@ def run_pacing(account_id):
                     "allocation_pct": adset.allocation_pct,
                     "allocated_monthly_budget": round(allocated_budget, 2),
                     "actual_spend": round(actual_spend, 2),
-                    "expected_spend": round(expected_mtd, 2),
+                    "expected_spend": round(allocated_expected_mtd, 2),
                     "pace_ratio": round(pace_ratio, 3),
                     "current_daily_budget": round(display_current, 2),
                     "recommended_daily_budget": round(new_daily, 2),
@@ -450,7 +498,7 @@ def run_pacing(account_id):
                     date=snapshot_date,
                     current_daily_budget=display_current,
                     actual_spend=actual_spend,
-                    expected_spend=expected_mtd,
+                    expected_spend=allocated_expected_mtd,
                     pace_ratio=pace_ratio,
                     status=action,
                     recommended_daily_budget=new_daily,
@@ -473,6 +521,7 @@ def run_pacing(account_id):
                 "actual_spend": round(campaign_actual_total, 2),
                 "expected_spend": round(campaign_expected, 2),
                 "pace_ratio": round(campaign_pace, 3),
+                "recommended_daily_budget": round(campaign_recommended_daily, 2),
                 "days_elapsed": days_elapsed,
                 "days_in_month": days_in_month,
                 "adset_level": adset_recs,
@@ -611,7 +660,6 @@ def apply_recommendations(account_id):
     settings = AccountSettings.query.filter_by(account_id=account_id).first()
     if not settings:
         return jsonify({"error": "Account settings not found"}), 404
-    min_daily = float(settings.min_daily_budget or 5.0)
 
     payload = request.get_json(silent=True) or {}
     adjustments = payload.get("adjustments", [])
@@ -630,29 +678,27 @@ def apply_recommendations(account_id):
     applied_count = 0
 
     for adj in adjustments:
-        # Server-side floor: never push below min_daily_budget regardless of payload.
+        # No server-side floor — sheet has no minimum, so the app shouldn't either.
+        # The user reviews each row in the UI before clicking Apply, and Meta will
+        # reject anything below its own platform minimum.
         try:
             requested_new = float(adj["recommended_daily_budget"])
         except (TypeError, ValueError, KeyError):
             results.append({"error": "recommended_daily_budget missing or not a number", "adj": adj})
             continue
-        new_daily = max(min_daily, requested_new)
+        new_daily = max(0.0, requested_new)
 
-        # Defensive guard: if the caller flagged this adjustment as ON_PACE, or the
-        # recommended daily matches the current daily within a cent, skip the Meta call.
-        # This protects against frontend bugs that build adjustments for already-on-pace
-        # campaigns (which would silently overwrite the live Meta budget with daily_target).
+        # Sub-cent skip: Meta stores budgets in cents, so any difference smaller
+        # than $0.01 rounds away. This is floating-point safety, not a behavioral
+        # filter — every meaningful change (even $0.01) reaches Meta.
         try:
             current_daily = float(adj.get("current_daily_budget") or 0.0)
         except (TypeError, ValueError):
             current_daily = 0.0
-        action_label = (adj.get("action") or "").upper()
-        if action_label == "ON_PACE" or (
-            current_daily > 0 and abs(new_daily - current_daily) < 0.01
-        ):
+        if current_daily > 0 and abs(new_daily - current_daily) < 0.01:
             results.append({
                 "skipped": True,
-                "reason": "ON_PACE — no change required",
+                "reason": "No change at cent resolution",
                 "campaign_id": adj.get("campaign_id"),
                 "adset_id": adj.get("adset_id"),
             })
@@ -722,8 +768,11 @@ def apply_recommendations(account_id):
             continue
 
         try:
+            # min_daily defaults to Meta's platform hard floor ($1) inside meta_client.
+            # We no longer pass our own settings.min_daily_budget — sheet-parity means
+            # the only floor is Meta's own platform minimum.
             meta_result = meta.apply_campaign_daily_budget(
-                campaign.meta_campaign_id, new_daily, min_daily=min_daily,
+                campaign.meta_campaign_id, new_daily,
             )
         except MetaAPIError as e:
             results.append({"campaign_id": campaign.id, "error": str(e)})

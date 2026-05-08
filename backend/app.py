@@ -255,6 +255,8 @@ def _scheduled_pacing_job():
                         continue
 
                     if campaign.budget_mode == 'ABO':
+                        # Mirror the run_pacing ABO logic: compute campaign-level
+                        # recommended daily first, then split by allocation_pct.
                         active_adsets = [a for a in campaign.adsets if a.is_active]
                         live_daily_map = {}
                         try:
@@ -271,30 +273,65 @@ def _scheduled_pacing_job():
                         except MetaAPIError:
                             pass
 
+                        # First pass: gather actual spend per ad set, sum to campaign total.
+                        adset_actuals = {}
                         for adset in active_adsets:
-                            allocated = campaign.monthly_budget * (adset.allocation_pct / 100.0)
-                            actual_meta_daily = live_daily_map.get(adset.meta_adset_id)
                             try:
-                                actual_spend = meta.get_adset_spend(
+                                adset_actuals[adset.id] = float(meta.get_adset_spend(
                                     adset.meta_adset_id, since=month_start, until=spend_until,
-                                )
+                                ))
                             except MetaAPIError:
+                                continue  # skip but don't abort the campaign
+                        campaign_actual_total = sum(adset_actuals.values())
+
+                        # Campaign-level recommended daily = (B - C) / D3.
+                        days_remaining_local = max(1, days_in_month - days_elapsed)
+                        campaign_remaining = max(0.0, campaign.monthly_budget - campaign_actual_total)
+                        campaign_recommended_daily = (
+                            campaign_remaining / days_remaining_local
+                            if days_remaining_local > 0 else 0.0
+                        )
+
+                        for adset in active_adsets:
+                            if adset.id not in adset_actuals:
                                 continue
-                            daily_target, expected_mtd, pace_ratio, new_daily, change_pct, action = (
-                                _compute_recommendation(
-                                    monthly_budget=allocated,
-                                    actual_spend=actual_spend,
-                                    days_in_month=days_in_month,
-                                    days_elapsed=days_elapsed,
-                                    settings=settings,
-                                    actual_current_daily=actual_meta_daily,
-                                )
+                            actual_spend = adset_actuals[adset.id]
+                            actual_meta_daily = live_daily_map.get(adset.meta_adset_id)
+
+                            allocated = campaign.monthly_budget * (adset.allocation_pct / 100.0)
+                            allocated_daily_target = (
+                                allocated / days_in_month if days_in_month > 0 else 0.0
                             )
-                            display_current = actual_meta_daily if actual_meta_daily is not None else daily_target
+                            allocated_expected_mtd = allocated_daily_target * days_elapsed
+                            pace_ratio = (
+                                actual_spend / allocated_expected_mtd
+                                if allocated_expected_mtd > 0 else 1.0
+                            )
+
+                            new_daily = campaign_recommended_daily * (adset.allocation_pct / 100.0)
+
+                            ref_daily = (actual_meta_daily
+                                         if (actual_meta_daily is not None and actual_meta_daily > 0)
+                                         else allocated_daily_target)
+                            if abs(new_daily - ref_daily) < 0.01:
+                                action = 'ON_PACE'
+                            elif new_daily > ref_daily:
+                                action = 'INCREASE'
+                            else:
+                                action = 'DECREASE'
+                            change_pct = (
+                                (new_daily - ref_daily) / ref_daily * 100.0
+                                if ref_daily > 0 else 0.0
+                            )
+
+                            display_current = (
+                                actual_meta_daily if actual_meta_daily is not None
+                                else allocated_daily_target
+                            )
                             db.session.add(PacingData(
                                 campaign_id=campaign.id, adset_id=adset.id,
                                 date=snapshot_date, current_daily_budget=display_current,
-                                actual_spend=actual_spend, expected_spend=expected_mtd,
+                                actual_spend=actual_spend, expected_spend=allocated_expected_mtd,
                                 pace_ratio=pace_ratio, status=action,
                                 recommended_daily_budget=new_daily, change_percent=change_pct,
                             ))
@@ -305,7 +342,7 @@ def _scheduled_pacing_job():
                                     "adset_name": adset.adset_name,
                                     "level": "ad set",
                                     "actual_spend": actual_spend,
-                                    "expected_spend": expected_mtd,
+                                    "expected_spend": allocated_expected_mtd,
                                     "pace_ratio": pace_ratio,
                                     "current_daily": display_current,
                                     "recommended_daily": new_daily,

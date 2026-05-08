@@ -62,10 +62,11 @@ function Settings({ user, onLogout }) {
   const handleSaveSettings = async () => {
     setError('');
     try {
+      // Pacing math now mirrors the Google Sheet exactly: recommended daily =
+      // (monthly_budget − MTD_spend) / days_remaining. The legacy tolerance/cap/floor
+      // fields still exist on AccountSettings for backwards compatibility but no
+      // longer affect anything, so the UI doesn't expose them.
       await axios.put(`/api/settings/${accountId}`, {
-        min_daily_budget: parseFloat(settings.min_daily_budget),
-        max_daily_change_percent: parseFloat(settings.max_daily_change_percent),
-        pace_tolerance_percent: parseFloat(settings.pace_tolerance_percent),
         daily_digest_enabled: !!settings.daily_digest_enabled,
       });
       toast.success('Settings saved.');
@@ -239,42 +240,9 @@ function Settings({ user, onLogout }) {
               <div style={{ marginBottom: 16 }}>
                 <div className="bb-section-title">Pacing Configuration</div>
                 <div className="bb-section-meta" style={{ marginTop: 2 }}>
-                  How aggressively the auto-pacer adjusts daily budgets.
-                </div>
-              </div>
-
-              <div className="bb-grid bb-grid-2">
-                <div className="bb-form-group">
-                  <label className="bb-form-label">Minimum Daily Budget</label>
-                  <input
-                    type="number" className="bb-input"
-                    value={settings.min_daily_budget ?? 0}
-                    onChange={(e) => handleSettingsChange('min_daily_budget', e.target.value)}
-                    step="0.01" min="0"
-                  />
-                  <span className="bb-form-help">Prevent budgets from dropping below this amount.</span>
-                </div>
-
-                <div className="bb-form-group">
-                  <label className="bb-form-label">Max Daily Change (%)</label>
-                  <input
-                    type="number" className="bb-input"
-                    value={settings.max_daily_change_percent ?? 25}
-                    onChange={(e) => handleSettingsChange('max_daily_change_percent', e.target.value)}
-                    step="0.1" min="0" max="100"
-                  />
-                  <span className="bb-form-help">Cap any single adjustment to ±X% of current budget.</span>
-                </div>
-
-                <div className="bb-form-group">
-                  <label className="bb-form-label">Pace Tolerance (%)</label>
-                  <input
-                    type="number" className="bb-input"
-                    value={settings.pace_tolerance_percent ?? 5}
-                    onChange={(e) => handleSettingsChange('pace_tolerance_percent', e.target.value)}
-                    step="0.1" min="0" max="100"
-                  />
-                  <span className="bb-form-help">Campaigns within ±X% of ideal pace are "on pace".</span>
+                  Recommendations follow your "Social Budget Pacing" sheet:
+                  recommended daily = (monthly budget − MTD spend) ÷ days remaining,
+                  split by ABO allocation %.
                 </div>
               </div>
 
