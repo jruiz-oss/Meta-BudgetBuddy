@@ -1,4 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <rect width="32" height="32" rx="7" fill="#004359"/>
-  <text x="16" y="22" font-family="'Inter', -apple-system, sans-serif" font-size="17" font-weight="700" fill="white" text-anchor="middle">$</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+
+  <!-- Hexagon fill — brand dark teal -->
+  <polygon
+    points="32,3 58,18 58,46 32,61 6,46 6,18"
+    fill="#111111"
+    stroke="#111111"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+
+  <!-- Speedometer arc — white, center (32,27), radius 13 -->
+  <!-- from 125° (lower-left) to 297° (upper-right), CCW large arc -->
+  <!-- start: (32+13·cos125°, 27+13·sin125°) = (24.5,37.6) -->
+  <!-- end:   (32+13·cos297°, 27+13·sin297°) = (37.9,15.2) -->
+  <path
+    d="M 24.5 37.6 A 13 13 0 1 0 37.9 15.2"
+    fill="none"
+    stroke="#1877F2"
+    stroke-width="3.5"
+    stroke-linecap="round"
+  />
+
+  <!-- Tick 1 -->
+  <g transform="translate(43.5,16.5) rotate(315)">
+    <rect x="-1.5" y="-4" width="3" height="8" rx="1.5" fill="white"/>
+  </g>
+  <!-- Tick 2 -->
+  <g transform="translate(47,22) rotate(338)">
+    <rect x="-1.5" y="-3.5" width="3" height="7" rx="1.5" fill="white"/>
+  </g>
+
+  <!-- "BB" text at bottom -->
+  <text x="32" y="55"
+    font-family="'Arial Black',sans-serif"
+    font-size="13" font-weight="900"
+    text-anchor="middle">
+    <tspan fill="white">B</tspan><tspan fill="#1877F2">B</tspan>
+  </text>
+
 </svg>

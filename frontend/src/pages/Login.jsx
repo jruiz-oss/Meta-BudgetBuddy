@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import { Activity, Loader2, LogIn } from 'lucide-react';
+import { Loader2, LogIn } from 'lucide-react';
 
 function Login({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
@@ -30,12 +30,9 @@ function Login({ onLoginSuccess }) {
   return (
     <div className="bb-auth-shell">
       <div className="bb-auth-card">
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
-          <span className="bb-brand-mark" style={{ width: 44, height: 44, borderRadius: 12 }} aria-hidden="true">
-            <Activity size={22} strokeWidth={2.5} />
-          </span>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+          <img src="/logo.svg" alt="BudgetBuddy" style={{ width: 200, height: 'auto' }} />
         </div>
-        <div className="bb-auth-title">BudgetBuddy</div>
         <div className="bb-auth-subtitle">Keep your Meta ads on pace, automatically.</div>
 
         {error && <div className="bb-alert bb-alert-error">{error}</div>}
