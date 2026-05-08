@@ -156,6 +156,12 @@ code { font-family: var(--bb-font-mono, ui-monospace, monospace); }
   background: oklch(60% 0.13 var(--acct-hue, 240));
   flex-shrink: 0;
 }
+.bb-nav-item-sub {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  margin-top: -4px;
+  font-size: var(--bb-text-xs);
+}
 .bb-nav-item.is-active {
   background: var(--bb-accent-soft);
   color: var(--bb-accent-fg);

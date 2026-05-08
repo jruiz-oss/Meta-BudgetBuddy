@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from database import db, Account, PacingRun, BudgetAdjustment, Campaign
 from .auth import login_required
+from sqlalchemy.orm import joinedload
 
 history_bp = Blueprint('history', __name__, url_prefix='/api/history')
 
@@ -25,6 +26,37 @@ def user_owns_account(account_id):
     endpoint already guarantees the caller is authenticated.
     """
     return Account.query.get(account_id) is not None
+
+
+@history_bp.route('/global/adjustments', methods=['GET'])
+@login_required
+def get_global_adjustments():
+    """All budget adjustments across every account, newest first.
+    Only real Meta changes are logged here — pacing dry-runs never write BudgetAdjustment rows.
+    """
+    limit = _clamp_limit(request.args.get('limit'), default=200)
+
+    adjustments = (
+        BudgetAdjustment.query
+        .join(Campaign, BudgetAdjustment.campaign_id == Campaign.id)
+        .join(Account, Campaign.account_id == Account.id)
+        .options(
+            joinedload(BudgetAdjustment.campaign).joinedload(Campaign.account)
+        )
+        .order_by(BudgetAdjustment.applied_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    result = []
+    for adj in adjustments:
+        d = adj.to_dict()
+        d['campaign_name'] = adj.campaign.campaign_name if adj.campaign else '—'
+        d['account_name']  = adj.campaign.account.account_name if adj.campaign and adj.campaign.account else '—'
+        d['account_id']    = adj.campaign.account_id if adj.campaign else None
+        result.append(d)
+
+    return jsonify({'adjustments': result, 'total': len(result)}), 200
 
 
 @history_bp.route('/<int:account_id>/summary', methods=['GET'])

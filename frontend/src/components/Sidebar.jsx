@@ -93,14 +93,14 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
         </span>
       )}
 
-      {accountId ? (
-        <NavLink to={`/account/${accountId}/history`} className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}>
-          <IHistory /><span>History</span>
+      <NavLink to="/history" className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}>
+        <IHistory /><span>History</span>
+      </NavLink>
+
+      {accountId && (
+        <NavLink to={`/account/${accountId}/history`} className={({ isActive }) => 'bb-nav-item bb-nav-item-sub' + (isActive ? ' is-active' : '')}>
+          <span style={{ marginLeft: 8, opacity: 0.6, fontSize: 11 }}>↳ This account</span>
         </NavLink>
-      ) : (
-        <span className="bb-nav-item" style={{ opacity: 0.4, cursor: 'default' }}>
-          <IHistory /><span>History</span>
-        </span>
       )}
 
       {accountId ? (
