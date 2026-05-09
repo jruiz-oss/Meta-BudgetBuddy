@@ -1,8 +1,35 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from sqlalchemy.orm import validates
+from sqlalchemy.types import String, TypeDecorator
+
+from crypto import decrypt_token, encrypt_token
 
 db = SQLAlchemy()
+
+
+class EncryptedString(TypeDecorator):
+    """VARCHAR column that transparently Fernet-encrypts values at rest.
+
+    Reads decrypt; writes encrypt. Legacy plaintext rows are passed through
+    on read and re-encrypted on the next write — no DB migration needed.
+    See backend/crypto.py for the prefix scheme + key handling.
+
+    Usage:
+        token = db.Column(EncryptedString(2000), nullable=True)
+
+    The (2000) length is the *ciphertext* size budget. A 200-char Meta token
+    encrypts to ~350 chars (Fernet overhead + base64), so 2000 leaves headroom
+    for longer tokens or future key rotation tags.
+    """
+    impl = String
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        return encrypt_token(value) if value is not None else value
+
+    def process_result_value(self, value, dialect):
+        return decrypt_token(value) if value is not None else value
 
 
 class User(db.Model):
@@ -12,7 +39,10 @@ class User(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     # Shared Meta access token used by all accounts unless overridden per-account.
-    global_meta_token = db.Column(db.String(1000), nullable=True)
+    # Encrypted at rest via EncryptedString — DB snapshots / log dumps no longer
+    # leak working tokens. Bumped to 2000 chars to fit the encrypted form
+    # (Fernet + base64 ~ 1.4× plaintext, plus the "enc_v1:" prefix).
+    global_meta_token = db.Column(EncryptedString(2000), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     accounts = db.relationship('Account', backref='user', lazy=True, cascade='all, delete-orphan')
@@ -36,7 +66,8 @@ class Account(db.Model):
     account_name = db.Column(db.String(255), nullable=False)
     meta_account_id = db.Column(db.String(255), nullable=False)
     # Per-account token override. Leave blank to fall back to the user's global_meta_token.
-    meta_token = db.Column(db.String(1000), nullable=False, default='')
+    # Encrypted at rest via EncryptedString — see User.global_meta_token for the rationale.
+    meta_token = db.Column(EncryptedString(2000), nullable=False, default='')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property

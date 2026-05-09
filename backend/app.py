@@ -128,7 +128,9 @@ def cron_run_all_accounts():
     expected = os.getenv('CRON_SECRET')
     if not expected:
         return jsonify({'error': 'CRON_SECRET not configured on the server'}), 503
-    provided = request.headers.get('X-Cron-Secret') or request.args.get('secret')
+    # Header only — query-string secrets land in Railway/proxy access logs and
+    # in browser history, which defeats the point of having a secret.
+    provided = request.headers.get('X-Cron-Secret') or ''
     if provided != expected:
         return jsonify({'error': 'forbidden'}), 403
 

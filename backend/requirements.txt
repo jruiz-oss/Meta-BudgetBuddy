@@ -13,3 +13,6 @@ gunicorn==22.0.0
 gspread==6.1.2
 google-auth==2.29.0
 APScheduler==3.10.4
+# Fernet symmetric encryption for Meta tokens at rest (User.global_meta_token,
+# Account.meta_token). Pinned to a recent line — 42.x ships current OpenSSL bindings.
+cryptography==42.0.8

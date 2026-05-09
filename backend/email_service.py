@@ -18,11 +18,26 @@ Usage:
     send_digest(to="user@example.com", subject="…", html_body="…", text_body="…")
 """
 
+import html
 import logging
 import os
 import smtplib
 import ssl
 from email.message import EmailMessage
+
+
+def _esc(value) -> str:
+    """HTML-escape a value for safe interpolation into the digest body.
+
+    Campaign / ad set names come from Meta and are surfaced in the email
+    largely as-is. Without escaping, a name containing ``<img src=x ...>`` or
+    a stray quote could break the HTML structure or render unintended markup
+    in the recipient's mail client. Always run user/Meta-controlled strings
+    through this before f-stringing into the HTML body.
+    """
+    if value is None:
+        return ""
+    return html.escape(str(value), quote=True)
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +177,7 @@ def build_digest(user_email, account_summaries):
         rows_html.append(
             f'<tr><td colspan="6" style="padding:14px 12px 6px;background:#f0f2f4;'
             f'font-size:13px;font-weight:700;color:#0d1f26;border-top:1px solid #e2e5e8;">'
-            f'{acct["account_name"]}</td></tr>'
+            f'{_esc(acct["account_name"])}</td></tr>'
         )
         off = acct.get("off_pace", [])
         if not off:
@@ -171,17 +186,20 @@ def build_digest(user_email, account_summaries):
                 '✓ All campaigns on pace.</td></tr>'
             )
         for it in off:
-            label = it["adset_name"] or it["campaign_name"]
+            label = _esc(it["adset_name"] or it["campaign_name"])
             color = "#10b981" if it["action"] == "INCREASE" else "#f59e0b"
             arrow = "▲" if it["action"] == "INCREASE" else "▼"
-            sub = f'<div style="font-size:11px;color:#6b7280;">in {it["campaign_name"]}</div>' if it["adset_name"] else ""
+            sub = (
+                f'<div style="font-size:11px;color:#6b7280;">in {_esc(it["campaign_name"])}</div>'
+                if it["adset_name"] else ""
+            )
             rows_html.append(
                 "<tr>"
                 f'<td style="padding:8px 12px;font-size:13px;">{label}{sub}</td>'
-                f'<td style="padding:8px 12px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums;">{_fmt_money(it["actual_spend"])}</td>'
-                f'<td style="padding:8px 12px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums;color:#6b7280;">{_fmt_money(it["expected_spend"])}</td>'
-                f'<td style="padding:8px 12px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums;">{_fmt_money(it["current_daily"])}</td>'
-                f'<td style="padding:8px 12px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">{_fmt_money(it["recommended_daily"])}</td>'
+                f'<td style="padding:8px 12px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums;">{_esc(_fmt_money(it["actual_spend"]))}</td>'
+                f'<td style="padding:8px 12px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums;color:#6b7280;">{_esc(_fmt_money(it["expected_spend"]))}</td>'
+                f'<td style="padding:8px 12px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums;">{_esc(_fmt_money(it["current_daily"]))}</td>'
+                f'<td style="padding:8px 12px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">{_esc(_fmt_money(it["recommended_daily"]))}</td>'
                 f'<td style="padding:8px 12px;font-size:12px;text-align:right;color:{color};font-weight:700;white-space:nowrap;">{arrow} {it["change_percent"]:+.1f}%</td>'
                 "</tr>"
             )
@@ -190,7 +208,7 @@ def build_digest(user_email, account_summaries):
 <html>
 <head>
 <meta charset="utf-8">
-<title>{subject}</title>
+<title>{_esc(subject)}</title>
 </head>
 <body style="margin:0;padding:0;background:#f9fafb;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111827;">
 <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f9fafb;">

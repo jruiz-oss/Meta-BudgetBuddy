@@ -204,6 +204,14 @@ GOOGLE_CREDENTIALS_JSON=<full contents of service account JSON key>
 # on the Register page). If unset, registration is open — only safe for local dev.
 INVITE_CODE=<pick any string, share with teammates out-of-band>
 
+# REQUIRED in production (session 14). Fernet key used to encrypt Meta tokens
+# at rest in the users.global_meta_token + accounts.meta_token columns. Without
+# this set, app.py refuses to boot in production. Generate one with:
+#   python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Store it in 1Password — losing the key means losing access to every encrypted
+# token currently saved in Postgres.
+TOKEN_ENCRYPTION_KEY=<44-char url-safe base64 string>
+
 # Optional — daily digest email (session 8). All five required to send mail.
 SMTP_HOST=smtp.resend.com           # or smtp.sendgrid.net, smtp.gmail.com, etc.
 SMTP_PORT=587                       # 465 = SSL, 587 = STARTTLS
@@ -276,6 +284,23 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 ## Recent Changes Log
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
+
+- [x] **2026-05-09 (session 14 — Opus)** — Security pass: token-at-rest encryption, header-auth for Meta API, hardened cron + digest emails.
+  - **Why.** Audit found four issues that all centered on tokens/secrets traveling in places they shouldn't. The Meta tokens were plaintext in Postgres (a Neon snapshot or backup leak would hand attackers working credentials), the same tokens were sent as a `?access_token=` URL query param to Meta (logs along the path could capture them), the manual cron endpoint accepted its secret in the query string (same logging concern), and the daily digest email built HTML by concatenating user-controlled fields without escaping (low-risk XSS via campaign names).
+  - **`backend/crypto.py`** (new) — Fernet-based `encrypt_token` / `decrypt_token` helpers with a versioned `enc_v1:` prefix. Lazily reads `TOKEN_ENCRYPTION_KEY` so module import doesn't fail when the env var is absent (e.g. during ast.parse). In production the missing env var raises a hard error; in dev, falls back to a well-known dev key with a logged warning.
+  - **`backend/database.py`** — added `EncryptedString` SQLAlchemy `TypeDecorator`. `User.global_meta_token` and `Account.meta_token` now use it; the column type is `EncryptedString(2000)` (bumped from 1000 to fit ~1.4× ciphertext + Fernet overhead). Reads decrypt; writes encrypt. Legacy plaintext rows (no prefix) pass through on read and get re-encrypted on the next write — **no data migration is required**, but tokens won't actually be at-rest-encrypted until they're rotated or the user hits PUT `/global-token` once.
+  - **`backend/meta_client.py`** — `_request()` now sets `Authorization: Bearer <token>` instead of stuffing the token into `params["access_token"]`. The Marketing API accepts both forms; header form keeps the token out of every HTTP/access log along the path.
+  - **`backend/app.py:131`** — `cron_run_all_accounts` now reads `X-Cron-Secret` only. The `?secret=` query-arg fallback is gone — query-string secrets land in Railway/proxy access logs and browser history.
+  - **`backend/email_service.py`** — added `_esc()` (thin wrapper over `html.escape`); applied to every interpolation of `account_name`, `campaign_name`, `adset_name`, and the formatted money strings inside `build_digest`'s HTML body. Also escapes `subject` in the `<title>`. Plain-text body is unchanged (escaping is a no-op there).
+  - **`backend/requirements.txt`** — pinned `cryptography==42.0.8`.
+  - ⚠️ **Set `TOKEN_ENCRYPTION_KEY` on Railway BEFORE pushing this code.** Without it the app will refuse to boot in production. Generate a fresh key with `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Store it in 1Password — losing the key means losing access to every encrypted token (rotation-of-no-return).
+  - ⚠️ **No DB migration required.** The column type widening from `String(1000)` to `String(2000)` is a metadata-only change in Postgres (no rewrite). SQLAlchemy will issue the ALTER on the next `db.create_all()` if you boot with `SKIP_CREATE_ALL` unset; otherwise apply it manually:
+    ```sql
+    ALTER TABLE users    ALTER COLUMN global_meta_token TYPE VARCHAR(2000);
+    ALTER TABLE accounts ALTER COLUMN meta_token        TYPE VARCHAR(2000);
+    ```
+  - ⚠️ **Existing tokens stay plaintext until rotated.** Quickest path to encrypt them all: open Settings on each account → re-paste the same Meta token → save. Each save round-trips through `EncryptedString` and writes ciphertext.
+  - Verified: `python3 -c "import ast; ast.parse(...)"` clean across `app.py`, `crypto.py`, `database.py`, `email_service.py`, `meta_client.py`, every route file.
 
 - [x] **2026-05-08 (session 13 — Opus)** — Shared "agency master dashboard" + invite-code signup gate.
   - **Why.** Jorge wanted the app to behave as a single agency workspace: when a coworker creates an account, they should immediately see every Meta ad account that anyone on the team has linked, not just their own. Per-user data scoping was leftover from when the app was a personal tool. To stop randoms from registering, signup is now gated by an invite code shared out-of-band with teammates.
@@ -398,6 +423,7 @@ Vercel redeploys the frontend automatically on push to `main`.
 
 ## Known Issues / Open TODOs
 
+- [ ] **Set `TOKEN_ENCRYPTION_KEY` env var on Railway before pushing session-14 code** — without it, the app refuses to boot in production. See deploy steps below.
 - [ ] **Set `INVITE_CODE` env var on Railway before pushing session-13 code** — without it, anyone can register. With it, teammates need the code (share via 1Password / Slack DM / out-of-band).
 - [ ] **Run the ABO migration in Neon before deploying session-7 code** — see SQL block above. Once that's done, the new code is safe to push.
 - [ ] **Run the digest migration in Neon before deploying session-8 code** — `ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS daily_digest_enabled BOOLEAN NOT NULL DEFAULT FALSE;`

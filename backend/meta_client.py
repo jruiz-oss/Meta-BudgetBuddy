@@ -68,19 +68,23 @@ class MetaClient:
         params: Optional[Dict[str, Any]] = None,
         data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        # Send the token as an Authorization header instead of a URL query
+        # parameter. Header form keeps the token out of any HTTP/access logs
+        # along the path (Railway, intermediate proxies, Meta's own request
+        # echoes). The Marketing API accepts both forms.
         params = dict(params or {})
-        params["access_token"] = self.access_token
+        headers = {"Authorization": f"Bearer {self.access_token}"}
         url = f"{BASE_URL}{endpoint}"
 
         last_err = None
         for attempt in range(self.retries + 1):
             try:
                 if method == "GET":
-                    resp = requests.get(url, params=params, timeout=self.timeout)
+                    resp = requests.get(url, params=params, headers=headers, timeout=self.timeout)
                 elif method == "POST":
                     # Graph / Marketing API expect form-encoded bodies for most POSTs;
                     # JSON bodies are often ignored, which led to "success" with no budget change.
-                    resp = requests.post(url, params=params, data=data, timeout=self.timeout)
+                    resp = requests.post(url, params=params, data=data, headers=headers, timeout=self.timeout)
                 else:
                     raise ValueError(f"Unsupported method: {method}")
 
