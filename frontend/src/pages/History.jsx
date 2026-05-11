@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import {
@@ -22,31 +22,48 @@ function History({ user, onLogout }) {
 
   const [runTypeFilter, setRunTypeFilter] = useState('all');
 
-  const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [accountsRes, summaryRes] = await Promise.all([
-        axios.get('/api/accounts'),
-        axios.get(`/api/history/${accountId}/summary`),
-      ]);
-      setAccounts(accountsRes.data.accounts || accountsRes.data || []);
-      setSummary(summaryRes.data);
-
-      if (activeTab === 'runs') {
-        const runsRes = await axios.get(`/api/history/${accountId}/pacing-runs`);
-        setRuns(runsRes.data.runs || []);
-      } else {
-        const adjRes = await axios.get(`/api/history/${accountId}/adjustments`);
-        setAdjustments(adjRes.data.adjustments || []);
+  // Summary + accounts only need to refetch when the account changes — not
+  // when the user flips tabs. Splitting these into two effects avoids
+  // re-pulling the summary every tab click.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const [accountsRes, summaryRes] = await Promise.all([
+          axios.get('/api/accounts'),
+          axios.get(`/api/history/${accountId}/summary`),
+        ]);
+        if (cancelled) return;
+        setAccounts(accountsRes.data.accounts || accountsRes.data || []);
+        setSummary(summaryRes.data);
+      } catch (err) {
+        if (!cancelled) setError('Failed to load history');
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    } catch (err) {
-      setError('Failed to load history');
-    } finally {
-      setLoading(false);
-    }
-  }, [accountId, activeTab]);
+    })();
+    return () => { cancelled = true; };
+  }, [accountId]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // Tab-specific fetch — only the active list reloads on tab change.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (activeTab === 'runs') {
+          const runsRes = await axios.get(`/api/history/${accountId}/pacing-runs`);
+          if (!cancelled) setRuns(runsRes.data.runs || []);
+        } else {
+          const adjRes = await axios.get(`/api/history/${accountId}/adjustments`);
+          if (!cancelled) setAdjustments(adjRes.data.adjustments || []);
+        }
+      } catch (err) {
+        if (!cancelled) setError('Failed to load history');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [accountId, activeTab]);
 
   const handleLogout = async () => {
     try { await axios.post('/api/auth/logout'); } catch {}

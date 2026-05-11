@@ -69,8 +69,12 @@ def get_history_summary(account_id):
     manual_runs   = PacingRun.query.filter_by(account_id=account_id, run_type='MANUAL').count()
     auto_runs     = PacingRun.query.filter_by(account_id=account_id, run_type='AUTO').count()
 
-    adjustments       = BudgetAdjustment.query.join(Campaign).filter(Campaign.account_id == account_id).all()
-    total_adjustments = len(adjustments)
+    total_adjustments = (
+        BudgetAdjustment.query
+        .join(Campaign)
+        .filter(Campaign.account_id == account_id)
+        .count()
+    )
 
     return jsonify({
         'total_runs':         total_runs,

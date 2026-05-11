@@ -238,8 +238,12 @@ def _scheduled_pacing_job():
                         )
 
                 try:
+                    # Use effective_meta_token so accounts that rely on the linker's
+                    # global_meta_token (the common case) still run via the scheduler.
+                    # Previously this used account.meta_token directly, which silently
+                    # skipped every account without a per-account token override.
                     meta = MetaClient(
-                        access_token=account.meta_token,
+                        access_token=account.effective_meta_token,
                         ad_account_id=account.meta_account_id,
                     )
                 except ValueError:

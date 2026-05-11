@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import axios from 'axios';
-import './App.css';
+// App.css was a legacy design system (.btn / .card / .table / etc.) — none of
+// those classes are referenced anywhere; everything ships through index.css's
+// bb-* system. Only the .loading style was still in use, inlined below.
 
 // Toast provider
 import { ToastProvider } from './components/Toast';
@@ -48,7 +50,11 @@ function App() {
     setUser(null);
   };
 
-  if (loading) return <div className="loading">Loading...</div>;
+  if (loading) return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', color: '#666' }}>
+      Loading...
+    </div>
+  );
 
   return (
     <ToastProvider>

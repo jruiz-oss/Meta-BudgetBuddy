@@ -82,7 +82,7 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
           <IGrid /><span>Dashboard</span>
         </NavLink>
       ) : (
-        <span className="bb-nav-item" style={{ opacity: 0.4, cursor: 'default' }}>
+        <span className="bb-nav-item" style={{ opacity: 0.4, cursor: 'default', pointerEvents: 'none' }}>
           <IGrid /><span>Dashboard</span>
         </span>
       )}
@@ -93,7 +93,8 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
 
       {accountId && (
         <NavLink to={`/account/${accountId}/history`} className={({ isActive }) => 'bb-nav-item bb-nav-item-sub' + (isActive ? ' is-active' : '')}>
-          <span style={{ marginLeft: 8, opacity: 0.6, fontSize: 11 }}>↳ This account</span>
+          <span style={{ width: 14, display: 'inline-block' }} aria-hidden="true" />
+          <span style={{ opacity: 0.6, fontSize: 11 }}>↳ This account</span>
         </NavLink>
       )}
 
@@ -102,7 +103,7 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
           <ISettings /><span>Settings</span>
         </NavLink>
       ) : (
-        <span className="bb-nav-item" style={{ opacity: 0.4, cursor: 'default' }}>
+        <span className="bb-nav-item" style={{ opacity: 0.4, cursor: 'default', pointerEvents: 'none' }}>
           <ISettings /><span>Settings</span>
         </span>
       )}

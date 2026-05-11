@@ -1,14 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { TrendingUp, TrendingDown, Minus, Inbox } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState } from '../components/EmptyState';
 
-function GlobalHistory({ user, onLogout }) {
-  const navigate = useNavigate();
-
+function GlobalHistory({ user }) {
   const [accounts, setAccounts]       = useState([]);
   const [adjustments, setAdjustments] = useState([]);
   const [loading, setLoading]         = useState(true);
@@ -32,12 +30,6 @@ function GlobalHistory({ user, onLogout }) {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  const handleLogout = async () => {
-    try { await axios.post('/api/auth/logout'); } catch {}
-    onLogout();
-    navigate('/login');
-  };
 
   const formatDate = (iso) => {
     if (!iso) return '—';

@@ -38,32 +38,10 @@ def update_settings(account_id):
 
     data = request.get_json() or {}
 
-    # Validate up front so a bad value can't poison pacing math (a negative tolerance
-    # would mark every campaign off-pace; a negative min_daily_budget would let budgets
-    # go below zero in the floor step).
-    def _bounded_float(name, value, lo=0.0, hi=None):
-        try:
-            v = float(value)
-        except (TypeError, ValueError):
-            raise ValueError(f"{name} must be a number")
-        if v < lo or (hi is not None and v > hi):
-            bound = f">= {lo}" + (f" and <= {hi}" if hi is not None else "")
-            raise ValueError(f"{name} must be {bound}")
-        return v
-
-    try:
-        if 'min_daily_budget' in data:
-            settings.min_daily_budget = _bounded_float('min_daily_budget', data['min_daily_budget'])
-        if 'max_daily_change_percent' in data:
-            settings.max_daily_change_percent = _bounded_float(
-                'max_daily_change_percent', data['max_daily_change_percent'], lo=0.0, hi=100.0,
-            )
-        if 'pace_tolerance_percent' in data:
-            settings.pace_tolerance_percent = _bounded_float(
-                'pace_tolerance_percent', data['pace_tolerance_percent'], lo=0.0, hi=100.0,
-            )
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
+    # Session 12: min_daily_budget / max_daily_change_percent / pace_tolerance_percent
+    # were removed from the pacing math (sheet-parity rewrite). The columns still exist
+    # on the DB but accept-and-ignore is misleading — drop the validation+write entirely.
+    # If a future feature needs them again, restore the validator from git history.
 
     if 'auto_adjust_enabled' in data:
         settings.auto_adjust_enabled = bool(data['auto_adjust_enabled'])

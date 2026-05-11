@@ -724,10 +724,18 @@ def get_pacing_history(account_id, campaign_id):
             return jsonify({'error': 'Campaign not found'}), 404
 
         cutoff = datetime.utcnow().date() - timedelta(days=30)
-        history = [
-            p.to_dict() for p in campaign.pacing_data
-            if p.date and p.date >= cutoff
-        ]
+        # Filter at the DB layer instead of loading every PacingData row and filtering
+        # in Python. For ABO campaigns with months of history this avoids pulling
+        # hundreds of rows per request.
+        rows = (
+            PacingData.query
+            .filter(PacingData.campaign_id == campaign_id)
+            .filter(PacingData.date.isnot(None))
+            .filter(PacingData.date >= cutoff)
+            .order_by(PacingData.date.asc())
+            .all()
+        )
+        history = [p.to_dict() for p in rows]
         return jsonify({'history': history, 'campaign_id': campaign_id}), 200
 
     except Exception as e:

@@ -316,7 +316,14 @@ def account_summary(account_id):
     if not account:
         return jsonify({'error': 'Not found'}), 404
 
-    campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
+    # Eager-load pacing_data to avoid the N+1 walk inside the loop below.
+    # Session 9 fixed this on the Home/Dashboard endpoints; this one was missed.
+    campaigns = (
+        Campaign.query
+        .filter_by(account_id=account_id, is_active=True)
+        .options(selectinload(Campaign.pacing_data))
+        .all()
+    )
     pacing_status = {'on_track': 0, 'over_pacing': 0, 'under_pacing': 0, 'mixed': 0}
     total_daily_budget = 0.0
 

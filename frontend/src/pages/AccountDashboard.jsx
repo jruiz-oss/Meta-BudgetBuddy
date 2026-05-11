@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
@@ -59,6 +58,9 @@ function AccountDashboard({ user, onLogout }) {
     setAccount(null);
     setError('');
     fetchAll();
+    // fetchAll is intentionally omitted — it closes over `accountId` and we
+    // re-create it on every render. Re-running on accountId change is enough.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
 
   const fetchAll = async (force = false) => {
@@ -629,7 +631,6 @@ function AccountDashboard({ user, onLogout }) {
             <h1 className="bb-h1">{account.account_name}</h1>
             <div className="bb-sub">
               Meta account ID: <span style={{ fontFamily: 'var(--bb-font-mono)' }}>{account.meta_account_id || '—'}</span>
-              {' · last sync just now'}
             </div>
           </div>
           <div className="bb-header-actions">

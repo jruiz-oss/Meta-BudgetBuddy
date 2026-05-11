@@ -9,7 +9,15 @@ import Sidebar from '../components/Sidebar';
 import { SkeletonStatTile, SkeletonCard } from '../components/Skeleton';
 import SpendChart from '../components/SpendChart';
 import { useToast } from '../components/Toast';
+import { invalidateCache } from '../cache';
 import './DetailPages.css';
+
+// Bust the cached views that the user is likely to navigate back to after
+// applying a budget change here. Without these, Home / AccountDashboard would
+// show stale rec/budget numbers until the 90s TTL elapses.
+const bustParentCaches = (accountId) => {
+  invalidateCache('home-data', `dashboard-${accountId}`);
+};
 
 function CampaignDetail({ user, onLogout }) {
   const { campaignId, accountId } = useParams();
@@ -124,6 +132,7 @@ function CampaignDetail({ user, onLogout }) {
         toast.error(msg, { title: 'Apply failed' });
       } else if (failures.length) {
         toast.warn(`${applied} applied; ${failures.length} failed. ${failures[0].error || ''}`, { title: 'Partial apply' });
+        bustParentCaches(accountId);
         fetchData();
       } else if (skipped.length && applied === 0) {
         toast.info('No budget changes sent — already on pace or unchanged.', { title: 'Nothing to apply' });
@@ -133,6 +142,7 @@ function CampaignDetail({ user, onLogout }) {
           `${applied} budget change${applied === 1 ? '' : 's'} pushed to Meta.`,
           { title: 'Applied' },
         );
+        bustParentCaches(accountId);
         fetchData();
       }
     } catch (err) {
@@ -195,6 +205,7 @@ function CampaignDetail({ user, onLogout }) {
       } else if (failures.length) {
         setAdsetResults((p) => ({ ...p, [adset.id]: { ok: true, partial: true, msg: failures[0].error } }));
         toast.warn(failures[0].error || 'Partial apply', { title: 'Apply warning' });
+        bustParentCaches(accountId);
         fetchData();
       } else if (skipped.length && applied === 0) {
         setAdsetResults((p) => ({ ...p, [adset.id]: { ok: true, noop: true } }));
@@ -203,6 +214,7 @@ function CampaignDetail({ user, onLogout }) {
       } else {
         setAdsetResults((p) => ({ ...p, [adset.id]: { ok: true, msg: `Applied — new daily: $${(alp.recommended_daily_budget || 0).toFixed(2)}` } }));
         toast.success(`${adset.adset_name}: pushed new daily of $${(alp.recommended_daily_budget || 0).toFixed(2)} to Meta.`);
+        bustParentCaches(accountId);
         fetchData();
       }
     } catch (err) {
