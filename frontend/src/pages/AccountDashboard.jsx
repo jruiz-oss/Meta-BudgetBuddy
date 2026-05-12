@@ -214,9 +214,17 @@ function AccountDashboard({ user, onLogout }) {
           const skipNote = sw.skipped_count > 0 ? ` (${sw.skipped_count} skipped)` : '';
           toast.success(`Wrote spend to ${sw.written_count} row(s) in "${sw.sheet_tab}"${skipNote}.`, { title: 'Sheet updated' });
         } else {
-          // 0 written — tell the user the first skip reason so they can diagnose
-          const firstReason = sw.skipped && sw.skipped.length > 0 ? ` Reason: ${sw.skipped[0].reason}` : '';
-          toast.warn(`Sheet: nothing written — ${sw.skipped_count || 0} row(s) skipped.${firstReason}`, { title: 'Sheet not updated' });
+          // 0 written — find the most informative skip reason (prefer "No matching"
+          // or "No pacing data" over the generic prefix-mismatch that fires for every
+          // other account's rows and would otherwise always show up first).
+          let shownReason = '';
+          if (sw.skipped && sw.skipped.length > 0) {
+            const priority = sw.skipped.find(s =>
+              s.reason && (s.reason.includes('No matching') || s.reason.includes('No pacing'))
+            ) || sw.skipped[0];
+            shownReason = ` Reason: ${priority.reason}`;
+          }
+          toast.warn(`Sheet: nothing written — ${sw.skipped_count || 0} row(s) skipped.${shownReason}`, { title: 'Sheet not updated' });
         }
       }
 

@@ -153,6 +153,34 @@ def _sheet_row_matches_account(scope_cell: str, account: Account) -> bool:
     return bool(cell_digits and acct_digits and cell_digits == acct_digits)
 
 
+def _scope_is_explicit_match(scope_cell: str, account: Account) -> bool:
+    """Return True when column D is a real text scope that explicitly names this account.
+
+    Distinguishes the three cases where _sheet_row_matches_account returns True:
+      1. Blank / empty  → implicit (applies to all) → False here
+      2. Numeric value  → implicit (formula result, not a scope) → False here
+      3. Text that names this account or its Meta ID → explicit → True here
+
+    Used to skip prefix-based routing (_row_prefix_matches_account) when the sheet
+    row has already been pinned to a specific account via column D.  This matters for
+    campaigns whose name starts with an agency prefix (e.g. "Commit - Boosting 2026"
+    for the Choice Greens account) — the prefix would otherwise route the row to the
+    Commit account even though col D says "Choice Greens".
+    """
+    if not scope_cell or not str(scope_cell).strip():
+        return False  # blank — implicit
+    cleaned = str(scope_cell).strip().replace("$", "").replace(",", "")
+    try:
+        float(cleaned)
+        return False  # numeric formula result — implicit
+    except ValueError:
+        pass
+    if cleaned.strip().startswith('#'):
+        return False  # formula error — implicit
+    # It's a real text scope — check if it names this account
+    return _sheet_row_matches_account(scope_cell, account)
+
+
 def _get_meta_section(worksheet):
     """
     Return rows from the Meta section of the worksheet.
@@ -688,7 +716,9 @@ def preview_matches(account_id):
                 "match_type": "account_scope_mismatch",
             })
             continue
-        if not _row_prefix_matches_account(row["name"], account, all_user_accounts):
+        # When col D is a real text scope that explicitly names this account, trust it
+        # and skip the prefix check.  See _scope_is_explicit_match for rationale.
+        if not _scope_is_explicit_match(scope, account) and not _row_prefix_matches_account(row["name"], account, all_user_accounts):
             matches.append({
                 "sheet_name": row["name"],
                 "account_scope": scope,
@@ -777,12 +807,18 @@ def sync_budgets_for_account(account_id):
                 "reason": "Column D does not match this Budget Buddy account — row skipped",
             })
             continue
-        if not _row_prefix_matches_account(row["name"], account, all_user_accounts):
-            skipped.append({
-                "sheet_name": row["name"],
-                "reason": "Row name prefix matches a different account — row skipped",
-            })
-            continue
+        # When col D is a real text scope that explicitly names this account, trust it
+        # and skip the prefix check.  This handles campaigns whose name starts with an
+        # agency prefix (e.g. "Commit - Boosting 2026" for the Choice Greens account) —
+        # without this, the prefix matcher would route the row to the Commit account
+        # even though col D says "Choice Greens".
+        if not _scope_is_explicit_match(scope, account):
+            if not _row_prefix_matches_account(row["name"], account, all_user_accounts):
+                skipped.append({
+                    "sheet_name": row["name"],
+                    "reason": "Row name prefix matches a different account — row skipped",
+                })
+                continue
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
         campaign = _match_campaign(match_name, db_campaigns)
         if not campaign:
@@ -1018,12 +1054,15 @@ def write_spend_for_account(account_id):
                 "reason": "Column D does not match this Budget Buddy account — row skipped",
             })
             continue
-        if not _row_prefix_matches_account(row["name"], account, all_user_accounts):
-            skipped.append({
-                "sheet_name": row["name"],
-                "reason": "Row name prefix matches a different account — row skipped",
-            })
-            continue
+        # When col D is a real text scope that explicitly names this account, trust it
+        # and skip the prefix check.  See _scope_is_explicit_match for rationale.
+        if not _scope_is_explicit_match(scope, account):
+            if not _row_prefix_matches_account(row["name"], account, all_user_accounts):
+                skipped.append({
+                    "sheet_name": row["name"],
+                    "reason": "Row name prefix matches a different account — row skipped",
+                })
+                continue
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
         matched_campaigns = _match_all_campaigns(match_name, db_campaigns)
         if not matched_campaigns:
