@@ -344,31 +344,31 @@ _FUZZY_MATCH_THRESHOLD = 0.5
 _SCORE_TIE_EPS = 1e-6
 
 
-def _match_campaign(sheet_name: str, db_campaigns: list):
+def _match_campaign_with_score(sheet_name: str, db_campaigns: list):
     """
-    Match a sheet row name to a Campaign object.
+    Match a sheet row name to a Campaign object, returning (campaign, score).
 
     Priority:
-      1. Exact match
-      2. Case-insensitive match
-      3. Substring match only when **unique** among tracked campaigns
-      4. Word-overlap ≥ threshold with a clear winner (no tie for top score)
+      1. Exact match            → score 4.0 (sentinel)
+      2. Case-insensitive match → score 3.0 (sentinel)
+      3. Substring match (unique) → score 2.0 (sentinel)
+      4. Word-overlap ≥ threshold with a clear winner → score = overlap fraction
 
-    Order is deterministic (sorted by campaign name) so results don't flap.
+    Returns (None, 0.0) when no credible match is found.
     """
     if not sheet_name or not db_campaigns:
-        return None
+        return None, 0.0
 
     campaigns = sorted(db_campaigns, key=lambda c: (c.campaign_name or "").lower())
 
     for c in campaigns:
         if c.campaign_name == sheet_name:
-            return c
+            return c, 4.0
 
     sheet_lower = sheet_name.lower()
     for c in campaigns:
         if c.campaign_name.lower() == sheet_lower:
-            return c
+            return c, 3.0
 
     substring_hits = []
     for c in campaigns:
@@ -376,7 +376,7 @@ def _match_campaign(sheet_name: str, db_campaigns: list):
         if sheet_lower in meta_lower or meta_lower in sheet_lower:
             substring_hits.append(c)
     if len(substring_hits) == 1:
-        return substring_hits[0]
+        return substring_hits[0], 2.0
     pool = substring_hits if len(substring_hits) > 1 else campaigns
 
     scored = [(_word_overlap_score(sheet_name, c.campaign_name), c) for c in pool]
@@ -384,8 +384,14 @@ def _match_campaign(sheet_name: str, db_campaigns: list):
     best_score, best_c = scored[0]
     second_score = scored[1][0] if len(scored) > 1 else -1.0
     if best_score >= _FUZZY_MATCH_THRESHOLD and (best_score - second_score) > _SCORE_TIE_EPS:
-        return best_c
-    return None
+        return best_c, best_score
+    return None, 0.0
+
+
+def _match_campaign(sheet_name: str, db_campaigns: list):
+    """Convenience wrapper — returns just the campaign (or None)."""
+    campaign, _ = _match_campaign_with_score(sheet_name, db_campaigns)
+    return campaign
 
 
 def _match_all_campaigns(sheet_name: str, db_campaigns: list) -> list:
@@ -799,6 +805,22 @@ def sync_budgets_for_account(account_id):
     allocations_updated = []  # adset allocation changes
     skipped = []
 
+    # ------------------------------------------------------------------
+    # Two-pass matching: best-score-wins per campaign.
+    #
+    # Problem this solves: when the master sheet has rows from multiple
+    # clients and a row like "Peter Piper Pizza Boosting" has no
+    # "AccountName - " prefix, it passes the prefix filter for every
+    # account. If another row ("Hawkeye Electric - Boosting" → stripped
+    # to "Boosting") also matches the same campaign, the last row wins
+    # — whichever appears later in the sheet stomps the correct budget.
+    #
+    # Solution: collect (sheet_row, match_name, campaign, score) for all
+    # candidate rows, then for each campaign keep only the row with the
+    # highest score. Ties stay with the first/higher-priority row.
+    # ------------------------------------------------------------------
+    candidate_rows = []  # list of (row, match_name, campaign, score)
+
     for row in sheet_rows:
         scope = row.get("account_scope") or ""
         if not _sheet_row_matches_account(scope, account):
@@ -807,11 +829,6 @@ def sync_budgets_for_account(account_id):
                 "reason": "Column D does not match this Budget Buddy account — row skipped",
             })
             continue
-        # When col D is a real text scope that explicitly names this account, trust it
-        # and skip the prefix check.  This handles campaigns whose name starts with an
-        # agency prefix (e.g. "Commit - Boosting 2026" for the Choice Greens account) —
-        # without this, the prefix matcher would route the row to the Commit account
-        # even though col D says "Choice Greens".
         if not _scope_is_explicit_match(scope, account):
             if not _row_prefix_matches_account(row["name"], account, all_user_accounts):
                 skipped.append({
@@ -820,11 +837,28 @@ def sync_budgets_for_account(account_id):
                 })
                 continue
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
-        campaign = _match_campaign(match_name, db_campaigns)
+        campaign, score = _match_campaign_with_score(match_name, db_campaigns)
         if not campaign:
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
+        candidate_rows.append((row, match_name, campaign, score))
 
+    # Keep only the best-scoring row per campaign.
+    best_by_campaign = {}  # campaign.id → (row, match_name, campaign, score)
+    for row, match_name, campaign, score in candidate_rows:
+        prev = best_by_campaign.get(campaign.id)
+        if prev is None or score > prev[3]:
+            best_by_campaign[campaign.id] = (row, match_name, campaign, score)
+        else:
+            skipped.append({
+                "sheet_name": row["name"],
+                "reason": (
+                    f"Outscored by '{prev[0]['name']}' for campaign "
+                    f"'{campaign.campaign_name}' (score {prev[3]:.2f} vs {score:.2f})"
+                ),
+            })
+
+    for row, match_name, campaign, _score in best_by_campaign.values():
         # Campaign-level budget
         if row["monthly_budget"] is not None:
             total_budget = row["monthly_budget"]
