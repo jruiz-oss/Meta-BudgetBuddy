@@ -347,19 +347,62 @@ def run_pacing(account_id):
     # the snapshot date into the current month.
     snapshot_date = max(month_start, yesterday)
 
-    # Eager-load adsets so worker threads don't trigger lazy-loads when accessing
-    # campaign.adsets — that's a Flask app context error waiting to happen.
+    # Eager-load adsets AND pacing_data so worker threads don't trigger lazy-loads
+    # and so we can pre-filter dead campaigns before hitting Meta's API.
     campaigns = (
         Campaign.query
         .filter_by(account_id=account_id, is_active=True)
-        .options(selectinload(Campaign.adsets))
+        .options(
+            selectinload(Campaign.adsets),
+            selectinload(Campaign.pacing_data),
+        )
         .all()
     )
     included = [c for c in campaigns if _campaign_should_run_today(c, today)]
 
-    # Optional: scope the run to a single campaign (used by the Campaign Detail page).
+    # ------------------------------------------------------------------
+    # Dead-campaign pre-filter (mirrors the dashboard's is_zero_spend logic)
+    # ------------------------------------------------------------------
+    # If pacing has already run this month and every current-month pacing row
+    # for a campaign shows $0 actual spend, that campaign has been confirmed
+    # dead by a prior run — Meta returned $0. Skip it rather than calling Meta
+    # again and generating another $0 recommendation row.
+    #
+    # Why it's safe:
+    #  • First run of the month: no current-month PacingData exists yet →
+    #    the filter is a no-op → all ALWAYS_ON campaigns still run once so we
+    #    can discover their status.
+    #  • Subsequent runs: campaigns that came back $0 on the first run are
+    #    excluded. Campaigns with real spend are never skipped.
+    #  • Single-campaign scope (campaign_id in body): bypass this filter so the
+    #    Campaign Detail page can always re-query a specific campaign on demand.
     body = request.get_json(silent=True) or {}
     single_campaign_id = body.get("campaign_id")
+
+    skipped_ended = []
+    if not single_campaign_id:
+        pacing_ran_this_month = PacingRun.query.filter(
+            PacingRun.account_id == account_id,
+            PacingRun.run_at >= datetime(today.year, today.month, 1),
+        ).first() is not None
+
+        if pacing_ran_this_month:
+            live = []
+            for c in included:
+                mtd_rows = [
+                    p for p in (c.pacing_data or [])
+                    if p.date and p.date >= month_start
+                ]
+                if mtd_rows and all((p.actual_spend or 0) == 0 for p in mtd_rows):
+                    skipped_ended.append({
+                        "campaign_id": c.id,
+                        "campaign_name": c.campaign_name,
+                        "reason": "all_mtd_spend_zero",
+                    })
+                else:
+                    live.append(c)
+            included = live
+
     if single_campaign_id:
         included = [c for c in included if c.id == int(single_campaign_id)]
 
@@ -646,6 +689,7 @@ def run_pacing(account_id):
         "adjustments_needed": adjustments_needed,
         "recommendations": recommendations,
         "failures": failures,
+        "skipped_ended": skipped_ended,
         "sheet_sync": sheet_sync_result,
         "sheet_writeback": sheet_writeback,
     }), 200
