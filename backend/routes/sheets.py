@@ -181,6 +181,33 @@ def _scope_is_explicit_match(scope_cell: str, account: Account) -> bool:
     return _sheet_row_matches_account(scope_cell, account)
 
 
+def _extract_bracket_scope(name: str, fallback_scope: str):
+    """Detect bracket-scope notation in a sheet row name.
+
+    If the name starts with "[Account Name]", extract the bracketed text as an
+    explicit account scope and return the remainder as the clean campaign name.
+
+    Examples:
+      "[Phoenix Raceway - NASCAR] FB/IG Ads (Primary Geo)"
+        → name="FB/IG Ads (Primary Geo)", scope="Phoenix Raceway - NASCAR"
+
+      "Camelback - Lodge"  (no brackets)
+        → name="Camelback - Lodge", scope=fallback_scope  (unchanged)
+
+    The bracket scope takes priority over whatever is in column D (fallback_scope).
+    """
+    import re
+    if not name:
+        return name, fallback_scope
+    m = re.match(r'^\[([^\]]+)\]\s*(.*)', name)
+    if not m:
+        return name, fallback_scope
+    bracket_content = m.group(1).strip()
+    remainder = m.group(2).strip()
+    # Use the bracketed text as scope; fall back to original name if remainder is empty
+    return (remainder or name), (bracket_content or fallback_scope)
+
+
 def _get_meta_section(worksheet):
     """
     Return rows from the Meta section of the worksheet.
@@ -244,6 +271,10 @@ def _get_meta_section(worksheet):
             notes = r[5].strip()
             last_paced = r[6].strip()
             sheet_row = first_sr + off
+            # Bracket-scope notation: "[Account Name] Campaign Name"
+            # Takes priority over column D. Strips the bracket from the name
+            # so campaign matching only sees "Campaign Name".
+            name, account_scope = _extract_bracket_scope(name, account_scope)
             if name:
                 rows.append({
                     "row_index": sheet_row,
@@ -274,6 +305,7 @@ def _get_meta_section(worksheet):
         mtd_spend = _parse_float(row[2]) if len(row) > 2 else None
         notes = row[5].strip() if len(row) > 5 else ""
         last_paced = row[6].strip() if len(row) > 6 else ""
+        name, account_scope = _extract_bracket_scope(name, account_scope)
         if name:
             rows.append({
                 "row_index": i + 1,
@@ -522,43 +554,77 @@ def _parse_allocations_from_notes(notes: str):
 def _strip_account_prefix(sheet_name: str, current_account, all_accounts: list) -> str:
     """Strip the account-identifier prefix from a sheet row name before campaign matching.
 
-    Sheet rows often follow "AccountPrefix - Campaign Name" format. Without stripping,
-    the prefix token bleeds into the word-overlap score and causes false matches.
-    Example: "Camelback - Meetings" would match "Commit 2026: Camelback Mountain
-    Adventures" on the shared "camelback" token (score 0.5) even though "Meetings"
-    and "Mountain Adventures" are completely different campaigns.
+    Sheet rows follow "AccountPrefix - Campaign Name" format. Without stripping, the
+    prefix tokens bleed into the word-overlap score and cause false matches.
 
-    After stripping: "Meetings" has zero overlap with "Mountain Adventures" → no match.
-    "Lodge" matches only "Lodge - Sales". "Aquatopia" matches only "Aquatopia - Traffic".
+    Handles account names that themselves contain " - " (e.g. "Phoenix Raceway - NASCAR").
+    The old approach split only on the *first* " - " and would leave "NASCAR - Campaign"
+    instead of "Campaign" for rows like "Phoenix Raceway - NASCAR - Campaign Name".
 
-    Strips only when:
-      1. Name contains " - " (has a prefix segment)
-      2. Prefix fuzzy-matches the current account (≥ threshold)
-      3. No other account matches the prefix better
+    Now tries every possible " - "-delimited prefix (shortest to longest) and picks the
+    one whose tokens best match the account name (symmetric overlap: penalises both
+    under-match and over-match). Ties go to the longest prefix so that "Phoenix Raceway -
+    NASCAR" beats "Phoenix Raceway" when the account name IS "Phoenix Raceway - NASCAR".
+
+    Strips only when the best-scoring prefix matches the current account at least as well
+    as any other account (no other account owns this prefix more strongly).
 
     Returns the original name unchanged when stripping is inappropriate.
     """
     if not sheet_name or ' - ' not in sheet_name:
         return sheet_name
 
-    prefix = sheet_name.split(' - ')[0].strip()
-    if not prefix:
+    parts = sheet_name.split(' - ')
+    acct_tokens = _tokenise(current_account.account_name or "")
+    if not acct_tokens:
         return sheet_name
 
-    current_score = _word_overlap_score(prefix, current_account.account_name or "")
-    if current_score < _FUZZY_MATCH_THRESHOLD:
-        return sheet_name  # prefix doesn't match current account — leave intact
+    best_score = -1.0
+    best_i = None
 
-    for acct in all_accounts:
-        if acct.id == current_account.id:
+    # Try each possible prefix length (1 segment up to N-1 segments).
+    for i in range(1, len(parts)):
+        prefix = ' - '.join(parts[:i]).strip()
+        if not prefix:
             continue
-        if _word_overlap_score(prefix, acct.account_name or "") > current_score:
-            return sheet_name  # another account owns this prefix — leave intact
 
-    # Strip "Prefix - " from the front
-    stripped = sheet_name[len(prefix):].lstrip()
-    if stripped.startswith('-'):
-        stripped = stripped[1:].lstrip()
+        prefix_tokens = _tokenise(prefix)
+        if not prefix_tokens:
+            continue
+
+        # Symmetric score: overlap / max(len) penalises prefixes that contain
+        # extra tokens not in the account name AND prefixes that are too short.
+        overlap = len(prefix_tokens & acct_tokens)
+        score = overlap / max(len(prefix_tokens), len(acct_tokens))
+
+        if score < _FUZZY_MATCH_THRESHOLD:
+            continue
+
+        # Verify this prefix doesn't match another account better.
+        better_exists = False
+        for acct in all_accounts:
+            if acct.id == current_account.id:
+                continue
+            other_tokens = _tokenise(acct.account_name or "")
+            if not other_tokens:
+                continue
+            other_overlap = len(prefix_tokens & other_tokens)
+            other_score = other_overlap / max(len(prefix_tokens), len(other_tokens))
+            if other_score > score:
+                better_exists = True
+                break
+        if better_exists:
+            continue
+
+        # Prefer higher score; ties go to the longest prefix (largest i).
+        if score > best_score or (score == best_score and best_i is not None and i > best_i):
+            best_score = score
+            best_i = i
+
+    if best_i is None:
+        return sheet_name
+
+    stripped = ' - '.join(parts[best_i:]).strip()
     return stripped if stripped else sheet_name
 
 
