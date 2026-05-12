@@ -214,17 +214,26 @@ function AccountDashboard({ user, onLogout }) {
           const skipNote = sw.skipped_count > 0 ? ` (${sw.skipped_count} skipped)` : '';
           toast.success(`Wrote spend to ${sw.written_count} row(s) in "${sw.sheet_tab}"${skipNote}.`, { title: 'Sheet updated' });
         } else {
-          // 0 written — find the most informative skip reason (prefer "No matching"
-          // or "No pacing data" over the generic prefix-mismatch that fires for every
-          // other account's rows and would otherwise always show up first).
-          let shownReason = '';
-          if (sw.skipped && sw.skipped.length > 0) {
-            const priority = sw.skipped.find(s =>
-              s.reason && (s.reason.includes('No matching') || s.reason.includes('No pacing'))
-            ) || sw.skipped[0];
-            shownReason = ` Reason: ${priority.reason}`;
+          // 0 written. Many skips are expected — rows belonging to other accounts
+          // are always filtered out and should not trigger a warning.
+          // Only surface skips that are actually actionable for this account.
+          const NOISE_REASONS = [
+            'Row name prefix matches a different account',
+            'Column D does not match this Budget Buddy account',
+            'Outscored by',
+          ];
+          const actionable = (sw.skipped || []).filter(s =>
+            s.reason && !NOISE_REASONS.some(n => s.reason.startsWith(n))
+          );
+          if (actionable.length > 0) {
+            const reason = actionable[0].reason;
+            const extra = actionable.length > 1 ? ` (+${actionable.length - 1} more)` : '';
+            toast.warn(
+              `Sheet: ${actionable.length} row(s) couldn't be matched. ${reason}${extra}`,
+              { title: 'Sheet not updated' }
+            );
           }
-          toast.warn(`Sheet: nothing written — ${sw.skipped_count || 0} row(s) skipped.${shownReason}`, { title: 'Sheet not updated' });
+          // If all skips were just other-account rows, stay silent — that's normal.
         }
       }
 
