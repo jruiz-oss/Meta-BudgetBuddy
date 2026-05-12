@@ -131,6 +131,34 @@ def _auto_import_campaigns(account):
             if monthly_budget <= 0:
                 monthly_budget = 100.0
 
+            # Auto-infer flight type and dates from Meta's stop_time / start_time.
+            # Campaigns with a stop_time in Meta are LIMITED flights; without one they
+            # run indefinitely (ALWAYS_ON). This prevents ended-flight campaigns from
+            # being included in pacing runs just because they're still is_active=True.
+            auto_flight_type  = 'ALWAYS_ON'
+            auto_flight_start = None
+            auto_flight_end   = None
+
+            meta_start_raw = c.get('start_time')
+            meta_stop_raw  = c.get('stop_time')
+
+            if meta_start_raw:
+                try:
+                    auto_flight_start = datetime.fromisoformat(
+                        meta_start_raw.replace('+0000', '+00:00').replace('Z', '+00:00')
+                    ).date()
+                except (ValueError, AttributeError):
+                    pass
+
+            if meta_stop_raw:
+                try:
+                    auto_flight_end = datetime.fromisoformat(
+                        meta_stop_raw.replace('+0000', '+00:00').replace('Z', '+00:00')
+                    ).date()
+                    auto_flight_type = 'LIMITED'
+                except (ValueError, AttributeError):
+                    pass
+
             # Upsert campaign
             existing = Campaign.query.filter_by(
                 account_id=account.id, meta_campaign_id=meta_id
@@ -140,6 +168,11 @@ def _auto_import_campaigns(account):
                 existing.campaign_name = name
                 existing.is_active = True
                 existing.budget_mode = budget_mode
+                # Refresh flight dates from Meta on every re-import so ended
+                # campaigns get correctly marked LIMITED even after the fact.
+                existing.flight_type = auto_flight_type
+                existing.flight_start_date = auto_flight_start
+                existing.flight_end_date = auto_flight_end
                 campaign = existing
             else:
                 campaign = Campaign(
@@ -147,9 +180,11 @@ def _auto_import_campaigns(account):
                     meta_campaign_id=meta_id,
                     campaign_name=name,
                     monthly_budget=monthly_budget,
-                    flight_type='ALWAYS_ON',
+                    flight_type=auto_flight_type,
                     budget_mode=budget_mode,
                 )
+                campaign.flight_start_date = auto_flight_start
+                campaign.flight_end_date = auto_flight_end
                 db.session.add(campaign)
                 db.session.flush()  # populate campaign.id
 

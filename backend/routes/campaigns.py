@@ -116,6 +116,10 @@ def sync_campaigns(account_id):
                 # Return the saved monthly budget so the import modal can pre-fill it
                 # (especially important for ABO campaigns which have no campaign-level daily budget).
                 'saved_monthly_budget': tracked_by_meta_id[c['id']].monthly_budget if c['id'] in tracked_by_meta_id else None,
+                # Pass Meta's schedule dates through so the sync POST can auto-configure
+                # flight type and dates (instead of defaulting everything to ALWAYS_ON).
+                'meta_start_time': c.get('start_time'),
+                'meta_stop_time': c.get('stop_time'),
                 'adsets': [],
             }
 
@@ -226,14 +230,56 @@ def sync_campaigns(account_id):
                 })
                 continue
 
+        # Auto-infer flight type and dates from Meta's schedule fields when
+        # the frontend didn't explicitly provide flight_type / dates.
+        # If the user explicitly sent flight_type in the payload we honour it;
+        # otherwise we detect LIMITED vs ALWAYS_ON from stop_time.
+        #
+        # Meta returns ISO 8601 datetimes like "2026-05-31T07:00:00+0000".
+        # We only need the date portion.
+        inferred_flight_type = 'ALWAYS_ON'
+        inferred_start = None
+        inferred_end   = None
+
+        meta_start_raw = entry.get('meta_start_time') or entry.get('start_time')
+        meta_stop_raw  = entry.get('meta_stop_time')  or entry.get('stop_time')
+
+        if meta_start_raw:
+            try:
+                inferred_start = datetime.fromisoformat(
+                    meta_start_raw.replace('+0000', '+00:00').replace('Z', '+00:00')
+                ).date()
+            except (ValueError, AttributeError):
+                pass
+
+        if meta_stop_raw:
+            try:
+                inferred_end = datetime.fromisoformat(
+                    meta_stop_raw.replace('+0000', '+00:00').replace('Z', '+00:00')
+                ).date()
+                inferred_flight_type = 'LIMITED'
+            except (ValueError, AttributeError):
+                pass
+
+        flight_type  = entry.get('flight_type') or inferred_flight_type
+        flight_start = entry.get('flight_start_date') or (inferred_start.isoformat() if inferred_start else None)
+        flight_end   = entry.get('flight_end_date')   or (inferred_end.isoformat()   if inferred_end   else None)
+
+        # If the user explicitly set ALWAYS_ON, respect that even if Meta has a stop_time.
+        # If they set LIMITED but gave no dates, fall back to the inferred ones.
+        if flight_type == 'LIMITED' and not flight_end and inferred_end:
+            flight_end = inferred_end.isoformat()
+        if flight_type == 'LIMITED' and not flight_start and inferred_start:
+            flight_start = inferred_start.isoformat()
+
         validated.append({
             'meta_id': meta_id,
             'name': name,
             'monthly_budget': monthly_budget,
             'budget_mode': budget_mode,
-            'flight_type': entry.get('flight_type', 'ALWAYS_ON'),
-            'flight_start': entry.get('flight_start_date'),
-            'flight_end': entry.get('flight_end_date'),
+            'flight_type': flight_type,
+            'flight_start': flight_start,
+            'flight_end': flight_end,
             'adsets': adsets_payload,
         })
 
