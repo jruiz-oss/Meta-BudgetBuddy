@@ -7,6 +7,8 @@ import axios from 'axios';
 
 // Toast provider
 import { ToastProvider } from './components/Toast';
+// Auto-pace orchestrator — fires once per browser session after auth.
+import AutoPaceRunner from './components/AutoPaceRunner';
 
 // Pages
 import Login from './pages/Login';
@@ -58,6 +60,8 @@ function App() {
 
   return (
     <ToastProvider>
+      {/* Auto-pace must live inside ToastProvider so it can fire the summary toast. */}
+      {user && <AutoPaceRunner user={user} />}
       <Router>
         <Routes>
           {!user ? (

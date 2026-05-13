@@ -940,6 +940,58 @@ button.bb-row-weight:focus-visible {
   padding: 12px 20px 16px; border-top: 1px solid var(--bb-line);
 }
 
+/* ── auto-pace progress modal ── */
+.bb-autopace-bar {
+  position: relative;
+  height: 10px;
+  background: var(--bb-surface-2);
+  border: 1px solid var(--bb-line);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.bb-autopace-bar-fill {
+  position: absolute; top: 0; left: 0; bottom: 0;
+  background: var(--bb-accent);
+  transition: width 0.35s ease;
+  border-radius: 999px;
+}
+.bb-autopace-bar-shimmer {
+  position: absolute; top: 0; bottom: 0;
+  left: -40%;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 100%
+  );
+  animation: bb-autopace-shimmer 1.4s linear infinite;
+  pointer-events: none;
+}
+@keyframes bb-autopace-shimmer {
+  0%   { left: -40%; }
+  100% { left: 100%; }
+}
+.bb-autopace-list {
+  list-style: none;
+  padding: 10px 0 0 0;
+  margin: 14px 0 0 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border-top: 1px solid var(--bb-line);
+}
+.bb-autopace-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+  color: var(--bb-fg);
+}
+.bb-autopace-icon-ok  { color: oklch(60% 0.15 150); }
+.bb-autopace-icon-err { color: var(--bb-warn-hot, oklch(58% 0.21 18)); }
+
 /* ── tabs ── */
 .bb-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--bb-line); margin-bottom: 20px; }
 .bb-tab-btn {
