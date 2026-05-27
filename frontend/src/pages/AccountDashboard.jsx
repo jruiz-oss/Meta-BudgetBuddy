@@ -41,6 +41,10 @@ function AccountDashboard({ user, onLogout }) {
   // Remove-campaign confirmation modal (replaces window.confirm)
   const [removeTarget, setRemoveTarget] = useState(null);
 
+  // Inline flight editor state
+  const [editingFlight, setEditingFlight] = useState(null); // { campaignId, campaignName, flight_type, start, end }
+  const [flightSaving, setFlightSaving] = useState(false);
+
   // Import-from-Meta modal state
   const [showImport, setShowImport] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
@@ -258,6 +262,27 @@ function AccountDashboard({ user, onLogout }) {
       fetchAll();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to remove campaign');
+    }
+  };
+
+  const handleSaveFlight = async () => {
+    if (!editingFlight || flightSaving) return;
+    setFlightSaving(true);
+    try {
+      const body = { flight_type: editingFlight.flight_type };
+      if (editingFlight.flight_type === 'LIMITED') {
+        if (editingFlight.start) body.flight_start_date = editingFlight.start;
+        if (editingFlight.end)   body.flight_end_date   = editingFlight.end;
+      }
+      await axios.put(`/api/settings/${accountId}/flights/${editingFlight.campaignId}`, body);
+      toast.success(`Flight updated for "${editingFlight.campaignName}".`);
+      setEditingFlight(null);
+      invalidateCache(`dashboard-${accountId}`, 'home-data');
+      fetchAll(true);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save flight');
+    } finally {
+      setFlightSaving(false);
     }
   };
 
@@ -857,6 +882,39 @@ function AccountDashboard({ user, onLogout }) {
           </div>
         )}
 
+        {/* Nothing-running alert — shown when all flights are ended or no pacing data exists */}
+        {(() => {
+          const today = new Date().toISOString().slice(0, 10);
+          const activeCamps = campaigns.filter(c => {
+            if (c.flight_type === 'ALWAYS_ON') return true;
+            if (c.flight_type === 'LIMITED') {
+              const end   = c.flight_end_date;
+              const start = c.flight_start_date;
+              if (!end) return true;
+              if (end < today) return false;
+              if (start && start > today) return false;
+              return true;
+            }
+            return true;
+          });
+          if (campaigns.length > 0 && activeCamps.length === 0) {
+            return (
+              <div className="bb-alert bb-alert-warn" style={{ marginBottom: 16 }}>
+                <strong>All campaign flights have ended.</strong> No pacing will run until at least one flight is active. Click a flight badge in the table below to update a campaign's schedule.
+              </div>
+            );
+          }
+          const hasPacing = campaigns.some(c => c.latest_pacing);
+          if (campaigns.length > 0 && !hasPacing) {
+            return (
+              <div className="bb-alert bb-alert-info" style={{ marginBottom: 16 }}>
+                No pacing data yet for this account. Click <strong>Run Pacing</strong> to generate recommendations.
+              </div>
+            );
+          }
+          return null;
+        })()}
+
         {/* Tracked campaigns table */}
         <div className="bb-acct">
           <div className="bb-acct-head" style={{ cursor: 'default' }}>
@@ -919,7 +977,21 @@ function AccountDashboard({ user, onLogout }) {
                           </div>
                         </td>
                         <td><span className="bb-mode bb-mode-abo">ABO</span></td>
-                        <td><span className="bb-mode bb-mode-adset">{c.flight_type || 'ALWAYS_ON'}</span></td>
+                        <td>
+                          <button
+                            className={`bb-mode bb-mode-adset bb-flight-btn bb-flight-${c.flight_status || 'active'}`}
+                            title="Click to edit flight schedule"
+                            onClick={() => setEditingFlight({
+                              campaignId: c.id,
+                              campaignName: c.campaign_name,
+                              flight_type: c.flight_type || 'ALWAYS_ON',
+                              start: c.flight_start_date || '',
+                              end: c.flight_end_date || '',
+                            })}
+                          >
+                            {c.flight_status === 'ended' ? '⚑ ended' : c.flight_status === 'pending' ? '○ pending' : c.flight_type === 'ALWAYS_ON' ? '∞ always on' : '● active'}
+                          </button>
+                        </td>
                         <td className="num">${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
                         <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
                         <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
@@ -965,7 +1037,21 @@ function AccountDashboard({ user, onLogout }) {
                         </div>
                       </td>
                       <td><span className="bb-mode bb-mode-cbo">CBO</span></td>
-                      <td><span className="bb-mode bb-mode-adset">{c.flight_type || 'ALWAYS_ON'}</span></td>
+                      <td>
+                        <button
+                          className={`bb-mode bb-mode-adset bb-flight-btn bb-flight-${c.flight_status || 'active'}`}
+                          title="Click to edit flight schedule"
+                          onClick={() => setEditingFlight({
+                            campaignId: c.id,
+                            campaignName: c.campaign_name,
+                            flight_type: c.flight_type || 'ALWAYS_ON',
+                            start: c.flight_start_date || '',
+                            end: c.flight_end_date || '',
+                          })}
+                        >
+                          {c.flight_status === 'ended' ? '⚑ ended' : c.flight_status === 'pending' ? '○ pending' : c.flight_type === 'ALWAYS_ON' ? '∞ always on' : '● active'}
+                        </button>
+                      </td>
                       <td className="num">${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
                       <td className="num">{lp?.current_daily_budget != null ? `$${lp.current_daily_budget.toFixed(2)}` : '—'}</td>
                       <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
@@ -995,6 +1081,73 @@ function AccountDashboard({ user, onLogout }) {
             </table>
           )}
         </div>
+
+        {/* Inline flight editor modal */}
+        {editingFlight && (
+          <div className="bb-modal-backdrop" onClick={() => setEditingFlight(null)}>
+            <div className="bb-modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+              <div className="bb-modal-head">
+                <div className="bb-modal-title">Edit flight · {editingFlight.campaignName}</div>
+                <button className="bb-icon-btn" onClick={() => setEditingFlight(null)}><X size={18} /></button>
+              </div>
+              <div className="bb-modal-body">
+                <div className="bb-form-group">
+                  <label className="bb-form-label">Flight type</label>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    {['ALWAYS_ON', 'LIMITED'].map(type => (
+                      <label key={type} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--bb-text-sm)', fontWeight: editingFlight.flight_type === type ? 600 : 400 }}>
+                        <input
+                          type="radio"
+                          name="flight_type"
+                          value={type}
+                          checked={editingFlight.flight_type === type}
+                          onChange={() => setEditingFlight(f => ({ ...f, flight_type: type }))}
+                        />
+                        {type === 'ALWAYS_ON' ? '∞ Always On' : '● Limited (date range)'}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                {editingFlight.flight_type === 'LIMITED' && (
+                  <div style={{ display: 'flex', gap: 16, marginTop: 14 }}>
+                    <div className="bb-form-group" style={{ flex: 1 }}>
+                      <label className="bb-form-label">Start date</label>
+                      <input
+                        type="date"
+                        className="bb-input"
+                        value={editingFlight.start || ''}
+                        onChange={e => setEditingFlight(f => ({ ...f, start: e.target.value }))}
+                      />
+                    </div>
+                    <div className="bb-form-group" style={{ flex: 1 }}>
+                      <label className="bb-form-label">End date</label>
+                      <input
+                        type="date"
+                        className="bb-input"
+                        value={editingFlight.end || ''}
+                        onChange={e => setEditingFlight(f => ({ ...f, end: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                )}
+                {editingFlight.flight_type === 'LIMITED' && editingFlight.start && editingFlight.end && editingFlight.end < editingFlight.start && (
+                  <div className="bb-alert bb-alert-error" style={{ marginTop: 10 }}>End date must be on or after start date.</div>
+                )}
+              </div>
+              <div className="bb-modal-foot">
+                <button className="bb-btn" onClick={() => setEditingFlight(null)} disabled={flightSaving}>Cancel</button>
+                <button
+                  className="bb-btn bb-btn-primary"
+                  onClick={handleSaveFlight}
+                  disabled={flightSaving || (editingFlight.flight_type === 'LIMITED' && editingFlight.start && editingFlight.end && editingFlight.end < editingFlight.start)}
+                >
+                  {flightSaving ? <Loader2 size={13} className="bb-spin" /> : null}
+                  {flightSaving ? 'Saving…' : 'Save flight'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {removeTarget && (
           <div className="bb-modal-backdrop" onClick={() => setRemoveTarget(null)}>

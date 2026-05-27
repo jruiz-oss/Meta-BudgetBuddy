@@ -514,6 +514,17 @@ button.bb-row-weight:focus-visible {
 .bb-mode-cbo   { background: oklch(95% 0.05 230); color: oklch(40% 0.15 240); }
 .bb-mode-adset { background: var(--bb-surface-2); color: var(--bb-fg-2); }
 
+/* Clickable flight badge — inherits bb-mode sizing, adds hover + status tones */
+.bb-flight-btn {
+  cursor: pointer;
+  border: none;
+  transition: filter 0.12s, box-shadow 0.12s;
+}
+.bb-flight-btn:hover { filter: brightness(0.93); box-shadow: 0 0 0 1.5px var(--bb-accent); }
+.bb-flight-active  { background: oklch(94% 0.08 155); color: oklch(35% 0.14 150); }
+.bb-flight-ended   { background: oklch(95% 0.06 30);  color: oklch(42% 0.14 25); }
+.bb-flight-pending { background: oklch(96% 0.05 260); color: oklch(42% 0.12 255); }
+
 /* status pill */
 .bb-status {
   display: inline-flex;

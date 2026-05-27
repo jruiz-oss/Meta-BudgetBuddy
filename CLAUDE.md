@@ -285,6 +285,16 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
 
+- [x] **2026-05-26 (session 15 — Sonnet)** — Per-account alerts, flight-aware budget splits, sheet notes column, clickable flight badges.
+  - **Why.** Three UX gaps reported: (1) no visible warning when an account has no active campaigns running; (2) when a CBO budget-split has a campaign that ended mid-month the other still got the original %, not 100%; (3) flight editing required going to Settings; (4) sheet notes (col F) were never surfaced in the UI.
+  - **`backend/database.py`** — added `Campaign.sheet_notes TEXT` column. Included in `Campaign.to_dict()` as `sheet_notes`. ⚠️ **Requires migration:** `ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sheet_notes TEXT;`
+  - **`backend/routes/sheets.py`** — `sync_budgets_for_account` now saves `row["notes"]` → `campaign.sheet_notes` on every sync. Also adds **flight-aware CBO split redistribution**: when a split-note ("50% to A / 50% to B") has one campaign whose `flight_status == 'ended'`, its percentage is proportionally redistributed to the still-active campaigns (e.g. if A ends, B gets 100%). The response includes `"flight_redistributed": true` on affected rows.
+  - **`frontend/src/pages/Home.jsx`** — `AccountSection` now computes a `nothingRunningAlert` for each account (triggers when all flights are ended OR no pacing data exists at all) and shows it as a `bb-alert-warn` or `bb-alert-info` strip inside the collapsed section. Also adds a **Notes column** to the campaign table: truncated to 38 chars with a `<NotesPopover>` component that anchors to the notes-expand button (not a center-screen modal) — uses `fixed` positioning calculated at mount time.
+  - **`frontend/src/pages/AccountDashboard.jsx`** — (1) Same "nothing running" alert logic above the Tracked Campaigns section. (2) Flight column now renders a **clickable `bb-flight-btn` badge** showing the real flight status (`∞ always on` / `● active` / `○ pending` / `⚑ ended`) color-coded green/orange/grey/red. Clicking opens an **inline flight editor modal** (flight_type radio + start/end date pickers) that saves via `PUT /api/settings/<id>/flights/<campaignId>` without leaving the page. New handler: `handleSaveFlight`. New state: `editingFlight`, `flightSaving`.
+  - **`frontend/src/index.css`** — added `.bb-flight-btn`, `.bb-flight-active`, `.bb-flight-ended`, `.bb-flight-pending` CSS classes for the clickable flight badges.
+  - ⚠️ **Run in Neon before deploying:** `ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sheet_notes TEXT;`
+  - Verified: `python3 ast.parse` clean across `database.py`, `routes/sheets.py`, `routes/pacing.py`.
+
 - [x] **2026-05-09 (session 14 — Opus)** — Security pass: token-at-rest encryption, header-auth for Meta API, hardened cron + digest emails.
   - **Why.** Audit found four issues that all centered on tokens/secrets traveling in places they shouldn't. The Meta tokens were plaintext in Postgres (a Neon snapshot or backup leak would hand attackers working credentials), the same tokens were sent as a `?access_token=` URL query param to Meta (logs along the path could capture them), the manual cron endpoint accepted its secret in the query string (same logging concern), and the daily digest email built HTML by concatenating user-controlled fields without escaping (low-risk XSS via campaign names).
   - **`backend/crypto.py`** (new) — Fernet-based `encrypt_token` / `decrypt_token` helpers with a versioned `enc_v1:` prefix. Lazily reads `TOKEN_ENCRYPTION_KEY` so module import doesn't fail when the env var is absent (e.g. during ast.parse). In production the missing env var raises a hard error; in dev, falls back to a well-known dev key with a logged warning.
@@ -423,6 +433,7 @@ Vercel redeploys the frontend automatically on push to `main`.
 
 ## Known Issues / Open TODOs
 
+- [ ] **Run `ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sheet_notes TEXT;` in Neon before deploying session-15 code** — needed for sheet notes to save.
 - [ ] **Set `TOKEN_ENCRYPTION_KEY` env var on Railway before pushing session-14 code** — without it, the app refuses to boot in production. See deploy steps below.
 - [ ] **Set `INVITE_CODE` env var on Railway before pushing session-13 code** — without it, anyone can register. With it, teammates need the code (share via 1Password / Slack DM / out-of-band).
 - [ ] **Run the ABO migration in Neon before deploying session-7 code** — see SQL block above. Once that's done, the new code is safe to push.

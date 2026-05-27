@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { getCached, isStale, setCached, invalidateCache } from '../cache';
@@ -68,6 +68,100 @@ const IArrowSub = () => (
     <path d="M5 4v8a3 3 0 0 0 3 3h11"/><path d="m15 11 4 4-4 4"/>
   </svg>
 );
+const IFileText = () => (
+  <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+  </svg>
+);
+
+// ── Notes popover — anchors to the cell, not center screen ───────
+function NotesPopover({ notes, onClose, anchorRef }) {
+  const popRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (!anchorRef?.current || !popRef.current) return;
+    const cell = anchorRef.current.getBoundingClientRect();
+    const pop  = popRef.current.getBoundingClientRect();
+    const vw = window.innerWidth;
+    let left = cell.left;
+    // Clamp so popover doesn't overflow right edge
+    if (left + pop.width + 12 > vw) left = Math.max(8, vw - pop.width - 12);
+    setPos({ top: cell.bottom + 6 + window.scrollY, left });
+  }, [anchorRef]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (popRef.current && !popRef.current.contains(e.target) &&
+          anchorRef?.current && !anchorRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose, anchorRef]);
+
+  return (
+    <div
+      ref={popRef}
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        left: pos.left,
+        zIndex: 9999,
+        background: 'var(--bb-surface)',
+        border: '1px solid var(--bb-line)',
+        borderRadius: 'var(--bb-radius)',
+        boxShadow: '0 4px 18px rgba(0,0,0,0.18)',
+        padding: '12px 14px',
+        maxWidth: 340,
+        minWidth: 180,
+        fontSize: 'var(--bb-text-sm)',
+        color: 'var(--bb-fg)',
+        lineHeight: 1.5,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+        <span style={{ fontWeight: 600, fontSize: 'var(--bb-text-xs)', color: 'var(--bb-mute)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sheet Notes</span>
+        <button
+          onClick={onClose}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--bb-mute)', padding: 0, lineHeight: 1 }}
+        >
+          <X size={12} />
+        </button>
+      </div>
+      {notes}
+    </div>
+  );
+}
+
+// ── Inline notes cell with expand trigger ────────────────────────
+function NotesCell({ notes }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  if (!notes) return <span style={{ color: 'var(--bb-mute)' }}>—</span>;
+  const snippet = notes.length > 38 ? notes.slice(0, 38).trimEnd() + '…' : notes;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: 160 }}>
+      <span style={{ color: 'var(--bb-fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--bb-text-xs)' }}>
+        {snippet}
+      </span>
+      {notes.length > 0 && (
+        <button
+          ref={btnRef}
+          onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--bb-accent)', padding: 0, display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}
+          title="Expand notes"
+        >
+          <IFileText />
+        </button>
+      )}
+      {open && <NotesPopover notes={notes} onClose={() => setOpen(false)} anchorRef={btnRef} />}
+    </span>
+  );
+}
 
 // ── Helpers ──────────────────────────────────────────────────
 const fmt$ = (n, dec = 0) =>
@@ -150,6 +244,38 @@ function AccountSection({ acct, applying, skipped, results, search,
       return acc;
     }, []);
   }, [acct.campaigns, q]);
+
+  // Detect accounts where nothing is actually running right now
+  // Triggers when: all campaigns have ended flights OR no campaign has pacing data
+  const nothingRunningAlert = useMemo(() => {
+    if (acct.campaigns.length === 0) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    const activeCampaigns = acct.campaigns.filter(c => {
+      if (c.flight_type === 'ALWAYS_ON') return true;
+      if (c.flight_type === 'LIMITED') {
+        const end = c.flight_end_date;
+        const start = c.flight_start_date;
+        if (!end) return true; // no end date = assume active
+        if (end < today) return false; // flight ended
+        if (start && start > today) return false; // not started yet
+        return true;
+      }
+      return true;
+    });
+    // All flights have ended
+    if (activeCampaigns.length === 0) {
+      return { type: 'ended', msg: 'All campaign flights have ended. No pacing will run until a flight is active.' };
+    }
+    // No campaign has any pacing data at all
+    const hasPacingData = acct.campaigns.some(c => {
+      if ((c.budget_mode || 'CBO') === 'ABO') return (c.adsets || []).some(a => a.latest_pacing);
+      return !!c.latest_pacing;
+    });
+    if (!hasPacingData) {
+      return { type: 'no_data', msg: 'No pacing data yet. Run pacing to get recommendations for this account.' };
+    }
+    return null;
+  }, [acct.campaigns]);
 
   // Count actionable items — must be BEFORE any early return (hooks must be unconditional)
   const actionableCount = useMemo(() => {
@@ -237,6 +363,13 @@ function AccountSection({ acct, applying, skipped, results, search,
             No campaigns tracked for this account.
           </div>
         ) : (
+          <>
+          {nothingRunningAlert && (
+            <div className={`bb-alert ${nothingRunningAlert.type === 'ended' ? 'bb-alert-warn' : 'bb-alert-info'}`}
+              style={{ margin: '0 0 0 0', borderRadius: 0, borderLeft: 'none', borderRight: 'none', borderTop: 'none' }}>
+              <IAlert /> {nothingRunningAlert.msg}
+            </div>
+          )}
           <table className="bb-table">
             <thead>
               <tr>
@@ -248,6 +381,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                 <th className="num">Current Daily</th>
                 <th className="num">Rec. Daily</th>
                 <th>Status</th>
+                <th>Notes</th>
                 <th style={{ width: 1 }}>Action</th>
               </tr>
             </thead>
@@ -275,6 +409,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                       <td>
                         {lp ? <StatusPill status={lp.status} paceRatio={lp.pace_ratio} /> : null}
                       </td>
+                      <td><NotesCell notes={campaign.sheet_notes || ''} /></td>
                       <td><span style={{ fontSize: 'var(--bb-text-sm)', color: 'var(--bb-mute)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>per ad set <IArrowRight /></span></td>
                     </tr>
                   );
@@ -318,6 +453,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                           ) : '—'}
                         </td>
                         <td>{alp ? <StatusPill status={action} paceRatio={alp.pace_ratio} /> : <span style={{ color: 'var(--bb-mute)' }}>No data</span>}</td>
+                        <td><span style={{ color: 'var(--bb-mute)' }}>—</span></td>
                         <td><ActionCell rowKey={rowKey} res={res} isApplying={isApplying} isSkipped={isSkipped}
                           needsAction={needsAction} onApply={() => onApplyAdset(acct.id, campaign, adset)}
                           onSkip={() => onSkip(rowKey)} onUnskip={() => onUnskip(rowKey)} /></td>
@@ -359,6 +495,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                       ) : '—'}
                     </td>
                     <td>{lp ? <StatusPill status={status} paceRatio={lp.pace_ratio} /> : <span style={{ color: 'var(--bb-mute)' }}>No data</span>}</td>
+                    <td><NotesCell notes={campaign.sheet_notes || ''} /></td>
                     <td><ActionCell rowKey={rowKey} res={res} isApplying={isApplying} isSkipped={isSkipped}
                       needsAction={needsAction} onApply={() => onApplyCbo(acct.id, campaign)}
                       onSkip={() => onSkip(rowKey)} onUnskip={() => onUnskip(rowKey)} /></td>
@@ -367,6 +504,7 @@ function AccountSection({ acct, applying, skipped, results, search,
               })}
             </tbody>
           </table>
+          </>
         )
       )}
     </section>

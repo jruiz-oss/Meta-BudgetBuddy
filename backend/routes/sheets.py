@@ -925,6 +925,13 @@ def sync_budgets_for_account(account_id):
             })
 
     for row, match_name, campaign, _score in best_by_campaign.values():
+        # Persist raw sheet notes to the campaign so the UI can display them without
+        # re-fetching the sheet. Only update when the notes actually change to avoid
+        # marking rows dirty unnecessarily.
+        raw_notes = row.get("notes") or ""
+        if campaign.sheet_notes != raw_notes:
+            campaign.sheet_notes = raw_notes
+
         # Campaign-level budget
         if row["monthly_budget"] is not None:
             total_budget = row["monthly_budget"]
@@ -932,9 +939,14 @@ def sync_budgets_for_account(account_id):
             # CBO budget split — notes like "70% to Weddings / 30% to Wedding Brochure"
             # distribute the row's total budget across multiple CBO campaigns by %.
             # Example: one sheet row covers two campaigns; notes define the split.
+            #
+            # Flight-aware redistribution: if a campaign in the split has an ended flight,
+            # skip it and proportionally redistribute its % to the still-active campaigns.
+            # This handles mid-month flight endings where one campaign stops running but
+            # the other should receive the full budget going forward.
             cbo_split_applied = False
             if campaign.budget_mode == 'CBO':
-                split_allocs = _parse_allocations_from_notes(row.get("notes", ""))
+                split_allocs = _parse_allocations_from_notes(raw_notes)
                 if split_allocs:
                     split_proposed = []
                     split_ok = True
@@ -953,6 +965,17 @@ def sync_budgets_for_account(account_id):
                                 break
                             seen_ids.add(c.id)
                     if split_ok and split_proposed:
+                        # Separate active vs ended campaigns in the split.
+                        active_split = [(c, pct, n) for c, pct, n in split_proposed if c.flight_status != 'ended']
+                        ended_split  = [(c, pct, n) for c, pct, n in split_proposed if c.flight_status == 'ended']
+                        if ended_split and active_split:
+                            # Redistribute ended campaigns' percentages proportionally
+                            # to the still-running campaigns.
+                            active_total_pct = sum(pct for _, pct, _ in active_split)
+                            if active_total_pct > 0:
+                                scale = 100.0 / active_total_pct
+                                active_split = [(c, round(pct * scale, 4), n) for c, pct, n in active_split]
+                            split_proposed = active_split  # ended campaigns get $0 allocation change
                         for c, pct, alloc_name in split_proposed:
                             new_budget = round(total_budget * pct / 100, 2)
                             old_budget = c.monthly_budget
@@ -965,6 +988,7 @@ def sync_budgets_for_account(account_id):
                                     "new_budget": new_budget,
                                     "match_type": "cbo_split",
                                     "split_pct": pct,
+                                    "flight_redistributed": bool(ended_split),
                                 })
                         cbo_split_applied = True
 

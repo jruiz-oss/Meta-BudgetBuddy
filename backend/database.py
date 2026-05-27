@@ -164,6 +164,9 @@ class Campaign(db.Model):
     # ABO = budget set on each adset (campaign has no daily_budget, adsets carry it).
     # Defaults to CBO for backward compat with existing rows; new rows are detected at sync time.
     budget_mode = db.Column(db.String(10), default='CBO', nullable=False)
+    # Notes synced from col F of the Google Sheet (free-form text, ABO allocations, flight notes, etc.)
+    # Populated automatically during each budget sync. NULL when no sheet is configured or no match found.
+    sheet_notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     pacing_data = db.relationship('PacingData', backref='campaign', lazy=True, cascade='all, delete-orphan')
@@ -254,6 +257,7 @@ class Campaign(db.Model):
             'flight_status': self.flight_status,
             'is_active': self.is_active,
             'budget_mode': self.budget_mode,
+            'sheet_notes': self.sheet_notes or '',
             'adset_count': len(self.adsets),
             'created_at': self.created_at.isoformat(),
             'latest_pacing': latest,
