@@ -153,15 +153,6 @@ export default function AutoPaceRunner({ user }) {
             <Activity size={16} />
             Pacing all accounts
           </div>
-          <button
-            className="bb-btn bb-btn-ghost"
-            style={{ fontSize: 12, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 5 }}
-            onClick={() => setMinimized(true)}
-            title="Run in background"
-          >
-            <Minimize2 size={13} />
-            Run in background
-          </button>
         </div>
         <div className="bb-modal-body">
           <p className="bb-muted" style={{ marginTop: 0, marginBottom: 14 }}>
