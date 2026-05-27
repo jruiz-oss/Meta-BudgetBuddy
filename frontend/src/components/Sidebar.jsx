@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 
 // Deterministic hue from account ID so each account gets a consistent color dot
@@ -36,10 +36,31 @@ const ISettings = () => (
   </svg>
 );
 
+// Inline search icon for the sidebar
+const ISearchSm = () => (
+  <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+    strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+    <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+  </svg>
+);
+const IClearSm = () => (
+  <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+    strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+    <path d="M18 6 6 18M6 6l12 12"/>
+  </svg>
+);
+
 function Sidebar({ user, accounts = [], onAddAccount }) {
   const { accountId } = useParams();
   const email = user?.email || '';
   const initials = email ? email.slice(0, 2).toUpperCase() : 'BB';
+  const [acctSearch, setAcctSearch] = useState('');
+
+  const filteredAccounts = useMemo(() => {
+    const q = acctSearch.trim().toLowerCase();
+    if (!q) return accounts;
+    return accounts.filter(a => (a.account_name || '').toLowerCase().includes(q));
+  }, [accounts, acctSearch]);
 
   return (
     <aside className="bb-sidebar">
@@ -51,7 +72,32 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
       {/* Accounts list — scrollable, takes available space */}
       <div className="bb-sidebar-accounts">
         <div className="bb-side-section">Accounts</div>
-        {accounts.map((acc) => (
+
+        {/* Account search input */}
+        {accounts.length > 4 && (
+          <div className="bb-sidebar-search">
+            <ISearchSm />
+            <input
+              type="text"
+              placeholder="Filter accounts…"
+              value={acctSearch}
+              onChange={e => setAcctSearch(e.target.value)}
+              className="bb-sidebar-search-input"
+            />
+            {acctSearch && (
+              <button
+                className="bb-sidebar-search-clear"
+                onClick={() => setAcctSearch('')}
+                tabIndex={-1}
+                aria-label="Clear search"
+              >
+                <IClearSm />
+              </button>
+            )}
+          </div>
+        )}
+
+        {filteredAccounts.map((acc) => (
           <NavLink
             key={acc.id}
             to={`/account/${acc.id}`}
@@ -64,6 +110,11 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
             </span>
           </NavLink>
         ))}
+        {acctSearch && filteredAccounts.length === 0 && (
+          <div style={{ padding: '6px 10px', color: 'var(--bb-mute)', fontSize: 'var(--bb-text-xs)' }}>
+            No accounts match
+          </div>
+        )}
       </div>
 
       <div className="bb-nav-divider" />

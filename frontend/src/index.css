@@ -783,6 +783,41 @@ button.bb-row-weight:focus-visible {
 .bb-sidebar-accounts::-webkit-scrollbar { width: 6px; }
 .bb-sidebar-accounts::-webkit-scrollbar-thumb { background: var(--bb-line); border-radius: 3px; }
 
+/* Sidebar account search */
+.bb-sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bb-surface-2);
+  border: 1px solid var(--bb-line);
+  border-radius: var(--bb-radius-sm);
+  padding: 5px 8px;
+  margin: 0 0 4px;
+  color: var(--bb-mute);
+}
+.bb-sidebar-search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 11px;
+  color: var(--bb-fg);
+  font-family: inherit;
+  min-width: 0;
+}
+.bb-sidebar-search-input::placeholder { color: var(--bb-mute); }
+.bb-sidebar-search-clear {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--bb-mute);
+  display: flex;
+  align-items: center;
+  line-height: 1;
+}
+.bb-sidebar-search-clear:hover { color: var(--bb-fg); }
+
 /* selection */
 ::selection { background: color-mix(in oklch, var(--bb-accent) 30%, transparent); }
 
