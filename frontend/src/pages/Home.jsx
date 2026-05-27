@@ -87,7 +87,10 @@ function NotesPopover({ notes, onClose, anchorRef }) {
     let left = cell.left;
     // Clamp so popover doesn't overflow right edge
     if (left + pop.width + 12 > vw) left = Math.max(8, vw - pop.width - 12);
-    setPos({ top: cell.bottom + 6 + window.scrollY, left });
+    // getBoundingClientRect() is viewport-relative; position: fixed is also
+    // viewport-relative. Do NOT add window.scrollY here — it would push the
+    // popover off-screen by the scroll amount whenever the page is scrolled.
+    setPos({ top: cell.bottom + 6, left });
   }, [anchorRef]);
 
   useEffect(() => {

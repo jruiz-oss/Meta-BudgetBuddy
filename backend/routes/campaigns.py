@@ -510,17 +510,13 @@ def get_all_campaigns():
 
                 camp_dict = campaign.to_dict()
 
-                # Flight status
-                if campaign.flight_type == 'LIMITED':
-                    if campaign.flight_start_date and campaign.flight_end_date:
-                        if today < campaign.flight_start_date:
-                            camp_dict['flight_status'] = 'SCHEDULED'
-                        elif campaign.flight_start_date <= today <= campaign.flight_end_date:
-                            camp_dict['flight_status'] = 'LIVE'
-                        else:
-                            camp_dict['flight_status'] = 'ENDED'
-                else:
-                    camp_dict['flight_status'] = 'ALWAYS_ON'
+                # flight_status comes from Campaign.flight_status property in to_dict()
+                # — it returns lowercase 'active' / 'pending' / 'ended', which the
+                # frontend (Home.jsx alert, AccountDashboard flight badge, Settings
+                # flight table) expects. Do NOT overwrite with uppercase here: the
+                # AccountDashboard flight badge does exact-case comparisons against
+                # 'ended' / 'pending', and the CSS classes (.bb-flight-active /
+                # .bb-flight-ended / .bb-flight-pending) are all lowercase too.
 
                 # Include adsets with their latest_pacing for ABO
                 if campaign.budget_mode == 'ABO':
@@ -655,19 +651,11 @@ def get_campaigns(account_id):
         hidden_data = []
         for campaign in campaigns:
             # campaign.to_dict() now correctly handles ABO roll-up vs CBO row.
+            # flight_status comes from Campaign.flight_status property — lowercase
+            # ('active' / 'pending' / 'ended'). The AccountDashboard flight badge,
+            # Home alert, and CSS classes (.bb-flight-active / -ended / -pending) all
+            # rely on the lowercase form. Do NOT overwrite with uppercase here.
             camp_dict = campaign.to_dict()
-
-            # Determine flight status
-            if campaign.flight_type == 'LIMITED':
-                if campaign.flight_start_date and campaign.flight_end_date:
-                    if today < campaign.flight_start_date:
-                        camp_dict['flight_status'] = 'SCHEDULED'
-                    elif campaign.flight_start_date <= today <= campaign.flight_end_date:
-                        camp_dict['flight_status'] = 'LIVE'
-                    else:
-                        camp_dict['flight_status'] = 'ENDED'
-            else:
-                camp_dict['flight_status'] = 'ALWAYS_ON'
 
             # Include adset-level pacing for ABO campaigns (needed by the Home view).
             if campaign.budget_mode == 'ABO':
