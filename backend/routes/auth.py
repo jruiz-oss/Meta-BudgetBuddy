@@ -129,6 +129,17 @@ def register():
         return jsonify({'error': 'Email already exists'}), 400
 
     user = User(email=email, password_hash=generate_password_hash(password))
+
+    # Session 16: seed the new user with the workspace-shared Meta token so
+    # teammates don't have to re-enter it after signup. The token is stored
+    # redundantly on every User row (see routes/accounts.py global-token);
+    # this keeps a brand-new user in sync from their first login.
+    for existing in User.query.all():
+        tok = (existing.global_meta_token or '').strip()
+        if tok:
+            user.global_meta_token = tok
+            break
+
     db.session.add(user)
     db.session.commit()
 

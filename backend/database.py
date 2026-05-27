@@ -72,10 +72,28 @@ class Account(db.Model):
 
     @property
     def effective_meta_token(self):
-        """Account-level token if set; otherwise the owning user's global token."""
+        """Account-level token if set; otherwise the workspace-shared global token.
+
+        Session 16: this app is a shared agency workspace (session 13). The
+        global Meta token is workspace-wide — see routes/accounts.py for how
+        PUT /global-token now propagates the value to every User row. This
+        property therefore prefers the linking user's global token, but falls
+        back to ANY user's global token if the linker's slot is empty. That
+        covers two cases: (a) a user who registered before the workspace token
+        existed and hasn't been re-synced, and (b) the original token-setter
+        being deleted — accounts still work via any teammate's copy.
+        """
         if self.meta_token and self.meta_token.strip():
             return self.meta_token.strip()
-        return (self.user.global_meta_token or '').strip() if self.user else ''
+        if self.user:
+            tok = (self.user.global_meta_token or '').strip()
+            if tok:
+                return tok
+        for u in User.query.all():
+            tok = (u.global_meta_token or '').strip()
+            if tok:
+                return tok
+        return ''
 
     campaigns = db.relationship('Campaign', backref='account', lazy=True, cascade='all, delete-orphan')
     settings = db.relationship('AccountSettings', backref='account', lazy=True, uselist=False, cascade='all, delete-orphan')

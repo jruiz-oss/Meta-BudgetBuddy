@@ -12,32 +12,52 @@ accounts_bp = Blueprint('accounts', __name__, url_prefix='/api/accounts')
 
 
 # ---------------------------------------------------------------------------
-# Global token (user-level) — must come before /<int:account_id> routes
+# Global token (workspace-shared) — must come before /<int:account_id> routes
 # ---------------------------------------------------------------------------
+#
+# Session 16: the global Meta token is treated as a workspace-shared resource,
+# matching the shared-workspace model introduced in session 13. Implementation
+# without a schema change: GET scans every User row and returns the first
+# non-empty token; PUT writes the same value to every User row so the workspace
+# token stays in sync no matter which teammate is logged in. New users are
+# seeded with the current workspace token at register time (see routes/auth.py)
+# so they don't start with a NULL token and get prompted for one unnecessarily.
+
+def _workspace_token():
+    """Return the workspace-shared Meta token (first non-empty across users)."""
+    for u in User.query.all():
+        tok = (u.global_meta_token or '').strip()
+        if tok:
+            return tok
+    return ''
+
 
 @accounts_bp.route('/global-token', methods=['GET', 'PUT'])
 @login_required
 def global_token():
-    """Get or update the user's shared Meta access token."""
-    user = User.query.get(session['user_id'])
-    if not user:
-        return jsonify({'error': 'Not found'}), 404
+    """Get or update the workspace-shared Meta access token.
 
+    Reads return whichever teammate already set a token. Writes propagate the
+    new value to every User row, so deleting the original setter never strands
+    the token and every teammate sees the same value on next page load.
+    """
     if request.method == 'GET':
-        tok = user.global_meta_token or ''
+        tok = _workspace_token()
         return jsonify({
             'has_token': bool(tok),
             'preview': (tok[:6] + '…' + tok[-4:]) if len(tok) > 10 else ('set' if tok else ''),
         }), 200
 
     data = request.get_json() or {}
-    user.global_meta_token = (data.get('global_meta_token') or '').strip()
+    new_tok = (data.get('global_meta_token') or '').strip()
+    # Propagate to every user — shared workspace token stays in sync.
+    for u in User.query.all():
+        u.global_meta_token = new_tok
     db.session.commit()
-    tok = user.global_meta_token or ''
     return jsonify({
         'success': True,
-        'has_token': bool(tok),
-        'preview': (tok[:6] + '…' + tok[-4:]) if len(tok) > 10 else ('set' if tok else ''),
+        'has_token': bool(new_tok),
+        'preview': (new_tok[:6] + '…' + new_tok[-4:]) if len(new_tok) > 10 else ('set' if new_tok else ''),
     }), 200
 
 
