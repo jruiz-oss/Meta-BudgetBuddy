@@ -1038,6 +1038,81 @@ button.bb-row-weight:focus-visible {
 .bb-autopace-icon-ok  { color: oklch(60% 0.15 150); }
 .bb-autopace-icon-err { color: var(--bb-warn-hot, oklch(58% 0.21 18)); }
 
+/* ── auto-pace floating widget (minimized state) ── */
+.bb-autopace-float {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1200;
+  width: 260px;
+  background: var(--bb-surface);
+  border: 1px solid var(--bb-line);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.10);
+  padding: 10px 12px 10px;
+  animation: bb-float-in 0.22s ease;
+}
+@keyframes bb-float-in {
+  from { opacity: 0; transform: translateY(-10px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)     scale(1);    }
+}
+.bb-autopace-float-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.bb-autopace-float-icon {
+  color: var(--bb-accent);
+  flex-shrink: 0;
+}
+.bb-autopace-float-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bb-fg);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bb-autopace-float-count {
+  font-size: 11px;
+  color: var(--bb-mute);
+  flex-shrink: 0;
+}
+.bb-autopace-float-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--bb-mute);
+  padding: 2px 3px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.bb-autopace-float-btn:hover {
+  color: var(--bb-fg);
+  background: var(--bb-surface-2);
+}
+.bb-autopace-float-name {
+  font-size: 11px;
+  color: var(--bb-mute);
+  margin-bottom: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bb-autopace-float-bar {
+  position: relative;
+  height: 6px;
+  background: var(--bb-surface-2);
+  border: 1px solid var(--bb-line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
 /* ── tabs ── */
 .bb-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--bb-line); margin-bottom: 20px; }
 .bb-tab-btn {

@@ -7,6 +7,10 @@
  * list. On any single-account failure it keeps going and surfaces a summary
  * toast at the end.
  *
+ * The modal has a "Run in background" button that shrinks it into a compact
+ * floating widget (top-right, non-blocking) so users can navigate freely
+ * while pacing continues. Clicking the widget re-expands the full modal.
+ *
  * Gating: sessionStorage key `bb-autopaced`. Cleared automatically when the
  * browser/tab closes. Set as soon as the run starts (not after it finishes) so
  * a page refresh mid-run won't kick off a second pass.
@@ -19,7 +23,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { Check, AlertCircle, Activity } from 'lucide-react';
+import { Check, AlertCircle, Activity, Minimize2, Maximize2 } from 'lucide-react';
 import { useToast } from './Toast';
 
 const SESSION_FLAG = 'bb-autopaced';
@@ -27,6 +31,7 @@ const SESSION_FLAG = 'bb-autopaced';
 export default function AutoPaceRunner({ user }) {
   const toast = useToast();
   const startedRef = useRef(false);
+  const [minimized, setMinimized] = useState(false);
   const [state, setState] = useState({
     open: false,
     total: 0,
@@ -90,8 +95,9 @@ export default function AutoPaceRunner({ user }) {
       }));
     }
 
-    // Close modal, then surface summary toast.
+    // Close modal/widget, then surface summary toast.
     setState((s) => ({ ...s, open: false }));
+    setMinimized(false);
 
     const ok = results.filter((r) => r.status === 'ok').length;
     const failed = results.length - ok;
@@ -108,19 +114,59 @@ export default function AutoPaceRunner({ user }) {
 
   const pct = state.total > 0 ? Math.min(100, Math.round((state.current / state.total) * 100)) : 0;
 
+  // ── Minimized floating widget (top-right, non-blocking) ──────────
+  if (minimized) {
+    return (
+      <div className="bb-autopace-float" role="status" aria-label="Pacing in progress">
+        <div className="bb-autopace-float-header">
+          <Activity size={13} className="bb-autopace-float-icon" />
+          <span className="bb-autopace-float-title">
+            Pacing accounts…
+          </span>
+          <span className="bb-autopace-float-count">{state.current}/{state.total}</span>
+          <button
+            className="bb-autopace-float-btn"
+            onClick={() => setMinimized(false)}
+            title="Expand"
+            aria-label="Expand pacing modal"
+          >
+            <Maximize2 size={12} />
+          </button>
+        </div>
+        <div className="bb-autopace-float-name">
+          {state.currentName || 'Starting…'}
+        </div>
+        <div className="bb-autopace-float-bar" aria-hidden="true">
+          <div className="bb-autopace-bar-fill" style={{ width: `${pct}%` }} />
+          <div className="bb-autopace-bar-shimmer" />
+        </div>
+      </div>
+    );
+  }
+
+  // ── Full modal (blocking) ─────────────────────────────────────────
   return (
     <div className="bb-modal-backdrop" style={{ zIndex: 1100 }}>
       <div className="bb-modal" style={{ maxWidth: 520 }}>
         <div className="bb-modal-head">
           <div className="bb-modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Activity size={16} />
-            Pacing all accounts — please wait
+            Pacing all accounts
           </div>
+          <button
+            className="bb-btn bb-btn-ghost"
+            style={{ fontSize: 12, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 5 }}
+            onClick={() => setMinimized(true)}
+            title="Run in background"
+          >
+            <Minimize2 size={13} />
+            Run in background
+          </button>
         </div>
         <div className="bb-modal-body">
           <p className="bb-muted" style={{ marginTop: 0, marginBottom: 14 }}>
             Running a fresh pacing pass on every account before you start.
-            Don't close this window.
+            You can minimize this and navigate freely — it'll finish in the background.
           </p>
 
           <div className="bb-autopace-bar" aria-label="Pacing progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
@@ -156,6 +202,16 @@ export default function AutoPaceRunner({ user }) {
               ))}
             </ul>
           )}
+        </div>
+        <div className="bb-modal-foot">
+          <button
+            className="bb-btn bb-btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={() => setMinimized(true)}
+          >
+            <Minimize2 size={13} />
+            Run in background
+          </button>
         </div>
       </div>
     </div>
