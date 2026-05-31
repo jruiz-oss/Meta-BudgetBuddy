@@ -72,30 +72,39 @@ function GlobalHistory({ user }) {
 
         <div className="bb-card">
           <div className="bb-section" style={{ paddingBottom: 0 }}>
-            <div className="bb-row-between" style={{ marginBottom: 12 }}>
-              <div className="bb-section-title">Budget Adjustment Log</div>
+            <div className="bb-section-title" style={{ marginBottom: 12 }}>Budget Adjustment Log</div>
 
-              {/* Account filter */}
-              {accountOptions.length > 1 && (
-                <div className="bb-row" style={{ gap: 6 }}>
+            {/* Account filter — horizontal scroll so chips don't squash */}
+            {accountOptions.length > 1 && (
+              <div
+                className="bb-row"
+                style={{
+                  gap: 6,
+                  marginBottom: 12,
+                  flexWrap: 'nowrap',
+                  overflowX: 'auto',
+                  paddingBottom: 4,
+                }}
+              >
+                <button
+                  className={`bb-filter-btn ${accountFilter === 'all' ? 'is-active' : ''}`}
+                  onClick={() => setAccountFilter('all')}
+                  style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+                >
+                  All accounts
+                </button>
+                {accountOptions.map(([id, name]) => (
                   <button
-                    className={`bb-filter-btn ${accountFilter === 'all' ? 'is-active' : ''}`}
-                    onClick={() => setAccountFilter('all')}
+                    key={id}
+                    className={`bb-filter-btn ${accountFilter === id ? 'is-active' : ''}`}
+                    onClick={() => setAccountFilter(id)}
+                    style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
                   >
-                    All accounts
+                    {name}
                   </button>
-                  {accountOptions.map(([id, name]) => (
-                    <button
-                      key={id}
-                      className={`bb-filter-btn ${accountFilter === id ? 'is-active' : ''}`}
-                      onClick={() => setAccountFilter(id)}
-                    >
-                      {name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {loading ? (
