@@ -33,9 +33,10 @@ function GlobalHistory({ user }) {
 
   const formatDate = (iso) => {
     if (!iso) return '—';
-    return new Date(iso).toLocaleString(undefined, {
+    return new Date(iso).toLocaleString('en-US', {
       month: 'short', day: 'numeric', year: 'numeric',
       hour: 'numeric', minute: '2-digit',
+      timeZone: 'America/Phoenix',
     });
   };
 

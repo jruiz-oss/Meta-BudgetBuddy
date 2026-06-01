@@ -786,6 +786,7 @@ function CampaignDetail({ user, onLogout }) {
                         {adj.applied_at
                           ? new Date(adj.applied_at).toLocaleDateString('en-US', {
                               month: 'short', day: 'numeric', year: 'numeric',
+                              timeZone: 'America/Phoenix',
                             })
                           : '—'}
                       </td>
