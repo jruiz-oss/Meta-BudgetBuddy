@@ -18,6 +18,12 @@ const IKey = () => (
     <path d="m10.85 12.15 7.65-7.65a1 1 0 0 1 1.41 0l1.65 1.65a1 1 0 0 1 0 1.41L19 9.5l-2-2-3 3 .15.15"/>
   </svg>
 );
+const ISheet = () => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>
+  </svg>
+);
 const IPlus = () => (
   <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
     <path d="M12 5v14M5 12h14"/>
@@ -57,9 +63,16 @@ function Accounts({ user, onLogout }) {
   const [tokenSaving, setTokenSaving] = useState(false);
   const [showTokenInput, setShowTokenInput] = useState(false);
 
+  // Global sheet (workspace-shared)
+  const [globalSheet, setGlobalSheet] = useState('');
+  const [globalSheetId, setGlobalSheetId] = useState('');
+  const [hasGlobalSheet, setHasGlobalSheet] = useState(false);
+  const [sheetSaving, setSheetSaving] = useState(false);
+  const [showSheetInput, setShowSheetInput] = useState(false);
+
   const [refreshing, setRefreshing] = useState({});
 
-  useEffect(() => { fetchAccounts(); fetchGlobalToken(); }, []);
+  useEffect(() => { fetchAccounts(); fetchGlobalToken(); fetchGlobalSheet(); }, []);
 
   const fetchAccounts = async () => {
     try {
@@ -88,6 +101,26 @@ function Accounts({ user, onLogout }) {
       toast.success('Global token saved.');
     } catch (err) { toast.error(err.response?.data?.error || 'Failed to save token'); }
     finally { setTokenSaving(false); }
+  };
+
+  const fetchGlobalSheet = async () => {
+    try {
+      const res = await axios.get('/api/sheets/global-config');
+      setHasGlobalSheet(res.data.has_sheet);
+      setGlobalSheetId(res.data.google_sheet_id || '');
+    } catch {}
+  };
+
+  const handleSaveGlobalSheet = async () => {
+    setSheetSaving(true);
+    try {
+      const res = await axios.put('/api/sheets/global-config', { google_sheet_id: globalSheet });
+      setHasGlobalSheet(res.data.has_sheet);
+      setGlobalSheetId(res.data.google_sheet_id || '');
+      setGlobalSheet(''); setShowSheetInput(false);
+      toast.success('Global sheet saved.');
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to save sheet'); }
+    finally { setSheetSaving(false); }
   };
 
   const handleCreateAccount = async (e) => {
@@ -220,6 +253,38 @@ function Accounts({ user, onLogout }) {
           {!showTokenInput && (
             <button className="bb-btn" onClick={() => setShowTokenInput(true)}>
               {hasGlobalToken ? 'Update token' : 'Set token'}
+            </button>
+          )}
+        </div>
+
+        {/* Sheet bar */}
+        <div className="bb-token-bar">
+          <div className="bb-key-icon"><ISheet /></div>
+          <div style={{ flex: 1 }}>
+            <div className="bb-token-title">Global Google Sheet</div>
+            <div className="bb-token-sub">Shared across all accounts. Set a per-account override in each account's Settings → Google Sheets if needed.</div>
+            {hasGlobalSheet && !showSheetInput && (
+              <div className="bb-token-current">
+                Current sheet ID: <span className="bb-token-val">{globalSheetId}</span>
+              </div>
+            )}
+            {showSheetInput && (
+              <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="text" className="bb-input" placeholder="https://docs.google.com/spreadsheets/d/…"
+                  value={globalSheet} onChange={e => setGlobalSheet(e.target.value)} autoFocus style={{ maxWidth: 380 }} />
+                <button className="bb-btn bb-btn-primary" onClick={handleSaveGlobalSheet}
+                  disabled={sheetSaving || !globalSheet.trim()}>
+                  {sheetSaving ? <Loader2 size={13} className="bb-spin" /> : <Save size={13} />} Save
+                </button>
+                <button className="bb-btn" onClick={() => { setShowSheetInput(false); setGlobalSheet(''); }}>
+                  <X size={13} /> Cancel
+                </button>
+              </div>
+            )}
+          </div>
+          {!showSheetInput && (
+            <button className="bb-btn" onClick={() => setShowSheetInput(true)}>
+              {hasGlobalSheet ? 'Update sheet' : 'Set sheet'}
             </button>
           )}
         </div>

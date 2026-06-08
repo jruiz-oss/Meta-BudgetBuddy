@@ -221,7 +221,7 @@ def _scheduled_pacing_job():
                 # Pull fresh budgets + ABO allocations from the configured Google Sheet
                 # *before* we read campaigns from the DB. Sheet is the source of truth.
                 # Best-effort per account so a single bad sheet doesn't break the job.
-                if (settings.google_sheet_id or "").strip():
+                if (settings.effective_sheet_id or "").strip():
                     try:
                         from routes.sheets import sync_budgets_for_account
                         sync_result = sync_budgets_for_account(account.id)
@@ -465,7 +465,7 @@ def _scheduled_pacing_job():
                 from routes.sheets import write_spend_for_account
                 for account in accounts:
                     settings = AccountSettings.query.filter_by(account_id=account.id).first()
-                    if not settings or not (settings.google_sheet_id or "").strip():
+                    if not settings or not (settings.effective_sheet_id or "").strip():
                         continue
                     try:
                         result = write_spend_for_account(account.id)

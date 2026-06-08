@@ -714,6 +714,48 @@ def _open_month_worksheet(spreadsheet):
 # Routes
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Global sheet (workspace-shared) — must come before /<int:account_id> routes
+# ---------------------------------------------------------------------------
+#
+# The "Social Budget Pacing" sheet is a single agency-wide workbook: rows are
+# routed to accounts by name/prefix (and optionally column D), so every account
+# points at the same spreadsheet. Rather than re-paste the sheet ID into every
+# account's Settings, treat it as a workspace-shared resource exactly like the
+# global Meta token (see routes/accounts.py): GET returns the first configured
+# sheet ID across all accounts; PUT writes the same value to every
+# AccountSettings row so it stays in sync no matter which account is syncing.
+
+def _workspace_sheet_id():
+    """Return the workspace-shared sheet ID (first non-empty across accounts)."""
+    for s in AccountSettings.query.all():
+        sid = (s.google_sheet_id or "").strip()
+        if sid:
+            return sid
+    return ""
+
+
+@sheets_bp.route("/global-config", methods=["GET", "PUT"])
+@login_required
+def global_sheet_config():
+    """Get or save the workspace-shared Google Sheet URL/ID.
+
+    Writes propagate the resolved sheet ID to every AccountSettings row, so any
+    account that runs pacing reads the same sheet without re-entering it.
+    """
+    if request.method == "GET":
+        sid = _workspace_sheet_id()
+        return jsonify({"has_sheet": bool(sid), "google_sheet_id": sid}), 200
+
+    data = request.get_json() or {}
+    raw = data.get("google_sheet_id", "")
+    sid = _sheet_id_from_url_or_id(raw) if raw.strip() else ""
+    for s in AccountSettings.query.all():
+        s.google_sheet_id = sid
+    db.session.commit()
+    return jsonify({"has_sheet": bool(sid), "google_sheet_id": sid}), 200
+
+
 @sheets_bp.route("/<int:account_id>/config", methods=["GET", "PUT"])
 @login_required
 def sheet_config(account_id):
@@ -750,12 +792,12 @@ def preview_matches(account_id):
         return jsonify({"error": "Not found"}), 404
 
     settings = AccountSettings.query.filter_by(account_id=account_id).first()
-    if not settings or not (settings.google_sheet_id or "").strip():
+    if not settings or not (settings.effective_sheet_id or "").strip():
         return jsonify({"error": "Google Sheet not configured. Save a Sheet URL first."}), 400
 
     try:
         gc = _get_gspread_client()
-        spreadsheet = gc.open_by_key(settings.google_sheet_id)
+        spreadsheet = gc.open_by_key(settings.effective_sheet_id)
         ws, tab_name = _open_month_worksheet(spreadsheet)
     except (ValueError, RuntimeError) as e:
         return jsonify({"error": str(e)}), 400
@@ -847,7 +889,7 @@ def sync_budgets_for_account(account_id):
     callers can decide whether to surface or swallow the error.
     """
     settings = AccountSettings.query.filter_by(account_id=account_id).first()
-    if not settings or not (settings.google_sheet_id or "").strip():
+    if not settings or not (settings.effective_sheet_id or "").strip():
         raise ValueError("Google Sheet not configured.")
 
     account = Account.query.get(account_id)
@@ -855,7 +897,7 @@ def sync_budgets_for_account(account_id):
         raise ValueError("Account not found.")
 
     gc = _get_gspread_client()
-    spreadsheet = _sheets_retry(gc.open_by_key, settings.google_sheet_id)
+    spreadsheet = _sheets_retry(gc.open_by_key, settings.effective_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet)
 
     sheet_rows = _get_meta_section(ws)
@@ -1146,7 +1188,7 @@ def write_spend_for_account(account_id):
     so callers can decide whether to surface the error or swallow it.
     """
     settings = AccountSettings.query.filter_by(account_id=account_id).first()
-    if not settings or not (settings.google_sheet_id or "").strip():
+    if not settings or not (settings.effective_sheet_id or "").strip():
         raise ValueError("Google Sheet not configured.")
 
     account = Account.query.get(account_id)
@@ -1154,7 +1196,7 @@ def write_spend_for_account(account_id):
         raise ValueError("Account not found.")
 
     gc = _get_gspread_client()
-    spreadsheet = _sheets_retry(gc.open_by_key, settings.google_sheet_id)
+    spreadsheet = _sheets_retry(gc.open_by_key, settings.effective_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet)
 
     sheet_rows = _get_meta_section(ws)

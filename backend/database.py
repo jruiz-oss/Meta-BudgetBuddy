@@ -430,6 +430,25 @@ class AccountSettings(db.Model):
     daily_digest_enabled = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    @property
+    def effective_sheet_id(self):
+        """This account's own sheet ID if set; otherwise the workspace-shared one.
+
+        Mirrors Account.effective_meta_token (session 16). The Google Sheet is a
+        workspace-shared resource: PUT /api/sheets/global-config propagates the
+        same value to every AccountSettings row, but this fallback covers rows
+        that were created after the global sheet was set (and so still have a
+        NULL/blank google_sheet_id) by borrowing any other row's non-empty value.
+        """
+        own = (self.google_sheet_id or '').strip()
+        if own:
+            return own
+        for s in AccountSettings.query.all():
+            sid = (s.google_sheet_id or '').strip()
+            if sid:
+                return sid
+        return ''
+
     def to_dict(self):
         return {
             'id': self.id,

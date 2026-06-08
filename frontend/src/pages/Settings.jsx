@@ -410,6 +410,8 @@ function Settings({ user, onLogout }) {
                 />
                 <span className="bb-form-help">
                   Paste the full Google Sheets URL — the ID is extracted automatically.
+                  Leave blank to use the workspace-wide Global Google Sheet (set on the Accounts page);
+                  only fill this in if this account uses a different sheet.
                 </span>
               </div>
 

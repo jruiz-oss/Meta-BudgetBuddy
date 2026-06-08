@@ -314,7 +314,7 @@ def run_pacing(account_id):
     # we'd pace against the daily*30 estimate stored at account-import time.
     # Best-effort: any sheet failure must not block the pacing run.
     sheet_sync_result = None
-    if (settings.google_sheet_id or "").strip():
+    if (settings.effective_sheet_id or "").strip():
         try:
             from routes.sheets import sync_budgets_for_account
             sheet_sync_result = sync_budgets_for_account(account_id)
@@ -668,7 +668,7 @@ def run_pacing(account_id):
     sheet_writeback = None
     if not single_campaign_id:
         sheet_settings = AccountSettings.query.filter_by(account_id=account_id).first()
-        if sheet_settings and (sheet_settings.google_sheet_id or "").strip():
+        if sheet_settings and (sheet_settings.effective_sheet_id or "").strip():
             try:
                 # Imported lazily to avoid a circular import at module-load time.
                 from routes.sheets import write_spend_for_account

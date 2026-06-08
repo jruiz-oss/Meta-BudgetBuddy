@@ -306,8 +306,14 @@ def create_account():
     db.session.add(account)
     db.session.commit()
 
-    # Default pacing settings
+    # Default pacing settings. Seed the workspace-shared Google Sheet (if one is
+    # already configured) so a new account inherits it without re-pasting the URL.
     settings = AccountSettings(account_id=account.id)
+    try:
+        from routes.sheets import _workspace_sheet_id
+        settings.google_sheet_id = _workspace_sheet_id()
+    except Exception:
+        pass
     db.session.add(settings)
     db.session.commit()
 
@@ -317,7 +323,7 @@ def create_account():
     # If a sheet was configured at create time (rare), pull budgets from it
     # so the daily*30 seed gets overwritten with the real monthly numbers.
     sheet_sync = None
-    if (settings.google_sheet_id or '').strip():
+    if (settings.effective_sheet_id or '').strip():
         try:
             from routes.sheets import sync_budgets_for_account
             sheet_sync = sync_budgets_for_account(account.id)
@@ -429,7 +435,7 @@ def refresh_campaigns(account_id):
     # budgets + ABO allocations from the configured sheet, if any. Best-effort.
     sheet_sync = None
     settings = AccountSettings.query.filter_by(account_id=account_id).first()
-    if settings and (settings.google_sheet_id or '').strip():
+    if settings and (settings.effective_sheet_id or '').strip():
         try:
             from routes.sheets import sync_budgets_for_account
             sheet_sync = sync_budgets_for_account(account_id)
