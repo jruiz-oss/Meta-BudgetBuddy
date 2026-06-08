@@ -287,7 +287,7 @@ function AccountSection({ acct, applying, skipped, results, search,
   const sheetStatus = useMemo(() => {
     if (!acct.has_sheet) return null;
     const stats = acct.sheet_sync_stats;
-    if (!stats) return 'none'; // sheet set but never synced
+    if (!stats) return null; // no sync data yet — no indicator
     if (stats.matched === 0) return 'none';
     if (stats.matched < stats.total) return 'partial';
     return null;
@@ -406,8 +406,10 @@ function AccountSection({ acct, applying, skipped, results, search,
                 const mode = campaign.budget_mode || 'CBO';
                 if (mode === 'ABO') {
                   const lp = campaign.latest_pacing;
+                  const unmatched = acct.has_sheet && campaign.sheet_budget_matched === false;
                   const parentRow = (
-                    <tr key={`c-${campaign.id}`} style={{ background: 'var(--bb-surface-2)' }}>
+                    <tr key={`c-${campaign.id}`} style={{ background: 'var(--bb-surface-2)' }}
+                      className={unmatched ? 'bb-row-sheet-unmatched' : ''}>
                       <td>
                         <div className="bb-row-name">
                           <Link to={`/account/${acct.id}/campaign/${campaign.id}`}
@@ -417,7 +419,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                         </div>
                       </td>
                       <td><span className="bb-mode bb-mode-abo">ABO</span></td>
-                      <td className="num">{fmtMo(campaign.monthly_budget)}</td>
+                      <td className="num">{unmatched ? <span style={{ color: 'var(--bb-mute)' }}>—</span> : fmtMo(campaign.monthly_budget)}</td>
                       <td className="num">{lp ? fmt$(lp.actual_spend, 2) : '—'}</td>
                       <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
                       <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
@@ -487,8 +489,9 @@ function AccountSection({ acct, applying, skipped, results, search,
                 const isApplying = !!applying[rowKey];
                 const isSkipped  = !!skipped[rowKey];
                 const needsAction = lp && status.toUpperCase() !== 'ON_PACE';
+                const cboUnmatched = acct.has_sheet && campaign.sheet_budget_matched === false;
                 return [(
-                  <tr key={rowKey}>
+                  <tr key={rowKey} className={cboUnmatched ? 'bb-row-sheet-unmatched' : ''}>
                     <td>
                       <div className="bb-row-name">
                         <Link to={`/account/${acct.id}/campaign/${campaign.id}`}
@@ -498,7 +501,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                       </div>
                     </td>
                     <td><span className="bb-mode bb-mode-cbo">CBO</span></td>
-                    <td className="num">{fmtMo(campaign.monthly_budget)}</td>
+                    <td className="num">{cboUnmatched ? <span style={{ color: 'var(--bb-mute)' }}>—</span> : fmtMo(campaign.monthly_budget)}</td>
                     <td className="num">{lp ? fmt$(lp.actual_spend, 2) : '—'}</td>
                     <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
                     <td className="num">{lp?.current_daily_budget != null ? fmt$(lp.current_daily_budget, 2) : '—'}</td>

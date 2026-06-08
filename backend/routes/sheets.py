@@ -909,6 +909,11 @@ def sync_budgets_for_account(account_id):
     # in the DB, not just the originally-linked user's accounts.
     all_user_accounts = Account.query.all()
 
+    # Reset match flag on all active campaigns for this account before processing.
+    # Any campaign still False after the loop was not found in the sheet this run.
+    for c in db_campaigns:
+        c.sheet_budget_matched = False
+
     updated = []          # campaign budget changes
     allocations_updated = []  # adset allocation changes
     skipped = []
@@ -967,6 +972,9 @@ def sync_budgets_for_account(account_id):
             })
 
     for row, match_name, campaign, _score in best_by_campaign.values():
+        # Mark this campaign as matched in the sheet.
+        campaign.sheet_budget_matched = True
+
         # Persist raw sheet notes to the campaign so the UI can display them without
         # re-fetching the sheet. Only update when the notes actually change to avoid
         # marking rows dirty unnecessarily.

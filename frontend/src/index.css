@@ -423,6 +423,12 @@ code { font-family: var(--bb-font-mono, ui-monospace, monospace); }
 .bb-acct-title-sheet-none    { color: #ef4444; }
 .bb-acct-title-sheet-partial { color: #f59e0b; }
 
+/* Campaign row not found in the sheet — amber left border + subtle tint */
+.bb-row-sheet-unmatched {
+  border-left: 3px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.05) !important;
+}
+
 .bb-acct-meta {
   font-size: var(--bb-text-sm);
   color: var(--bb-mute);

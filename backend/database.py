@@ -225,6 +225,10 @@ class Campaign(db.Model):
     # This campaign's share of the group budget (0–100). Ignored when budget_group_id is NULL.
     # The sheet sync sets this from the allocation % in col F notes ("50% to FB / 50% to IG").
     group_allocation_pct = db.Column(db.Float, nullable=False, default=100.0)
+    # Whether this campaign was matched in the most recent sheet sync.
+    # NULL = never synced / unknown (legacy rows). True = matched. False = no sheet row found.
+    # Reset to False for all active campaigns at the start of each sync, then set True on match.
+    sheet_budget_matched = db.Column(db.Boolean, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     pacing_data = db.relationship('PacingData', backref='campaign', lazy=True, cascade='all, delete-orphan')
@@ -316,6 +320,7 @@ class Campaign(db.Model):
             'is_active': self.is_active,
             'budget_mode': self.budget_mode,
             'sheet_notes': self.sheet_notes or '',
+            'sheet_budget_matched': self.sheet_budget_matched,
             'budget_group_id': self.budget_group_id,
             'group_allocation_pct': round(self.group_allocation_pct or 100.0, 2),
             'adset_count': len(self.adsets),

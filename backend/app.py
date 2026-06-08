@@ -237,6 +237,27 @@ def _scheduled_pacing_job():
                             account.id, sheet_err,
                         )
 
+                # Auto-discover new campaigns added to Meta since the last import.
+                # Best-effort — a failure here must not block the pacing run.
+                try:
+                    from routes.accounts import _auto_import_campaigns
+                    new_count, disc_errs = _auto_import_campaigns(account)
+                    if new_count:
+                        logging.info(
+                            "Scheduler auto-discovered %s new campaign(s) for account %s",
+                            new_count, account.id,
+                        )
+                    for err in disc_errs:
+                        logging.warning(
+                            "Scheduler campaign discovery error for account %s: %s",
+                            account.id, err,
+                        )
+                except Exception as disc_err:
+                    logging.warning(
+                        "Scheduler campaign discovery failed for account %s: %s",
+                        account.id, disc_err,
+                    )
+
                 try:
                     # Use effective_meta_token so accounts that rely on the linker's
                     # global_meta_token (the common case) still run via the scheduler.
