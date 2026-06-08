@@ -1,0 +1,18 @@
+Flask==2.3.3
+Flask-SQLAlchemy==3.0.5
+# 4.0.1 fixes CVE-2024-1681 (log injection / path-normalization).
+Flask-CORS==4.0.1
+python-dotenv==1.0.0
+psycopg2-binary==2.9.10
+# 2.32.x fixes CVE-2024-35195 (proxy auth credential leak across redirects).
+requests==2.32.3
+# 2.3.8 fixes CVE-2023-46136 (multipart parser DoS) within the Flask 2.3 line.
+Werkzeug==2.3.8
+# 22.0.0 fixes CVE-2024-1135 (HTTP request smuggling via TE headers).
+gunicorn==22.0.0
+gspread==6.1.2
+google-auth==2.29.0
+APScheduler==3.10.4
+# Fernet symmetric encryption for Meta tokens at rest (User.global_meta_token,
+# Account.meta_token). Pinned to a recent line — 42.x ships current OpenSSL bindings.
+cryptography==42.0.8
