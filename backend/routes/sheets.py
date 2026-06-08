@@ -1117,11 +1117,27 @@ def sync_budgets_for_account(account_id):
 
     db.session.commit()
 
+    # Persist match stats so the Home page can color-code accounts by sheet health.
+    # matched = number of active DB campaigns that were found in the sheet.
+    # total   = total active DB campaigns for the account.
+    matched_count = len(best_by_campaign)
+    total_count = len(db_campaigns)
+    if settings:
+        from datetime import datetime as _dt
+        settings.sheet_sync_stats = json.dumps({
+            "matched": matched_count,
+            "total": total_count,
+            "synced_at": _dt.utcnow().isoformat(),
+        })
+        db.session.commit()
+
     return {
         "sheet_tab": tab_name,
         "updated_count": len(updated),
         "skipped_count": len(skipped),
         "allocations_updated_count": len(allocations_updated),
+        "matched_count": matched_count,
+        "total_count": total_count,
         "updated": updated,
         "skipped": skipped,
         "allocations_updated": allocations_updated,

@@ -528,6 +528,18 @@ def get_all_campaigns():
                 else:
                     camp_list.append(camp_dict)
 
+            # Sheet health indicators for the Home page title color-coding.
+            settings = account.settings
+            has_sheet = bool(settings and (settings.effective_sheet_id or '').strip())
+            raw_stats = settings.sheet_sync_stats if settings else None
+            sheet_sync_stats = None
+            if raw_stats:
+                try:
+                    import json as _json
+                    sheet_sync_stats = _json.loads(raw_stats)
+                except Exception:
+                    pass
+
             result.append({
                 'id': account.id,
                 'account_name': account.account_name,
@@ -535,6 +547,8 @@ def get_all_campaigns():
                 'campaigns': camp_list,
                 'hidden_campaigns': hidden_list,
                 'hidden_count': len(hidden_list),
+                'has_sheet': has_sheet,
+                'sheet_sync_stats': sheet_sync_stats,
             })
 
         return jsonify({'accounts': result}), 200

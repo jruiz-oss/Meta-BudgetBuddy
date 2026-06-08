@@ -470,6 +470,11 @@ class AccountSettings(db.Model):
     # Send the user a digest email after each automated pacing run for this account.
     # Default off — opt-in only, since SMTP credentials are also opt-in on the server.
     daily_digest_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    # JSON snapshot of the last sync_budgets_for_account result.
+    # Schema: {"matched": int, "total": int, "synced_at": "ISO string"}
+    # matched = DB campaigns found in the sheet; total = active DB campaigns.
+    # Used by the Home page to color-code accounts with partial/missing sheet budgets.
+    sheet_sync_stats = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property
@@ -501,5 +506,6 @@ class AccountSettings(db.Model):
             'auto_adjust_enabled': self.auto_adjust_enabled,
             'google_sheet_id': self.google_sheet_id or '',
             'daily_digest_enabled': bool(self.daily_digest_enabled),
+            'sheet_sync_stats': self.sheet_sync_stats,
             'created_at': self.created_at.isoformat()
         }

@@ -280,6 +280,19 @@ function AccountSection({ acct, applying, skipped, results, search,
     return null;
   }, [acct.campaigns]);
 
+  // Sheet budget match status for title color-coding.
+  // 'none'    = sheet configured, 0 campaigns matched → red
+  // 'partial' = sheet configured, some campaigns unmatched → yellow
+  // null      = no sheet, or all matched (no indicator)
+  const sheetStatus = useMemo(() => {
+    if (!acct.has_sheet) return null;
+    const stats = acct.sheet_sync_stats;
+    if (!stats) return 'none'; // sheet set but never synced
+    if (stats.matched === 0) return 'none';
+    if (stats.matched < stats.total) return 'partial';
+    return null;
+  }, [acct.has_sheet, acct.sheet_sync_stats]);
+
   // Count actionable items — must be BEFORE any early return (hooks must be unconditional)
   const actionableCount = useMemo(() => {
     let n = 0;
@@ -317,7 +330,7 @@ function AccountSection({ acct, applying, skipped, results, search,
       <header className="bb-acct-head" onClick={() => setCollapsed(c => !c)}>
         <div className="bb-acct-bar" />
         <div className="bb-flex-col">
-          <div className="bb-acct-title">{acct.account_name}</div>
+          <div className={`bb-acct-title${sheetStatus ? ` bb-acct-title-sheet-${sheetStatus}` : ''}`}>{acct.account_name}</div>
           <div className="bb-acct-meta">
             Last run: <strong>{timeAgo(acct.last_run)}</strong>
             {(acct.hidden_count || 0) > 0 && (
