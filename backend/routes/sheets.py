@@ -33,7 +33,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request, session
 
-from database import Account, AccountSettings, Campaign, PacingData, db
+from database import Account, AccountSettings, BudgetGroup, Campaign, PacingData, db
 from routes.auth import login_required
 
 logger = logging.getLogger(__name__)
@@ -1018,9 +1018,38 @@ def sync_budgets_for_account(account_id):
                                 scale = 100.0 / active_total_pct
                                 active_split = [(c, round(pct * scale, 4), n) for c, pct, n in active_split]
                             split_proposed = active_split  # ended campaigns get $0 allocation change
+
+                        # ---- Budget Group: create or update ----
+                        # The group stores the combined budget and links the campaigns
+                        # so that pacing can compute against the group total spend.
+                        # Check if any member already belongs to a group for this account.
+                        all_split_ids = {c.id for c, _, _ in split_proposed}
+                        existing_group = None
+                        for c, _, _ in split_proposed:
+                            if c.budget_group_id:
+                                g = BudgetGroup.query.get(c.budget_group_id)
+                                if g and g.account_id == account_id:
+                                    existing_group = g
+                                    break
+                        if existing_group:
+                            existing_group.name = row["name"]
+                            existing_group.monthly_budget = total_budget
+                            group = existing_group
+                        else:
+                            group = BudgetGroup(
+                                account_id=account_id,
+                                name=row["name"],
+                                monthly_budget=total_budget,
+                            )
+                            db.session.add(group)
+                            db.session.flush()  # get group.id before assigning FKs
+
                         for c, pct, alloc_name in split_proposed:
                             new_budget = round(total_budget * pct / 100, 2)
                             old_budget = c.monthly_budget
+                            # Update per-campaign budget (individual share) and group link
+                            c.budget_group_id = group.id
+                            c.group_allocation_pct = pct
                             if old_budget != new_budget:
                                 c.monthly_budget = new_budget
                                 updated.append({
@@ -1031,6 +1060,8 @@ def sync_budgets_for_account(account_id):
                                     "match_type": "cbo_split",
                                     "split_pct": pct,
                                     "flight_redistributed": bool(ended_split),
+                                    "budget_group_id": group.id,
+                                    "budget_group_name": group.name,
                                 })
                         cbo_split_applied = True
 

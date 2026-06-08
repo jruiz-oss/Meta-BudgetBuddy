@@ -166,6 +166,38 @@ class Account(db.Model):
         }
 
 
+class BudgetGroup(db.Model):
+    """Two or more CBO campaigns that share a single sheet budget row.
+
+    The group holds the combined monthly_budget from the sheet (col B). Each
+    member campaign stores its allocation % in group_allocation_pct. Pacing
+    computes the group-level recommendation — (group_budget − combined_spend) /
+    days_remaining — then splits it by allocation % to each campaign.
+
+    Groups are created automatically by the sheet sync when it detects a CBO
+    split note ("50% to FB / 50% to IG") in col F. No manual UI setup required.
+    """
+    __tablename__ = 'budget_groups'
+
+    id             = db.Column(db.Integer, primary_key=True)
+    account_id     = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False, index=True)
+    name           = db.Column(db.String(255), nullable=False)
+    monthly_budget = db.Column(db.Float, nullable=False, default=0.0)
+    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+
+    campaigns = db.relationship('Campaign', backref='budget_group', lazy=True,
+                                foreign_keys='Campaign.budget_group_id')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'account_id': self.account_id,
+            'name': self.name,
+            'monthly_budget': self.monthly_budget,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class Campaign(db.Model):
     __tablename__ = 'campaigns'
 
@@ -185,6 +217,14 @@ class Campaign(db.Model):
     # Notes synced from col F of the Google Sheet (free-form text, ABO allocations, flight notes, etc.)
     # Populated automatically during each budget sync. NULL when no sheet is configured or no match found.
     sheet_notes = db.Column(db.Text, nullable=True)
+    # Budget group FK — set when this campaign shares a sheet row with other CBO campaigns.
+    # NULL = standalone campaign (default). When set, pacing uses the group's combined spend
+    # and group.monthly_budget rather than this campaign's individual monthly_budget.
+    budget_group_id = db.Column(db.Integer, db.ForeignKey('budget_groups.id'),
+                                nullable=True, index=True)
+    # This campaign's share of the group budget (0–100). Ignored when budget_group_id is NULL.
+    # The sheet sync sets this from the allocation % in col F notes ("50% to FB / 50% to IG").
+    group_allocation_pct = db.Column(db.Float, nullable=False, default=100.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     pacing_data = db.relationship('PacingData', backref='campaign', lazy=True, cascade='all, delete-orphan')
@@ -276,6 +316,8 @@ class Campaign(db.Model):
             'is_active': self.is_active,
             'budget_mode': self.budget_mode,
             'sheet_notes': self.sheet_notes or '',
+            'budget_group_id': self.budget_group_id,
+            'group_allocation_pct': round(self.group_allocation_pct or 100.0, 2),
             'adset_count': len(self.adsets),
             'created_at': self.created_at.isoformat(),
             'latest_pacing': latest,

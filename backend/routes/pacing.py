@@ -46,6 +46,7 @@ from database import (
     AccountSettings,
     AdSet,
     BudgetAdjustment,
+    BudgetGroup,
     Campaign,
     PacingData,
     PacingRun,
@@ -445,6 +446,22 @@ def run_pacing(account_id):
     # Phase 2: Compute recommendations + write PacingData (no Meta I/O).
     # ------------------------------------------------------------------
 
+    # Pre-compute combined spend per budget group so the CBO path can use it
+    # without re-querying. Keyed by group_id → total actual spend across all
+    # group members that had a successful fetch.
+    group_spend_map = {}   # group_id → float
+    group_obj_map  = {}    # group_id → BudgetGroup
+    for c in campaigns_with_meta_id:
+        if not c.budget_group_id:
+            continue
+        data = fetch_data.get(c.id, {})
+        if 'spend' not in data:
+            continue
+        gid = c.budget_group_id
+        group_spend_map[gid] = group_spend_map.get(gid, 0.0) + data['spend']
+        if gid not in group_obj_map:
+            group_obj_map[gid] = BudgetGroup.query.get(gid)
+
     # Campaigns that had no meta_campaign_id — can't pace them.
     for campaign in campaigns_missing_meta:
         failures.append({
@@ -596,39 +613,101 @@ def run_pacing(account_id):
             continue
 
         # ---- CBO path ----
-        actual_spend  = data['spend']
+        actual_spend   = data['spend']
         live_cbo_daily = data.get('live_daily')
 
-        (
-            daily_target, expected_mtd, pace_ratio,
-            new_daily, change_pct, action,
-        ) = _compute_recommendation(
-            monthly_budget=campaign.monthly_budget,
-            actual_spend=actual_spend,
-            days_in_month=days_in_month,
-            days_elapsed=days_elapsed,
-            settings=settings,
-            actual_current_daily=live_cbo_daily,
-        )
+        # ---- Budget Group path (group-aware CBO) ----
+        # When this campaign belongs to a group, compute the recommendation
+        # against the combined group spend and group budget, then split by
+        # allocation %. This ensures one campaign overspending is accounted
+        # for in the other campaign's recommendation.
+        if campaign.budget_group_id and campaign.budget_group_id in group_obj_map:
+            group      = group_obj_map[campaign.budget_group_id]
+            alloc_pct  = campaign.group_allocation_pct or 100.0
 
-        display_current = live_cbo_daily if live_cbo_daily is not None else daily_target
+            # Group-level totals
+            group_total_spend = group_spend_map.get(campaign.budget_group_id, actual_spend)
+            days_remaining    = max(1, days_in_month - days_elapsed)
+            group_remaining   = max(0.0, group.monthly_budget - group_total_spend)
+            group_rec_daily   = group_remaining / days_remaining if days_remaining > 0 else 0.0
 
-        recommendations.append({
-            "campaign_id": campaign.id,
-            "meta_campaign_id": campaign.meta_campaign_id,
-            "campaign_name": campaign.campaign_name,
-            "monthly_budget": campaign.monthly_budget,
-            "budget_mode": "CBO",
-            "actual_spend": round(actual_spend, 2),
-            "expected_spend": round(expected_mtd, 2),
-            "pace_ratio": round(pace_ratio, 3),
-            "current_daily_budget": round(display_current, 2),
-            "recommended_daily_budget": round(new_daily, 2),
-            "change_percent": round(change_pct, 1),
-            "action": action,
-            "days_elapsed": days_elapsed,
-            "days_in_month": days_in_month,
-        })
+            # This campaign's share
+            new_daily = group_rec_daily * (alloc_pct / 100.0)
+
+            # Diagnostic columns (per-campaign, informational)
+            alloc_monthly   = group.monthly_budget * (alloc_pct / 100.0)
+            daily_target    = alloc_monthly / days_in_month if days_in_month > 0 else 0.0
+            expected_mtd    = daily_target * days_elapsed
+            pace_ratio      = (actual_spend / expected_mtd) if expected_mtd > 0 else 1.0
+
+            ref_daily       = (live_cbo_daily
+                               if (live_cbo_daily is not None and live_cbo_daily > 0)
+                               else daily_target)
+            change_pct      = ((new_daily - ref_daily) / ref_daily * 100.0
+                               if ref_daily > 0 else 0.0)
+            if abs(new_daily - ref_daily) < 0.01:
+                action = 'ON_PACE'
+            elif new_daily > ref_daily:
+                action = 'INCREASE'
+            else:
+                action = 'DECREASE'
+
+            display_current = live_cbo_daily if live_cbo_daily is not None else daily_target
+
+            recommendations.append({
+                "campaign_id": campaign.id,
+                "meta_campaign_id": campaign.meta_campaign_id,
+                "campaign_name": campaign.campaign_name,
+                "monthly_budget": round(alloc_monthly, 2),   # this campaign's share
+                "budget_mode": "CBO",
+                "budget_group_id": group.id,
+                "budget_group_name": group.name,
+                "budget_group_total": round(group.monthly_budget, 2),
+                "budget_group_spend": round(group_total_spend, 2),
+                "group_allocation_pct": round(alloc_pct, 2),
+                "actual_spend": round(actual_spend, 2),
+                "expected_spend": round(expected_mtd, 2),
+                "pace_ratio": round(pace_ratio, 3),
+                "current_daily_budget": round(display_current, 2),
+                "recommended_daily_budget": round(new_daily, 2),
+                "change_percent": round(change_pct, 1),
+                "action": action,
+                "days_elapsed": days_elapsed,
+                "days_in_month": days_in_month,
+            })
+
+        else:
+            # ---- Standalone CBO (no group) ----
+            (
+                daily_target, expected_mtd, pace_ratio,
+                new_daily, change_pct, action,
+            ) = _compute_recommendation(
+                monthly_budget=campaign.monthly_budget,
+                actual_spend=actual_spend,
+                days_in_month=days_in_month,
+                days_elapsed=days_elapsed,
+                settings=settings,
+                actual_current_daily=live_cbo_daily,
+            )
+
+            display_current = live_cbo_daily if live_cbo_daily is not None else daily_target
+
+            recommendations.append({
+                "campaign_id": campaign.id,
+                "meta_campaign_id": campaign.meta_campaign_id,
+                "campaign_name": campaign.campaign_name,
+                "monthly_budget": campaign.monthly_budget,
+                "budget_mode": "CBO",
+                "actual_spend": round(actual_spend, 2),
+                "expected_spend": round(expected_mtd, 2),
+                "pace_ratio": round(pace_ratio, 3),
+                "current_daily_budget": round(display_current, 2),
+                "recommended_daily_budget": round(new_daily, 2),
+                "change_percent": round(change_pct, 1),
+                "action": action,
+                "days_elapsed": days_elapsed,
+                "days_in_month": days_in_month,
+            })
 
         snapshot = PacingData(
             campaign_id=campaign.id,
