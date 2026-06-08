@@ -194,7 +194,7 @@ function Settings({ user, onLogout }) {
     if (type === 'exact')            return <span className="bb-pill bb-pill-on">Exact</span>;
     if (type === 'case_insensitive') return <span className="bb-pill bb-pill-up">Case</span>;
     if (type === 'partial')          return <span className="bb-pill bb-pill-muted">Partial</span>;
-    if (type === 'word_overlap')     return <span className="bb-pill bb-pill-muted">Fuzzy</span>;
+    if (type === 'word_overlap')     return <span className="bb-pill bb-pill-up">Matched</span>;
     return <span className="bb-pill bb-pill-down">No match</span>;
   };
 
