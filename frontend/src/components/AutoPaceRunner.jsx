@@ -26,7 +26,14 @@ import axios from 'axios';
 import { Check, AlertCircle, Activity, Minimize2, Maximize2 } from 'lucide-react';
 import { useToast } from './Toast';
 
-const SESSION_FLAG = 'bb-autopaced';
+const LAST_RUN_KEY = 'bb-autopace-last-run';
+const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+function isWithinCooldown() {
+  const raw = localStorage.getItem(LAST_RUN_KEY);
+  if (!raw) return false;
+  return Date.now() - parseInt(raw, 10) < COOLDOWN_MS;
+}
 
 export default function AutoPaceRunner({ user }) {
   const toast = useToast();
@@ -43,10 +50,10 @@ export default function AutoPaceRunner({ user }) {
   useEffect(() => {
     if (!user) return;
     if (startedRef.current) return;
-    if (sessionStorage.getItem(SESSION_FLAG)) return;
+    if (isWithinCooldown()) return;
     startedRef.current = true;
-    // Set the flag immediately so a mid-run refresh doesn't fire a second pass.
-    sessionStorage.setItem(SESSION_FLAG, '1');
+    // Stamp immediately so a mid-run refresh doesn't fire a second pass.
+    localStorage.setItem(LAST_RUN_KEY, Date.now().toString());
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
