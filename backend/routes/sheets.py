@@ -1012,6 +1012,19 @@ def sync_budgets_for_account(account_id):
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
         campaign, score = _match_campaign_with_score(match_name, db_campaigns)
         if not campaign:
+            # Allocation-first fallback: row name like "Harrah's OKLAHOMA - Promos" ties
+            # across all promo campaigns so no single primary match is found. But the notes
+            # define who gets what ("TCM: 40% / FSP, BW, GG: 20%"). Use the first allocation
+            # entry that matches a campaign as the anchor so the CBO split logic can run.
+            raw_notes_check = row.get("notes") or ""
+            alloc_check = _parse_allocations_from_notes(raw_notes_check)
+            if alloc_check:
+                for alloc_name, _ in alloc_check:
+                    anchor = _match_campaign(alloc_name, db_campaigns)
+                    if anchor:
+                        campaign, score = anchor, 0.5
+                        break
+        if not campaign:
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
         candidate_rows.append((row, match_name, campaign, score))
