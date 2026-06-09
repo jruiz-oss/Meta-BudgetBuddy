@@ -526,8 +526,8 @@ def _parse_allocations_from_notes(notes: str):
 
     # Format A: "Name - 40%"  (any dash variant)
     pat_a = re.compile(r"^(.+?)\s*[-–—]\s*(\d+(?:\.\d+)?)\s*%\s*$")
-    # Format B: "70% to Name"
-    pat_b = re.compile(r"^(\d+(?:\.\d+)?)\s*%\s+to\s+(.+?)\s*$", re.IGNORECASE)
+    # Format B: "70% to Name"  (tolerates a trailing stray "NN%" after the name)
+    pat_b = re.compile(r"^(\d+(?:\.\d+)?)\s*%\s+to\s+(.+?)\s*(?:\d+\s*%)?\s*$", re.IGNORECASE)
 
     parsed = []
     for chunk in chunks:
@@ -539,9 +539,9 @@ def _parse_allocations_from_notes(notes: str):
             if m2:
                 pct, name = float(m2.group(1)), m2.group(2).strip()
             else:
-                return None  # non-conforming chunk → bail (flight notes, dates, etc.)
+                continue  # non-conforming chunk → skip (parentheticals, flight notes, etc.)
         if not name or pct < 0 or pct > 100:
-            return None
+            continue
         parsed.append((name, pct))
 
     total = sum(p for _, p in parsed)
