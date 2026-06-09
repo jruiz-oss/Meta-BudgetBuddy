@@ -195,6 +195,12 @@ function AccountDashboard({ user, onLogout }) {
         toast.warn(`${response.data.failures.length} campaign(s) had errors.`);
       }
 
+      // Surface auto-import result (new campaigns discovered from Meta)
+      const as = response.data.auto_sync;
+      if (as && !as.error && as.new_campaigns > 0) {
+        toast.info(`${as.new_campaigns} new campaign(s) pulled from Meta and added to tracking.`, { title: 'New campaigns found' });
+      }
+
       // Surface sheet sync (pre-run pull from sheet → DB)
       const ss = response.data.sheet_sync;
       if (ss && !ss.error) {

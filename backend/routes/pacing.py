@@ -310,6 +310,26 @@ def run_pacing(account_id):
     if not settings:
         return jsonify({"error": "Account settings not found"}), 404
 
+    # Auto-discover new campaigns from Meta and refresh existing names/flights.
+    # This runs before the campaign query so new campaigns are included in the
+    # same pacing run — no manual "Import from Meta" click required.
+    # Best-effort: any failure must not block the pacing run.
+    auto_sync_result = None
+    try:
+        from routes.accounts import _auto_import_campaigns
+        new_count, disc_errs = _auto_import_campaigns(account)
+        auto_sync_result = {"new_campaigns": new_count, "errors": disc_errs}
+        if new_count:
+            logger.info(
+                "Pre-pacing auto-import: %s new campaign(s) added for account %s",
+                new_count, account_id,
+            )
+        for err in disc_errs:
+            logger.warning("Pre-pacing auto-import error for account %s: %s", account_id, err)
+    except Exception as e:
+        logger.warning("Pre-pacing auto-import failed for account %s: %s", account_id, e)
+        auto_sync_result = {"error": str(e)}
+
     # Auto-pull budgets & ABO allocations from the configured Google Sheet *before*
     # we read campaigns from the DB. Sheet is the source of truth — without this
     # we'd pace against the daily*30 estimate stored at account-import time.
@@ -772,6 +792,7 @@ def run_pacing(account_id):
         "recommendations": recommendations,
         "failures": failures,
         "skipped_ended": skipped_ended,
+        "auto_sync": auto_sync_result,
         "sheet_sync": sheet_sync_result,
         "sheet_writeback": sheet_writeback,
     }), 200
