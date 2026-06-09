@@ -1098,11 +1098,12 @@ def sync_budgets_for_account(account_id):
                     for alloc_name, alloc_pct in split_allocs:
                         matched_c = _match_campaign(alloc_name, db_campaigns)
                         if not matched_c:
-                            logger.warning(
-                                "CBO split aborted for '%s': allocation name '%s' "
-                                "did not match any campaign in account %s",
-                                row["name"], alloc_name, account_id,
+                            fail_reason = (
+                                f"CBO split aborted for '{row['name']}': "
+                                f"'{alloc_name}' did not match any campaign"
                             )
+                            print(fail_reason, flush=True)
+                            skipped.append({"sheet_name": row["name"], "reason": fail_reason})
                             split_ok = False
                             break
                         split_proposed.append((matched_c, alloc_pct, alloc_name))
