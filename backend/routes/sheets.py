@@ -409,6 +409,14 @@ def _match_campaign_with_score(sheet_name: str, db_campaigns: list):
             substring_hits.append(c)
     if len(substring_hits) == 1:
         return substring_hits[0], 2.0
+
+    # Abbreviation match: "TCM" → "Tier Credit Multiplier", "BW" → "Buck and Winnie"
+    needle_upper = sheet_name.strip().upper()
+    if re.match(r'^[A-Z]{2,8}$', needle_upper):
+        abbrev_hits = [c for c in campaigns if needle_upper in _generate_abbrevs(c.campaign_name)]
+        if len(abbrev_hits) == 1:
+            return abbrev_hits[0], 2.0
+
     pool = substring_hits if len(substring_hits) > 1 else campaigns
 
     scored = [(_word_overlap_score(sheet_name, c.campaign_name), c) for c in pool]
@@ -466,6 +474,36 @@ def _match_all_campaigns(sheet_name: str, db_campaigns: list) -> list:
     return [c for score, c in scored if score >= best_score - _SCORE_TIE_EPS]
 
 
+# Words ignored when generating abbreviations from a name.
+_ABBREV_STOP_WORDS = {
+    "a", "an", "and", "at", "by", "copy", "for", "from",
+    "in", "is", "of", "on", "or", "the", "to", "via", "with",
+}
+
+
+def _generate_abbrevs(name: str) -> set:
+    """Return all abbreviations that could refer to this campaign/adset name.
+
+    Extracts initials of significant (non-stop) words then yields every
+    consecutive sub-sequence of those initials of length ≥ 2.
+
+    Examples:
+      "Tier Credit Multiplier - Copy" → {"TC","CM","TCM","CMC","TCMC"}
+      "Buck and Winnie"               → {"BW"}
+      "Next Day Free Slot Play"       → {"ND","DF","FS","SP","NDF","DFS","FSP",...}
+      "Gift Giveaways"                → {"GG"}
+    """
+    words = re.sub(r"[^\w\s]", " ", name).split()
+    sig = [w for w in words
+           if w.lower() not in _ABBREV_STOP_WORDS and not w.isdigit() and w]
+    initials = [w[0].upper() for w in sig]
+    abbrevs = set()
+    for start in range(len(initials)):
+        for end in range(start + 2, len(initials) + 1):
+            abbrevs.add("".join(initials[start:end]))
+    return abbrevs
+
+
 def _match_adset(needle_name: str, adsets: list):
     """Match a Notes-column label to an AdSet (same rules as _match_campaign)."""
     if not needle_name or not adsets:
@@ -488,6 +526,14 @@ def _match_adset(needle_name: str, adsets: list):
             substring_hits.append(a)
     if len(substring_hits) == 1:
         return substring_hits[0]
+
+    # Abbreviation match: "TCM" → "Tier Credit Multiplier", "BW" → "Buck and Winnie"
+    needle_upper = needle_name.strip().upper()
+    if re.match(r'^[A-Z]{2,8}$', needle_upper):
+        abbrev_hits = [a for a in rows if needle_upper in _generate_abbrevs(a.adset_name)]
+        if len(abbrev_hits) == 1:
+            return abbrev_hits[0]
+
     pool = substring_hits if len(substring_hits) > 1 else rows
 
     scored = [(_word_overlap_score(needle_name, a.adset_name), a) for a in pool]
@@ -502,19 +548,23 @@ def _match_adset(needle_name: str, adsets: list):
 def _parse_allocations_from_notes(notes: str):
     """Try to read allocation %s out of a Notes-column cell.
 
-    Handles two formats (can be mixed within the same cell):
+    Handles three formats (can be mixed within the same cell):
 
-      Format A — ABO adset style:  ``"<name> - <pct>%"``
-        "Pays to Play - 40% / Sports Bar - 30% / Free Slot Play - 30%"
-          → [("Pays to Play", 40.0), ("Sports Bar", 30.0), ("Free Slot Play", 30.0)]
+      Format A — ``"<name> - <pct>%"``
+        "Pays to Play - 40% / Sports Bar - 60%"
+          → [("Pays to Play", 40.0), ("Sports Bar", 60.0)]
 
-      Format B — CBO campaign split:  ``"<pct>% to <name>"``
+      Format B — ``"<pct>% to <name>"``
         "70% to Weddings / 30% to Wedding Brochure"
           → [("Weddings", 70.0), ("Wedding Brochure", 30.0)]
 
-    Returns ``None`` if any chunk doesn't match either pattern, or if the parsed
-    %s don't sum to ~100 (±1.5). This is conservative on purpose — flight notes
-    like "Cinco De Mayo (5/2 End)" must not be misread as allocations.
+      Format C — ``"<name>: <pct>%"`` or ``"<name1>, <name2>: <pct>%"`` (shared %)
+        "TCM: 40%"              → [("TCM", 40.0)]
+        "FSP, BW, GG: 20%"     → [("FSP", 20.0), ("BW", 20.0), ("GG", 20.0)]
+
+    Non-conforming lines (parentheticals, flight notes, blank lines) are skipped.
+    Returns ``None`` if the allocation lines don't sum to ~100 (±1.5), or if there
+    are no allocation lines at all.
     """
     if not notes or not notes.strip():
         return None
@@ -528,21 +578,31 @@ def _parse_allocations_from_notes(notes: str):
     pat_a = re.compile(r"^(.+?)\s*[-–—]\s*(\d+(?:\.\d+)?)\s*%\s*$")
     # Format B: "70% to Name"  (tolerates a trailing stray "NN%" after the name)
     pat_b = re.compile(r"^(\d+(?:\.\d+)?)\s*%\s+to\s+(.+?)\s*(?:\d+\s*%)?\s*$", re.IGNORECASE)
+    # Format C: "Name: X%" or "Name1, Name2: X%" (abbreviations or shared-% groups)
+    pat_c = re.compile(r"^(.+?):\s*(\d+(?:\.\d+)?)\s*%\s*$")
 
     parsed = []
     for chunk in chunks:
         m = pat_a.match(chunk)
         if m:
             name, pct = m.group(1).strip(), float(m.group(2))
-        else:
-            m2 = pat_b.match(chunk)
-            if m2:
-                pct, name = float(m2.group(1)), m2.group(2).strip()
-            else:
-                continue  # non-conforming chunk → skip (parentheticals, flight notes, etc.)
-        if not name or pct < 0 or pct > 100:
+            if name and 0 <= pct <= 100:
+                parsed.append((name, pct))
             continue
-        parsed.append((name, pct))
+        m2 = pat_b.match(chunk)
+        if m2:
+            pct, name = float(m2.group(1)), m2.group(2).strip()
+            if name and 0 <= pct <= 100:
+                parsed.append((name, pct))
+            continue
+        m3 = pat_c.match(chunk)
+        if m3:
+            names_raw, pct = m3.group(1).strip(), float(m3.group(2))
+            if 0 <= pct <= 100:
+                for name in [n.strip() for n in names_raw.split(",") if n.strip()]:
+                    parsed.append((name, pct))
+            continue
+        # non-conforming chunk → skip (parentheticals, flight notes, blank lines)
 
     total = sum(p for _, p in parsed)
     if abs(total - 100.0) > 1.5:
