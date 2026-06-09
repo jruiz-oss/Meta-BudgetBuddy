@@ -281,17 +281,23 @@ function AccountSection({ acct, applying, skipped, results, search,
   }, [acct.campaigns]);
 
   // Sheet budget match status for title color-coding.
-  // 'none'    = sheet configured, 0 campaigns matched → red
-  // 'partial' = sheet configured, some campaigns unmatched → yellow
+  // Derived from per-campaign sheet_budget_matched flags rather than the
+  // aggregate stats counter, which includes hidden zero-spend campaigns that
+  // have no sheet row — those shouldn't trigger a yellow warning.
+  // 'none'    = sheet configured, 0 visible campaigns matched → red
+  // 'partial' = sheet configured, some visible campaigns unmatched → yellow
   // null      = no sheet, or all matched (no indicator)
   const sheetStatus = useMemo(() => {
     if (!acct.has_sheet) return null;
-    const stats = acct.sheet_sync_stats;
-    if (!stats) return null; // no sync data yet — no indicator
-    if (stats.matched === 0) return 'none';
-    if (stats.matched < stats.total) return 'partial';
+    // Only look at campaigns that have pacing data (i.e., not hidden zero-spend ones).
+    const visible = acct.campaigns.filter(c => c.latest_pacing);
+    if (visible.length === 0) return null; // no data yet — no indicator
+    const matchedCount = visible.filter(c => c.sheet_budget_matched === true).length;
+    const unmatchedCount = visible.filter(c => c.sheet_budget_matched === false).length;
+    if (matchedCount === 0 && unmatchedCount > 0) return 'none';
+    if (unmatchedCount > 0) return 'partial';
     return null;
-  }, [acct.has_sheet, acct.sheet_sync_stats]);
+  }, [acct.has_sheet, acct.campaigns]);
 
   // Count actionable items — must be BEFORE any early return (hooks must be unconditional)
   const actionableCount = useMemo(() => {
