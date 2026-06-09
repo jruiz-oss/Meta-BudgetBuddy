@@ -416,8 +416,21 @@ def _match_campaign_with_score(sheet_name: str, db_campaigns: list):
         abbrev_hits = [c for c in campaigns if needle_upper in _generate_abbrevs(c.campaign_name)]
         if len(abbrev_hits) == 1:
             return abbrev_hits[0], 2.0
-
-    pool = substring_hits if len(substring_hits) > 1 else campaigns
+        if len(abbrev_hits) > 1:
+            # Multiple campaigns share this abbreviation — use word overlap to pick the
+            # best among them (e.g. "FSP" could match two campaigns; the one whose name
+            # overlaps most with the needle wins).
+            scored_abbrev = [(_word_overlap_score(sheet_name, c.campaign_name), c) for c in abbrev_hits]
+            scored_abbrev.sort(key=lambda x: (-x[0], (x[1].campaign_name or "").lower()))
+            best_a, second_a = scored_abbrev[0][0], (scored_abbrev[1][0] if len(scored_abbrev) > 1 else -1.0)
+            if best_a > second_a:
+                return scored_abbrev[0][1], best_a
+            # True tie among abbrev hits — keep abbrev_hits as pool for the main scorer below
+            pool = abbrev_hits
+        else:
+            pool = substring_hits if len(substring_hits) > 1 else campaigns
+    else:
+        pool = substring_hits if len(substring_hits) > 1 else campaigns
 
     scored = [(_word_overlap_score(sheet_name, c.campaign_name), c) for c in pool]
     scored.sort(key=lambda x: (-x[0], (x[1].campaign_name or "").lower()))
@@ -533,8 +546,17 @@ def _match_adset(needle_name: str, adsets: list):
         abbrev_hits = [a for a in rows if needle_upper in _generate_abbrevs(a.adset_name)]
         if len(abbrev_hits) == 1:
             return abbrev_hits[0]
-
-    pool = substring_hits if len(substring_hits) > 1 else rows
+        if len(abbrev_hits) > 1:
+            scored_abbrev = [(_word_overlap_score(needle_name, a.adset_name), a) for a in abbrev_hits]
+            scored_abbrev.sort(key=lambda x: (-x[0], (x[1].adset_name or "").lower()))
+            best_a, second_a = scored_abbrev[0][0], (scored_abbrev[1][0] if len(scored_abbrev) > 1 else -1.0)
+            if best_a > second_a:
+                return scored_abbrev[0][1]
+            pool = abbrev_hits
+        else:
+            pool = substring_hits if len(substring_hits) > 1 else rows
+    else:
+        pool = substring_hits if len(substring_hits) > 1 else rows
 
     scored = [(_word_overlap_score(needle_name, a.adset_name), a) for a in pool]
     scored.sort(key=lambda x: (-x[0], (x[1].adset_name or "").lower()))
@@ -1076,6 +1098,11 @@ def sync_budgets_for_account(account_id):
                     for alloc_name, alloc_pct in split_allocs:
                         matched_c = _match_campaign(alloc_name, db_campaigns)
                         if not matched_c:
+                            logger.warning(
+                                "CBO split aborted for '%s': allocation name '%s' "
+                                "did not match any campaign in account %s",
+                                row["name"], alloc_name, account_id,
+                            )
                             split_ok = False
                             break
                         split_proposed.append((matched_c, alloc_pct, alloc_name))
