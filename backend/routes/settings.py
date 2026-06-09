@@ -47,6 +47,8 @@ def update_settings(account_id):
         settings.auto_adjust_enabled = bool(data['auto_adjust_enabled'])
     if 'daily_digest_enabled' in data:
         settings.daily_digest_enabled = bool(data['daily_digest_enabled'])
+    if 'campaign_name_filter' in data:
+        settings.campaign_name_filter = (data['campaign_name_filter'] or '').strip()
 
     db.session.commit()
     return jsonify({'settings': settings.to_dict()}), 200

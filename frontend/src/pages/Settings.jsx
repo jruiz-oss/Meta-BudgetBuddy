@@ -68,6 +68,7 @@ function Settings({ user, onLogout }) {
       // longer affect anything, so the UI doesn't expose them.
       await axios.put(`/api/settings/${accountId}`, {
         daily_digest_enabled: !!settings.daily_digest_enabled,
+        campaign_name_filter: settings.campaign_name_filter || '',
       });
       toast.success('Settings saved.');
     } catch (err) {
@@ -244,6 +245,24 @@ function Settings({ user, onLogout }) {
                   Recommendations follow your "Social Budget Pacing" sheet:
                   recommended daily = (monthly budget − MTD spend) ÷ days remaining,
                   split by ABO allocation %.
+                </div>
+              </div>
+
+              {/* Campaign name filter — only import/sync campaigns matching this substring. */}
+              <div style={{ marginBottom: 16 }}>
+                <div className="bb-form-group">
+                  <label className="bb-form-label">Campaign name filter</label>
+                  <input
+                    type="text"
+                    className="bb-input"
+                    placeholder="e.g. commit:2026 — leave blank to import all campaigns"
+                    value={settings.campaign_name_filter || ''}
+                    onChange={(e) => handleSettingsChange('campaign_name_filter', e.target.value)}
+                    style={{ maxWidth: 360 }}
+                  />
+                  <div className="bb-form-help">
+                    Case-insensitive. When set, the sync modal and auto-import only show campaigns whose names contain this text. Useful when clients run their own ads in the same ad account.
+                  </div>
                 </div>
               </div>
 

@@ -633,6 +633,78 @@ def _parse_allocations_from_notes(notes: str):
     return parsed
 
 
+def _parse_flight_date(date_str: str, year: int):
+    """Parse 'M/D' with optional time/suffix → datetime.date, or None on failure."""
+    from datetime import date
+    m = re.match(r'(\d{1,2})/(\d{1,2})', date_str.strip())
+    if not m:
+        return None
+    try:
+        return date(year, int(m.group(1)), int(m.group(2)))
+    except ValueError:
+        return None
+
+
+def _parse_flight_promo_allocations(notes: str, today=None):
+    """Detect 'PromoName: M/D - M/D [suffix]' notes; return even-split for active promos today.
+
+    Handles formats like:
+      "MidSummer TC: 6/13 - 7/5 EOD"
+      "Clock: 6/5 - 6/20 5pm"
+      "Amazon: 6/5-6/13"
+      "Fry's: 6/13 - 6/27 5pm"
+
+    Returns:
+      - list of (name, pct) for promos active today — may be [] if none active yet
+      - None if the notes don't follow the flight-date format (wrong shape)
+
+    The promo names are keywords that fuzzy-match campaign names in the DB (e.g.
+    "Clock" matches a campaign containing "Clock"). Budget is split evenly across
+    active promos. Unmatched promo names are handled by the caller (redistribute).
+    """
+    from datetime import date as _date
+    if not notes or not notes.strip():
+        return None
+    if today is None:
+        today = _date.today()
+    year = today.year
+
+    # Each non-empty line must match: "Name: M/D - M/D [optional time/suffix]"
+    # Dashes can be spaced or unspaced; M/D can have no suffix or "EOD", "5pm", etc.
+    pat = re.compile(
+        r'^(.+?):\s*(\d{1,2}/\d{1,2})\s*[-–—]\s*(\d{1,2}/\d{1,2})(?:\s+.*)?$'
+    )
+    chunks = [c.strip() for c in notes.split('\n') if c.strip()]
+    if not chunks:
+        return None
+
+    promos = []
+    for chunk in chunks:
+        m = pat.match(chunk)
+        if not m:
+            return None  # Non-conforming line → not a flight-date block
+        name = m.group(1).strip()
+        start = _parse_flight_date(m.group(2), year)
+        end = _parse_flight_date(m.group(3), year)
+        if not start or not end:
+            return None
+        # Handle year rollover (e.g. Nov flight ending in Jan)
+        if end < start:
+            end = _date(year + 1, end.month, end.day)
+        promos.append((name, start, end))
+
+    if not promos:
+        return None
+
+    # Filter to promos active today (start <= today <= end, both inclusive)
+    active = [(name, start, end) for name, start, end in promos if start <= today <= end]
+    if not active:
+        return []  # Correct flight-date format, but no promos live right now
+
+    pct = round(100.0 / len(active), 4)
+    return [(name, pct) for name, _, _ in active]
+
+
 def _strip_account_prefix(sheet_name: str, current_account, all_accounts: list) -> str:
     """Strip the account-identifier prefix from a sheet row name before campaign matching.
 
@@ -1015,7 +1087,7 @@ def sync_budgets_for_account(account_id):
     # highest score. Ties stay with the first/higher-priority row.
     # ------------------------------------------------------------------
     candidate_rows = []       # list of (row, match_name, campaign, score)
-    allocation_only_rows = [] # list of (row, alloc_check) for rows with no primary match
+    allocation_only_rows = [] # list of (row, alloc_check, is_flight_promo)
 
     for row in sheet_rows:
         scope = row.get("account_scope") or ""
@@ -1037,12 +1109,19 @@ def sync_budgets_for_account(account_id):
         if not campaign:
             # Allocation-first: row name like "Harrah's OKLAHOMA - Promos" has no single
             # primary match, but the notes define who gets what ("TCM: 40% / FSP, BW, GG: 20%").
+            # Also handles flight-date promo groups ("Clock: 6/5 - 6/20 5pm\nAmazon: 6/5-6/13").
             # Queue for a separate pass AFTER direct matches are resolved so this row can't
             # collide with or be outscored by a campaign that also has its own direct row.
             raw_notes_check = row.get("notes") or ""
             alloc_check = _parse_allocations_from_notes(raw_notes_check)
-            if alloc_check and row.get("monthly_budget") is not None:
-                allocation_only_rows.append((row, alloc_check))
+            is_flight_promo = False
+            if alloc_check is None:
+                # Try flight-date promo format as a fallback
+                alloc_check = _parse_flight_promo_allocations(raw_notes_check)
+                if alloc_check is not None:
+                    is_flight_promo = True
+            if alloc_check is not None and row.get("monthly_budget") is not None:
+                allocation_only_rows.append((row, alloc_check, is_flight_promo))
             else:
                 skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
@@ -1224,37 +1303,84 @@ def sync_budgets_for_account(account_id):
     # ------------------------------------------------------------------
     # Allocation-only pass: rows like "Harrah's OKLAHOMA - Promos" whose name
     # didn't match a single campaign but whose notes define a complete CBO split
-    # (e.g. "TCM: 40% / FSP, BW, GG: 20%"). Processed AFTER direct matches so
-    # individual campaign rows (e.g. a dedicated TCM row) have already run and
-    # don't collide with the split anchor.
+    # (e.g. "TCM: 40% / FSP, BW, GG: 20%") OR a flight-date promo group
+    # (e.g. "Clock: 6/5 - 6/20 5pm\nAmazon: 6/5-6/13").
+    # Processed AFTER direct matches so individual campaign rows have already run.
     # ------------------------------------------------------------------
-    for row, alloc_check in allocation_only_rows:
+    for row, alloc_check, is_flight_promo in allocation_only_rows:
         total_budget = row["monthly_budget"]
         split_proposed = []
-        split_ok = True
-        for alloc_name, alloc_pct in alloc_check:
-            matched_c = _match_campaign(alloc_name, db_campaigns)
-            if not matched_c:
-                fail_reason = (
-                    f"Allocation-only split skipped for '{row['name']}': "
-                    f"'{alloc_name}' did not match any campaign"
-                )
-                print(fail_reason, flush=True)
-                skipped.append({"sheet_name": row["name"], "reason": fail_reason})
-                split_ok = False
-                break
-            split_proposed.append((matched_c, alloc_pct, alloc_name))
-        if split_ok:
-            seen_ids = set()
-            for c, _, _ in split_proposed:
-                if c.id in seen_ids:
-                    split_ok = False
-                    break
-                seen_ids.add(c.id)
-        if not split_ok or not split_proposed:
+
+        if not alloc_check:
+            # Flight promo block detected but no promos are live today — skip gracefully.
+            skipped.append({
+                "sheet_name": row["name"],
+                "reason": "Flight-date promo group: no promos active today",
+            })
             continue
 
-        # Flight-aware redistribution (same as CBO split above)
+        if is_flight_promo:
+            # Flight-promo path: keyword-match each active promo to a campaign.
+            # Unmatched promos (campaign not synced yet) have their share redistributed
+            # to the campaigns that DO match, so the total always = 100%.
+            matched_promos = []
+            unmatched_pct = 0.0
+            for alloc_name, alloc_pct in alloc_check:
+                matched_c = _match_campaign(alloc_name, db_campaigns)
+                if matched_c:
+                    matched_promos.append((matched_c, alloc_pct, alloc_name))
+                else:
+                    unmatched_pct += alloc_pct
+                    logger.info(
+                        "Flight promo '%s' in row '%s' not tracked — redistributing %.2f%% to matched campaigns",
+                        alloc_name, row["name"], alloc_pct,
+                    )
+            if not matched_promos:
+                skipped.append({
+                    "sheet_name": row["name"],
+                    "reason": "Flight-date promo group: no active promos matched any tracked campaign",
+                })
+                continue
+            # Redistribute unmatched % evenly across matched campaigns
+            if unmatched_pct > 0:
+                bonus = unmatched_pct / len(matched_promos)
+                matched_promos = [(c, round(pct + bonus, 4), n) for c, pct, n in matched_promos]
+            # Deduplicate (two promo names shouldn't map to same campaign, but guard anyway)
+            seen_ids: set = set()
+            deduped = []
+            for c, pct, n in matched_promos:
+                if c.id not in seen_ids:
+                    deduped.append((c, pct, n))
+                    seen_ids.add(c.id)
+            split_proposed = deduped
+        else:
+            # Fixed-% allocation path (existing behaviour): every name must match or the
+            # entire row is skipped so we don't apply a partial split.
+            split_ok = True
+            for alloc_name, alloc_pct in alloc_check:
+                matched_c = _match_campaign(alloc_name, db_campaigns)
+                if not matched_c:
+                    fail_reason = (
+                        f"Allocation-only split skipped for '{row['name']}': "
+                        f"'{alloc_name}' did not match any campaign"
+                    )
+                    print(fail_reason, flush=True)
+                    skipped.append({"sheet_name": row["name"], "reason": fail_reason})
+                    split_ok = False
+                    break
+                split_proposed.append((matched_c, alloc_pct, alloc_name))
+            if split_ok:
+                seen_ids = set()
+                for c, _, _ in split_proposed:
+                    if c.id in seen_ids:
+                        split_ok = False
+                        break
+                    seen_ids.add(c.id)
+            if not split_ok or not split_proposed:
+                continue
+
+        # Flight-aware redistribution (same logic as CBO split above):
+        # if one of the split campaigns has an ended flight, redistribute its share.
         active_split = [(c, pct, n) for c, pct, n in split_proposed if c.flight_status != 'ended']
         ended_split  = [(c, pct, n) for c, pct, n in split_proposed if c.flight_status == 'ended']
         if ended_split and active_split:
@@ -1263,6 +1389,9 @@ def sync_budgets_for_account(account_id):
                 scale = 100.0 / active_total_pct
                 active_split = [(c, round(pct * scale, 4), n) for c, pct, n in active_split]
             split_proposed = active_split
+
+        if not split_proposed:
+            continue
 
         # Budget group create/update
         existing_group = None
@@ -1286,6 +1415,7 @@ def sync_budgets_for_account(account_id):
             db.session.flush()
 
         raw_notes = row.get("notes") or ""
+        match_type = "flight_promo_split" if is_flight_promo else "allocation_only_split"
         for c, pct, alloc_name in split_proposed:
             new_budget = round(total_budget * pct / 100, 2)
             old_budget = c.monthly_budget
@@ -1301,7 +1431,7 @@ def sync_budgets_for_account(account_id):
                     "sheet_name": row["name"],
                     "old_budget": old_budget,
                     "new_budget": new_budget,
-                    "match_type": "allocation_only_split",
+                    "match_type": match_type,
                     "split_pct": pct,
                     "flight_redistributed": bool(ended_split),
                     "budget_group_id": group.id,

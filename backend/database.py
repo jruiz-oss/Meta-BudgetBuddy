@@ -480,6 +480,10 @@ class AccountSettings(db.Model):
     # matched = DB campaigns found in the sheet; total = active DB campaigns.
     # Used by the Home page to color-code accounts with partial/missing sheet budgets.
     sheet_sync_stats = db.Column(db.Text, nullable=True)
+    # Optional case-insensitive substring filter applied during campaign sync and
+    # auto-import. When set (e.g. "commit:2026"), only campaigns whose names contain
+    # the filter string are pulled in. Empty string / NULL means no filter (show all).
+    campaign_name_filter = db.Column(db.String(255), nullable=True, default='')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property
@@ -512,5 +516,6 @@ class AccountSettings(db.Model):
             'google_sheet_id': self.google_sheet_id or '',
             'daily_digest_enabled': bool(self.daily_digest_enabled),
             'sheet_sync_stats': self.sheet_sync_stats,
+            'campaign_name_filter': self.campaign_name_filter or '',
             'created_at': self.created_at.isoformat()
         }

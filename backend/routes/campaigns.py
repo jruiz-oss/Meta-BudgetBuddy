@@ -85,6 +85,12 @@ def sync_campaigns(account_id):
         tracked_ids = {c.meta_campaign_id for c in tracked_campaigns}
         tracked_by_meta_id = {c.meta_campaign_id: c for c in tracked_campaigns}
 
+        # Apply campaign name filter (set per account in Settings → Pacing tab).
+        # Case-insensitive substring match; empty filter = show everything.
+        name_filter = (account.settings.campaign_name_filter or '').strip().lower() if account.settings else ''
+        if name_filter:
+            campaigns = [c for c in campaigns if name_filter in (c.get('name') or '').lower()]
+
         out = []
         for c in campaigns:
             daily_cents = c.get('daily_budget')

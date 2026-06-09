@@ -91,6 +91,11 @@ def _auto_import_campaigns(account):
     count = 0
     errors = []
 
+    # Apply campaign name filter if one is set for this account.
+    name_filter = (account.settings.campaign_name_filter or '').strip().lower() if account.settings else ''
+    if name_filter:
+        live_campaigns = [c for c in live_campaigns if name_filter in (c.get('name') or '').lower()]
+
     for c in live_campaigns:
         meta_id = c.get('id')
         name = (c.get('name') or '').strip()
