@@ -1285,11 +1285,15 @@ def sync_budgets_for_account(account_id):
             db.session.add(group)
             db.session.flush()
 
+        raw_notes = row.get("notes") or ""
         for c, pct, alloc_name in split_proposed:
             new_budget = round(total_budget * pct / 100, 2)
             old_budget = c.monthly_budget
             c.budget_group_id = group.id
             c.group_allocation_pct = pct
+            c.sheet_budget_matched = True
+            if c.sheet_notes != raw_notes:
+                c.sheet_notes = raw_notes
             if old_budget != new_budget:
                 c.monthly_budget = new_budget
                 updated.append({
