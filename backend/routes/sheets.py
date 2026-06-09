@@ -517,6 +517,28 @@ def _generate_abbrevs(name: str) -> set:
     return abbrevs
 
 
+def _scope_campaigns_by_pivot(stripped_name: str, db_campaigns: list) -> list:
+    """Narrow the campaign pool using the pivotal words from the stripped sheet row name.
+
+    When a sheet row like "Core (FB/IG Ads)" has allocation notes splitting budget
+    across multiple campaigns, the meaningful token "core" acts as a scope filter:
+    only campaigns whose names contain that token are considered as allocation targets.
+    This prevents "Pays to Play" from accidentally matching a non-Core campaign when
+    there are many campaigns on the account.
+
+    Stop words ("fb", "ig", "ads", "boosting", etc.) are already excluded by
+    _tokenise, so "Core (FB/IG Ads)" → pivot_tokens = {"core"}.
+
+    Falls back to all campaigns if the filtered set is empty (safety net).
+    """
+    pivot_tokens = _tokenise(stripped_name)
+    if not pivot_tokens:
+        return db_campaigns
+    scoped = [c for c in db_campaigns if pivot_tokens & _tokenise(c.campaign_name or "")]
+    # Only apply scoping when it actually narrows the pool; otherwise match against all.
+    return scoped if scoped else db_campaigns
+
+
 def _match_adset(needle_name: str, adsets: list):
     """Match a Notes-column label to an AdSet (same rules as _match_campaign)."""
     if not needle_name or not adsets:
@@ -1121,7 +1143,7 @@ def sync_budgets_for_account(account_id):
                 if alloc_check is not None:
                     is_flight_promo = True
             if alloc_check is not None and row.get("monthly_budget") is not None:
-                allocation_only_rows.append((row, alloc_check, is_flight_promo))
+                allocation_only_rows.append((row, alloc_check, is_flight_promo, match_name))
             else:
                 skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
@@ -1169,10 +1191,15 @@ def sync_budgets_for_account(account_id):
             if campaign.budget_mode == 'CBO':
                 split_allocs = _parse_allocations_from_notes(raw_notes)
                 if split_allocs:
+                    # Scope the candidate pool to campaigns sharing the pivot word from the
+                    # sheet row name (e.g. "Core" in "Core (FB/IG Ads)"). This prevents
+                    # short allocation labels like "Pays to Play" from matching the wrong
+                    # campaign when many campaigns share a common keyword.
+                    scoped_for_split = _scope_campaigns_by_pivot(match_name, db_campaigns)
                     split_proposed = []
                     split_ok = True
                     for alloc_name, alloc_pct in split_allocs:
-                        matched_c = _match_campaign(alloc_name, db_campaigns)
+                        matched_c = _match_campaign(alloc_name, scoped_for_split)
                         if not matched_c:
                             fail_reason = (
                                 f"CBO split aborted for '{row['name']}': "
@@ -1307,7 +1334,7 @@ def sync_budgets_for_account(account_id):
     # (e.g. "Clock: 6/5 - 6/20 5pm\nAmazon: 6/5-6/13").
     # Processed AFTER direct matches so individual campaign rows have already run.
     # ------------------------------------------------------------------
-    for row, alloc_check, is_flight_promo in allocation_only_rows:
+    for row, alloc_check, is_flight_promo, match_name in allocation_only_rows:
         total_budget = row["monthly_budget"]
         split_proposed = []
 
@@ -1354,11 +1381,15 @@ def sync_budgets_for_account(account_id):
                     seen_ids.add(c.id)
             split_proposed = deduped
         else:
-            # Fixed-% allocation path (existing behaviour): every name must match or the
-            # entire row is skipped so we don't apply a partial split.
+            # Fixed-% allocation path: every name must match or the entire row is
+            # skipped so we don't apply a partial split.
+            # Scope the candidate pool to campaigns sharing the pivot word from the
+            # sheet row name (e.g. "Core" scopes to only Core-named campaigns so that
+            # "Pays to Play" doesn't slip through to an unrelated campaign).
+            scoped_for_alloc = _scope_campaigns_by_pivot(match_name, db_campaigns)
             split_ok = True
             for alloc_name, alloc_pct in alloc_check:
-                matched_c = _match_campaign(alloc_name, db_campaigns)
+                matched_c = _match_campaign(alloc_name, scoped_for_alloc)
                 if not matched_c:
                     fail_reason = (
                         f"Allocation-only split skipped for '{row['name']}': "
