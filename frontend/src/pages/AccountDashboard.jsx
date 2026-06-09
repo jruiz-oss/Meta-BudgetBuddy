@@ -951,7 +951,14 @@ function AccountDashboard({ user, onLogout }) {
               body={`${hiddenCampaigns.length} campaign${hiddenCampaigns.length !== 1 ? 's are' : ' is'} hidden — they show no spend this month.`}
               action={{ label: 'Show ended campaigns', onClick: () => setShowHidden(true) }}
             />
-          ) : (
+          ) : (() => {
+            // True once any campaign has a non-null sheet_budget_matched, meaning
+            // a sheet sync has run. Unmatched campaigns (=== false) get red rows.
+            const allCamps = [...campaigns, ...hiddenCampaigns];
+            const hasSheetSync = allCamps.some(
+              c => c.sheet_budget_matched !== null && c.sheet_budget_matched !== undefined
+            );
+            return (
             <table className="bb-table">
               <thead>
                 <tr>
@@ -966,9 +973,10 @@ function AccountDashboard({ user, onLogout }) {
                   const lp = c.latest_pacing;
                   const status = lp ? (lp.status || '').toUpperCase() : null;
                   const mode = c.budget_mode || 'CBO';
+                  const noSheetMatch = hasSheetSync && c.sheet_budget_matched === false;
                   if (mode === 'ABO') {
                     const parentRow = (
-                      <tr key={`c-${c.id}`} style={{ background: 'var(--bb-surface-2)' }}>
+                      <tr key={`c-${c.id}`} className={noSheetMatch ? 'bb-table-row-unmatched' : ''} style={!noSheetMatch ? { background: 'var(--bb-surface-2)' } : undefined}>
                         <td>
                           <div className="bb-row-name" style={{ fontWeight: 600 }}>
                             <Link to={`/account/${accountId}/campaign/${c.id}`} style={{ color: 'var(--bb-fg)', textDecoration: 'none' }}>
@@ -992,7 +1000,7 @@ function AccountDashboard({ user, onLogout }) {
                             {c.flight_status === 'ended' ? '⚑ ended' : c.flight_status === 'pending' ? '○ pending' : c.flight_type === 'ALWAYS_ON' ? '∞ always on' : '● active'}
                           </button>
                         </td>
-                        <td className="num">${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                        <td className="num">{noSheetMatch ? <span style={{ color: 'var(--bb-warn-hot)' }}>—</span> : `$${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}</td>
                         <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
                         <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
                         <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
@@ -1028,10 +1036,10 @@ function AccountDashboard({ user, onLogout }) {
                   }
                   // CBO
                   return (
-                    <tr key={`c-${c.id}`}>
+                    <tr key={`c-${c.id}`} className={noSheetMatch ? 'bb-table-row-unmatched' : ''}>
                       <td>
                         <div className="bb-row-name" style={{ fontWeight: 600 }}>
-                          <Link to={`/account/${accountId}/campaign/${c.id}`} style={{ color: 'var(--bb-fg)', textDecoration: 'none' }}>
+                          <Link to={`/account/${accountId}/campaign/${c.id}`} style={{ color: noSheetMatch ? 'var(--bb-warn-hot)' : 'var(--bb-fg)', textDecoration: 'none' }}>
                             {c.campaign_name}
                           </Link>
                         </div>
@@ -1052,7 +1060,7 @@ function AccountDashboard({ user, onLogout }) {
                           {c.flight_status === 'ended' ? '⚑ ended' : c.flight_status === 'pending' ? '○ pending' : c.flight_type === 'ALWAYS_ON' ? '∞ always on' : '● active'}
                         </button>
                       </td>
-                      <td className="num">${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                      <td className="num">{noSheetMatch ? <span style={{ color: 'var(--bb-warn-hot)' }}>—</span> : `$${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}</td>
                       <td className="num">{lp?.current_daily_budget != null ? `$${lp.current_daily_budget.toFixed(2)}` : '—'}</td>
                       <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
                       <td className="num">
@@ -1079,7 +1087,8 @@ function AccountDashboard({ user, onLogout }) {
                 })}
               </tbody>
             </table>
-          )}
+            );
+          })()}
         </div>
 
         {/* Inline flight editor modal */}

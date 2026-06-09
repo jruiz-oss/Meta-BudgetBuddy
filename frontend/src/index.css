@@ -1191,6 +1191,9 @@ button.bb-row-weight:focus-visible {
 .bb-row-abo-parent td { background: var(--bb-surface-2); }
 .bb-table-row-tint-up td   { background: color-mix(in oklch, var(--bb-warn-cool) 6%, var(--bb-surface)); }
 .bb-table-row-tint-down td { background: color-mix(in oklch, var(--bb-warn) 6%, var(--bb-surface)); }
+/* Campaigns with no matching row in the Google Sheet */
+.bb-table-row-unmatched td { background: color-mix(in oklch, var(--bb-warn-hot) 7%, var(--bb-surface)); }
+.bb-table-row-unmatched td, .bb-table-row-unmatched a { color: color-mix(in oklch, var(--bb-warn-hot) 80%, var(--bb-fg)); }
 
 /* ── extra button variants ── */
 .bb-btn-secondary { background: var(--bb-surface-2); border-color: var(--bb-line); color: var(--bb-fg); }
