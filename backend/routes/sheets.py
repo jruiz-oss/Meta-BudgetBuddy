@@ -1014,7 +1014,8 @@ def sync_budgets_for_account(account_id):
     # candidate rows, then for each campaign keep only the row with the
     # highest score. Ties stay with the first/higher-priority row.
     # ------------------------------------------------------------------
-    candidate_rows = []  # list of (row, match_name, campaign, score)
+    candidate_rows = []       # list of (row, match_name, campaign, score)
+    allocation_only_rows = [] # list of (row, alloc_check) for rows with no primary match
 
     for row in sheet_rows:
         scope = row.get("account_scope") or ""
@@ -1034,20 +1035,16 @@ def sync_budgets_for_account(account_id):
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
         campaign, score = _match_campaign_with_score(match_name, db_campaigns)
         if not campaign:
-            # Allocation-first fallback: row name like "Harrah's OKLAHOMA - Promos" ties
-            # across all promo campaigns so no single primary match is found. But the notes
-            # define who gets what ("TCM: 40% / FSP, BW, GG: 20%"). Use the first allocation
-            # entry that matches a campaign as the anchor so the CBO split logic can run.
+            # Allocation-first: row name like "Harrah's OKLAHOMA - Promos" has no single
+            # primary match, but the notes define who gets what ("TCM: 40% / FSP, BW, GG: 20%").
+            # Queue for a separate pass AFTER direct matches are resolved so this row can't
+            # collide with or be outscored by a campaign that also has its own direct row.
             raw_notes_check = row.get("notes") or ""
             alloc_check = _parse_allocations_from_notes(raw_notes_check)
-            if alloc_check:
-                for alloc_name, _ in alloc_check:
-                    anchor = _match_campaign(alloc_name, db_campaigns)
-                    if anchor:
-                        campaign, score = anchor, 0.5
-                        break
-        if not campaign:
-            skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
+            if alloc_check and row.get("monthly_budget") is not None:
+                allocation_only_rows.append((row, alloc_check))
+            else:
+                skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue
         candidate_rows.append((row, match_name, campaign, score))
 
@@ -1223,6 +1220,89 @@ def sync_budgets_for_account(account_id):
                                 "old_pct": round(old_pct, 2),
                                 "new_pct": round(new_pct, 2),
                             })
+
+    # ------------------------------------------------------------------
+    # Allocation-only pass: rows like "Harrah's OKLAHOMA - Promos" whose name
+    # didn't match a single campaign but whose notes define a complete CBO split
+    # (e.g. "TCM: 40% / FSP, BW, GG: 20%"). Processed AFTER direct matches so
+    # individual campaign rows (e.g. a dedicated TCM row) have already run and
+    # don't collide with the split anchor.
+    # ------------------------------------------------------------------
+    for row, alloc_check in allocation_only_rows:
+        total_budget = row["monthly_budget"]
+        split_proposed = []
+        split_ok = True
+        for alloc_name, alloc_pct in alloc_check:
+            matched_c = _match_campaign(alloc_name, db_campaigns)
+            if not matched_c:
+                fail_reason = (
+                    f"Allocation-only split skipped for '{row['name']}': "
+                    f"'{alloc_name}' did not match any campaign"
+                )
+                print(fail_reason, flush=True)
+                skipped.append({"sheet_name": row["name"], "reason": fail_reason})
+                split_ok = False
+                break
+            split_proposed.append((matched_c, alloc_pct, alloc_name))
+        if split_ok:
+            seen_ids = set()
+            for c, _, _ in split_proposed:
+                if c.id in seen_ids:
+                    split_ok = False
+                    break
+                seen_ids.add(c.id)
+        if not split_ok or not split_proposed:
+            continue
+
+        # Flight-aware redistribution (same as CBO split above)
+        active_split = [(c, pct, n) for c, pct, n in split_proposed if c.flight_status != 'ended']
+        ended_split  = [(c, pct, n) for c, pct, n in split_proposed if c.flight_status == 'ended']
+        if ended_split and active_split:
+            active_total_pct = sum(pct for _, pct, _ in active_split)
+            if active_total_pct > 0:
+                scale = 100.0 / active_total_pct
+                active_split = [(c, round(pct * scale, 4), n) for c, pct, n in active_split]
+            split_proposed = active_split
+
+        # Budget group create/update
+        existing_group = None
+        for c, _, _ in split_proposed:
+            if c.budget_group_id:
+                g = BudgetGroup.query.get(c.budget_group_id)
+                if g and g.account_id == account_id:
+                    existing_group = g
+                    break
+        if existing_group:
+            existing_group.name = row["name"]
+            existing_group.monthly_budget = total_budget
+            group = existing_group
+        else:
+            group = BudgetGroup(
+                account_id=account_id,
+                name=row["name"],
+                monthly_budget=total_budget,
+            )
+            db.session.add(group)
+            db.session.flush()
+
+        for c, pct, alloc_name in split_proposed:
+            new_budget = round(total_budget * pct / 100, 2)
+            old_budget = c.monthly_budget
+            c.budget_group_id = group.id
+            c.group_allocation_pct = pct
+            if old_budget != new_budget:
+                c.monthly_budget = new_budget
+                updated.append({
+                    "campaign_name": c.campaign_name,
+                    "sheet_name": row["name"],
+                    "old_budget": old_budget,
+                    "new_budget": new_budget,
+                    "match_type": "allocation_only_split",
+                    "split_pct": pct,
+                    "flight_redistributed": bool(ended_split),
+                    "budget_group_id": group.id,
+                    "budget_group_name": group.name,
+                })
 
     db.session.commit()
 
