@@ -1,10 +1,16 @@
 import React, { useState, useMemo } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 
-// Deterministic hue from account ID so each account gets a consistent color dot
-function acctHue(id) {
-  const n = parseInt(id, 10) || 0;
-  return (n * 137 + 43) % 360;
+// Dot color based on pacing status.
+// accountActionable map: { [id]: count } — undefined = no data yet
+function dotStyle(id, accountActionable) {
+  if (!accountActionable || !(id in accountActionable)) {
+    // No pacing data loaded — neutral grey
+    return { background: 'var(--bb-mute)' };
+  }
+  return accountActionable[id] > 0
+    ? { background: '#f59e0b' }   // amber — has off-pace campaigns
+    : { background: '#10b981' };  // green — all on pace
 }
 
 // Inline SVG icons
@@ -50,7 +56,7 @@ const IClearSm = () => (
   </svg>
 );
 
-function Sidebar({ user, accounts = [], onAddAccount }) {
+function Sidebar({ user, accounts = [], accountActionable, onAddAccount }) {
   const { accountId } = useParams();
   const email = user?.email || '';
   const initials = email ? email.slice(0, 2).toUpperCase() : 'BB';
@@ -102,9 +108,8 @@ function Sidebar({ user, accounts = [], onAddAccount }) {
             key={acc.id}
             to={`/account/${acc.id}`}
             className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}
-            style={{ '--acct-hue': acctHue(acc.id) }}
           >
-            <span className="bb-acct-dot" />
+            <span className="bb-acct-dot" style={dotStyle(acc.id, accountActionable)} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
               {acc.account_name}
             </span>

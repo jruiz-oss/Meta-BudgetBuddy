@@ -394,7 +394,10 @@ def run_pacing(account_id):
                     p for p in (c.pacing_data or [])
                     if p.date and p.date >= month_start
                 ]
-                if mtd_rows and all((p.actual_spend or 0) == 0 for p in mtd_rows):
+                # Require at least 2 consecutive zero-spend rows before skipping.
+                # A campaign that was just imported today will have exactly 1 MTD row,
+                # so it won't be falsely treated as dead on the same day's manual run.
+                if len(mtd_rows) >= 2 and all((p.actual_spend or 0) == 0 for p in mtd_rows):
                     skipped_ended.append({
                         "campaign_id": c.id,
                         "campaign_name": c.campaign_name,

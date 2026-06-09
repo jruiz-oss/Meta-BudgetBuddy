@@ -908,6 +908,29 @@ function Home({ user, onLogout }) {
     return n;
   }, [accountBlocks, results, skipped]);
 
+  // Per-account actionable counts for sidebar dot coloring
+  const accountActionable = useMemo(() => {
+    const map = {};
+    accountBlocks.forEach(acct => {
+      let n = 0;
+      acct.campaigns.forEach(c => {
+        if ((c.budget_mode || 'CBO') === 'ABO') {
+          (c.adsets || []).forEach(a => {
+            const alp = a.latest_pacing;
+            const rk = `a-${a.id}`;
+            if (alp && (alp.action || alp.status || '').toUpperCase() !== 'ON_PACE' && !results[rk]?.ok && !skipped[rk]) n++;
+          });
+        } else {
+          const lp = c.latest_pacing;
+          const rk = `c-${c.id}`;
+          if (lp && (lp.status || '').toUpperCase() !== 'ON_PACE' && !results[rk]?.ok && !skipped[rk]) n++;
+        }
+      });
+      map[acct.id] = n;
+    });
+    return map;
+  }, [accountBlocks, results, skipped]);
+
   const fmt$M = (n) => {
     if (!n) return '$0';
     if (n >= 1000000) return `$${(n/1000000).toFixed(1)}M`;
@@ -917,7 +940,7 @@ function Home({ user, onLogout }) {
 
   return (
     <div className="bb-app">
-      <Sidebar user={user} accounts={allAccounts} onAddAccount={() => navigate('/accounts')} />
+      <Sidebar user={user} accounts={allAccounts} accountActionable={accountActionable} onAddAccount={() => navigate('/accounts')} />
 
       <main className="bb-main">
         {/* Header */}

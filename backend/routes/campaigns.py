@@ -501,7 +501,13 @@ def get_all_campaigns():
                     is_zero_spend = age_days > 7
 
                 elif mtd_rows:
-                    is_zero_spend = all((p.actual_spend or 0) == 0 for p in mtd_rows)
+                    # Require at least 2 consecutive zero-spend rows before hiding.
+                    # A campaign that was just imported today has exactly 1 MTD row,
+                    # so it won't be falsely hidden the same day it was added.
+                    is_zero_spend = (
+                        len(mtd_rows) >= 2
+                        and all((p.actual_spend or 0) == 0 for p in mtd_rows)
+                    )
 
                 else:
                     # Prior-month data only, no current-month rows.
@@ -693,7 +699,11 @@ def get_campaigns(account_id):
                 )
                 is_zero_spend = age_days > 7
             elif mtd_rows:
-                is_zero_spend = all((p.actual_spend or 0) == 0 for p in mtd_rows)
+                # Require at least 2 consecutive zero-spend rows before hiding.
+                is_zero_spend = (
+                    len(mtd_rows) >= 2
+                    and all((p.actual_spend or 0) == 0 for p in mtd_rows)
+                )
             else:
                 if pacing_ran_this_month:
                     # Pacing ran but skipped this campaign → it's dead.
