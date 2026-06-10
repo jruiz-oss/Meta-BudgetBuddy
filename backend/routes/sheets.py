@@ -1023,24 +1023,76 @@ def preview_matches(account_id):
             continue
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
         campaign = _match_campaign(match_name, db_campaigns)
-        matches.append({
-            "sheet_name": row["name"],
-            "account_scope": scope,
-            "monthly_budget": row["monthly_budget"],
-            "mtd_spend": row["mtd_spend"],
-            "last_paced": row["last_paced"],
-            "row_index": row["row_index"],
-            "matched_campaign_id": campaign.id if campaign else None,
-            "matched_campaign_name": campaign.campaign_name if campaign else None,
-            "match_type": _match_type_label(match_name, campaign),
-        })
+        if campaign:
+            matches.append({
+                "sheet_name": row["name"],
+                "account_scope": scope,
+                "monthly_budget": row["monthly_budget"],
+                "mtd_spend": row["mtd_spend"],
+                "last_paced": row["last_paced"],
+                "row_index": row["row_index"],
+                "matched_campaign_id": campaign.id,
+                "matched_campaign_name": campaign.campaign_name,
+                "match_type": _match_type_label(match_name, campaign),
+            })
+        else:
+            # No 1-to-1 match — check if this is a CBO allocation-split row
+            # (e.g. "70% to Weddings / 30% to Wedding Brochure" in the Notes col).
+            # This mirrors the allocation_only_rows path in sync_budgets_for_account.
+            notes = row.get("notes") or ""
+            alloc = _parse_allocations_from_notes(notes)
+            is_flight = False
+            if alloc is None:
+                alloc = _parse_flight_promo_allocations(notes)
+                is_flight = alloc is not None
+            split_entry = None
+            if alloc is not None and row.get("monthly_budget") is not None:
+                scoped = _scope_campaigns_by_pivot(match_name, db_campaigns)
+                split_proposals = []
+                all_ok = True
+                for alloc_name, alloc_pct in (alloc or []):
+                    c = _match_campaign(alloc_name, scoped)
+                    if c:
+                        split_proposals.append({"id": c.id, "name": c.campaign_name, "pct": alloc_pct})
+                    else:
+                        all_ok = False
+                        break
+                if all_ok and split_proposals:
+                    split_entry = {
+                        "sheet_name": row["name"],
+                        "account_scope": scope,
+                        "monthly_budget": row["monthly_budget"],
+                        "mtd_spend": row["mtd_spend"],
+                        "last_paced": row["last_paced"],
+                        "row_index": row["row_index"],
+                        "matched_campaign_id": None,
+                        "matched_campaign_name": " + ".join(
+                            f"{s['name']} ({s['pct']}%)" for s in split_proposals
+                        ),
+                        "match_type": "flight_split" if is_flight else "split",
+                        "split_campaigns": split_proposals,
+                    }
+            if split_entry:
+                matches.append(split_entry)
+            else:
+                matches.append({
+                    "sheet_name": row["name"],
+                    "account_scope": scope,
+                    "monthly_budget": row["monthly_budget"],
+                    "mtd_spend": row["mtd_spend"],
+                    "last_paced": row["last_paced"],
+                    "row_index": row["row_index"],
+                    "matched_campaign_id": None,
+                    "matched_campaign_name": None,
+                    "match_type": "none",
+                })
 
     bad_types = {"none", "account_scope_mismatch"}
     return jsonify({
         "sheet_tab": tab_name,
         "total_sheet_rows": len(sheet_rows),
         "matched": sum(1 for m in matches if m["match_type"] not in bad_types),
-        "unmatched": sum(1 for m in matches if m["match_type"] in bad_types),
+        "unmatched": sum(1 for m in matches if m["match_type"] in {"none"}),
         "matches": matches,
     }), 200
 
@@ -1472,9 +1524,17 @@ def sync_budgets_for_account(account_id):
     db.session.commit()
 
     # Persist match stats so the Home page can color-code accounts by sheet health.
-    # matched = number of active DB campaigns that were found in the sheet.
+    # matched = direct matches + campaigns touched by allocation-only split rows.
     # total   = total active DB campaigns for the account.
-    matched_count = len(best_by_campaign)
+    alloc_matched_ids = {c.id for row, alloc_check, is_fp, mn in allocation_only_rows
+                         for c, _, _ in ([] if not alloc_check else [])}  # placeholder; real count below
+    alloc_campaign_ids = set()
+    for entry in updated:
+        if entry.get("match_type") in ("cbo_split", "allocation_only_split", "flight_promo_split"):
+            for c in db_campaigns:
+                if c.campaign_name == entry["campaign_name"]:
+                    alloc_campaign_ids.add(c.id)
+    matched_count = len(best_by_campaign) + len(alloc_campaign_ids - set(best_by_campaign.keys()))
     total_count = len(db_campaigns)
     if settings:
         from datetime import datetime as _dt

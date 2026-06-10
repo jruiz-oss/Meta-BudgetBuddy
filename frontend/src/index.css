@@ -1275,3 +1275,86 @@ td.num, th.num { text-align: right; }
   display: grid; place-items: center; margin-top: 1px;
 }
 .bb-toast-row-dismiss:hover { color: var(--bb-fg); }
+
+/* ============================================================
+   RESPONSIVE — small/medium screens
+   ============================================================ */
+
+/* Scrollable table wrapper — use .bb-table-scroll around any <table> */
+.bb-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* pull table flush with card edges */
+  margin-left: -1px;
+  margin-right: -1px;
+}
+
+/* Allow table scroll wrappers to work inside cards.
+   overflow:clip clips visually (preserves border-radius) without blocking
+   child scroll containers, unlike overflow:hidden. */
+.bb-card:has(.bb-table-scroll) {
+  overflow: clip;
+}
+
+/* ── ≤ 1100px: narrow sidebar ── */
+@media (max-width: 1100px) {
+  .bb-app {
+    grid-template-columns: 200px 1fr;
+  }
+  [data-density="compact"] .bb-app { grid-template-columns: 188px 1fr; }
+  .bb-main { padding: 18px 20px 60px; }
+}
+
+/* ── ≤ 820px: icon-only sidebar, main takes most of the width ── */
+@media (max-width: 820px) {
+  .bb-app {
+    grid-template-columns: 52px 1fr;
+  }
+  .bb-sidebar {
+    padding: 14px 8px 10px;
+    align-items: center;
+  }
+  .bb-brand { padding: 6px 4px; gap: 0; justify-content: center; }
+  .bb-brand img { display: none; }
+  .bb-side-section { display: none; }
+  .bb-nav-item {
+    padding: 8px;
+    justify-content: center;
+    gap: 0;
+  }
+  .bb-nav-item span:not(.bb-acct-dot),
+  .bb-nav-item .bb-nav-count { display: none; }
+  .bb-nav-item .bb-acct-dot { margin: 0; }
+  .bb-nav-item-sub { display: none; }
+  .bb-user { padding: 10px 4px; justify-content: center; }
+  .bb-user .bb-flex-col { display: none; }
+  .bb-main { padding: 14px 14px 60px; }
+  /* stat grid: 2-col on mid screens */
+  .bb-grid-4 { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── ≤ 560px: very small — stack sidebar above content ── */
+@media (max-width: 560px) {
+  .bb-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .bb-sidebar {
+    height: auto;
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--bb-line);
+    gap: 6px;
+  }
+  .bb-sidebar-accounts { display: none; }
+  .bb-brand { flex: 0 0 auto; }
+  .bb-nav-divider { display: none; }
+  .bb-user { margin-top: 0; border-top: none; padding: 4px 6px; }
+  .bb-main { padding: 12px 12px 60px; }
+  .bb-grid-4 { grid-template-columns: repeat(2, 1fr); }
+  .bb-row-between { flex-wrap: wrap; gap: 8px; }
+  .bb-page-title { font-size: 20px; }
+}

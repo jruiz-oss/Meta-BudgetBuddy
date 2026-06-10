@@ -190,30 +190,32 @@ function History({ user, onLogout }) {
                 body="Run pacing from the dashboard to populate this history."
               />
             ) : (
-              <table className="bb-table">
-                <thead>
-                  <tr>
-                    <th>Date &amp; Time</th>
-                    <th>Type</th>
-                    <th>Triggered By</th>
-                    <th>Campaigns</th>
-                    <th>Adjustments</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRuns.map((run) => (
-                    <tr key={run.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{formatDate(run.run_at)}</td>
-                      <td>{runTypePill(run.run_type)}</td>
-                      <td className="bb-muted" style={{ fontSize: 12 }}>{run.triggered_by || '—'}</td>
-                      <td className="num">{run.campaigns_processed ?? '—'}</td>
-                      <td className="num">{run.adjustments_made ?? '—'}</td>
-                      <td>{runStatusPill(run.status, run.error_message)}</td>
+              <div className="bb-table-scroll">
+                <table className="bb-table">
+                  <thead>
+                    <tr>
+                      <th>Date &amp; Time</th>
+                      <th>Type</th>
+                      <th>Triggered By</th>
+                      <th>Campaigns</th>
+                      <th>Adjustments</th>
+                      <th>Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {filteredRuns.map((run) => (
+                      <tr key={run.id}>
+                        <td style={{ whiteSpace: 'nowrap' }}>{formatDate(run.run_at)}</td>
+                        <td>{runTypePill(run.run_type)}</td>
+                        <td className="bb-muted" style={{ fontSize: 12 }}>{run.triggered_by || '—'}</td>
+                        <td className="num">{run.campaigns_processed ?? '—'}</td>
+                        <td className="num">{run.adjustments_made ?? '—'}</td>
+                        <td>{runStatusPill(run.status, run.error_message)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
@@ -230,45 +232,47 @@ function History({ user, onLogout }) {
                 body="When you apply a recommendation, it will be logged here."
               />
             ) : (
-              <table className="bb-table">
-                <thead>
-                  <tr>
-                    <th>Date &amp; Time</th>
-                    <th>Campaign</th>
-                    <th>Previous Budget</th>
-                    <th>New Budget</th>
-                    <th>Change</th>
-                    <th>Applied By</th>
-                    <th>Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adjustments.map((adj) => {
-                    const up   = adj.change_percent > 0;
-                    const flat = Math.abs(adj.change_percent || 0) < 0.5;
-                    const Icon = flat ? Minus : up ? TrendingUp : TrendingDown;
-                    return (
-                      <tr
-                        key={adj.id}
-                        className={!flat ? (up ? 'bb-table-row-tint-up' : 'bb-table-row-tint-down') : ''}
-                      >
-                        <td style={{ whiteSpace: 'nowrap' }}>{formatDate(adj.applied_at)}</td>
-                        <td style={{ fontWeight: 600 }}>{adj.campaign_name || '—'}</td>
-                        <td className="num">${(adj.old_budget || 0).toFixed(2)}</td>
-                        <td className="num">${(adj.new_budget || 0).toFixed(2)}</td>
-                        <td>
-                          <span className={`bb-change ${flat ? 'bb-change-flat' : up ? 'bb-change-up' : 'bb-change-down'}`}>
-                            <Icon size={11} aria-hidden="true" />
-                            {up ? '+' : ''}{(adj.change_percent || 0).toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className="bb-muted" style={{ fontSize: 12 }}>{adj.applied_by || '—'}</td>
-                        <td className="bb-muted" style={{ fontSize: 12 }}>{adj.reason || '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div className="bb-table-scroll">
+                <table className="bb-table">
+                  <thead>
+                    <tr>
+                      <th>Date &amp; Time</th>
+                      <th>Campaign</th>
+                      <th>Previous Budget</th>
+                      <th>New Budget</th>
+                      <th>Change</th>
+                      <th>Applied By</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adjustments.map((adj) => {
+                      const up   = adj.change_percent > 0;
+                      const flat = Math.abs(adj.change_percent || 0) < 0.5;
+                      const Icon = flat ? Minus : up ? TrendingUp : TrendingDown;
+                      return (
+                        <tr
+                          key={adj.id}
+                          className={!flat ? (up ? 'bb-table-row-tint-up' : 'bb-table-row-tint-down') : ''}
+                        >
+                          <td style={{ whiteSpace: 'nowrap' }}>{formatDate(adj.applied_at)}</td>
+                          <td style={{ fontWeight: 600 }}>{adj.campaign_name || '—'}</td>
+                          <td className="num">${(adj.old_budget || 0).toFixed(2)}</td>
+                          <td className="num">${(adj.new_budget || 0).toFixed(2)}</td>
+                          <td>
+                            <span className={`bb-change ${flat ? 'bb-change-flat' : up ? 'bb-change-up' : 'bb-change-down'}`}>
+                              <Icon size={11} aria-hidden="true" />
+                              {up ? '+' : ''}{(adj.change_percent || 0).toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="bb-muted" style={{ fontSize: 12 }}>{adj.applied_by || '—'}</td>
+                          <td className="bb-muted" style={{ fontSize: 12 }}>{adj.reason || '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}

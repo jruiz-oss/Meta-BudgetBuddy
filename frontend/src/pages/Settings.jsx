@@ -196,6 +196,8 @@ function Settings({ user, onLogout }) {
     if (type === 'case_insensitive') return <span className="bb-pill bb-pill-up">Case</span>;
     if (type === 'partial')          return <span className="bb-pill bb-pill-muted">Partial</span>;
     if (type === 'word_overlap')     return <span className="bb-pill bb-pill-up">Matched</span>;
+    if (type === 'split')            return <span className="bb-pill bb-pill-up">Split</span>;
+    if (type === 'flight_split')     return <span className="bb-pill bb-pill-up">Split</span>;
     return <span className="bb-pill bb-pill-down">No match</span>;
   };
 
@@ -517,7 +519,13 @@ function Settings({ user, onLogout }) {
                             : <span className="bb-muted">—</span>}
                         </td>
                         <td style={{ color: m.match_type === 'none' ? '#b91c1c' : 'inherit' }}>
-                          {m.matched_campaign_name || <span className="bb-muted">No match found</span>}
+                          {(m.match_type === 'split' || m.match_type === 'flight_split') && m.split_campaigns
+                            ? m.split_campaigns.map((s, i) => (
+                                <div key={i} style={{ fontSize: 12 }}>
+                                  {s.name} <span className="bb-muted">({s.pct}%)</span>
+                                </div>
+                              ))
+                            : (m.matched_campaign_name || <span className="bb-muted">No match found</span>)}
                         </td>
                         <td>{matchQualityPill(m.match_type)}</td>
                       </tr>
