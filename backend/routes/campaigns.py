@@ -471,6 +471,13 @@ def get_all_campaigns():
                 if not campaign.is_active:
                     continue
 
+                # Ownership gate: only Commit-owned campaigns belong on the
+                # dashboard. Anything whose name doesn't start with "commit"
+                # (case-insensitive) is someone else's campaign in the same ad
+                # account — skip it entirely (not even counted as hidden).
+                if not (campaign.campaign_name or '').strip().lower().startswith('commit'):
+                    continue
+
                 # --- Ended-campaign filter ---
                 # Decision tree (all pacing_data already eager-loaded):
                 #
@@ -686,6 +693,11 @@ def get_campaigns(account_id):
         campaigns_data = []
         hidden_data = []
         for campaign in campaigns:
+            # Ownership gate — only Commit-owned campaigns belong on the
+            # dashboard. Mirrors get_all_campaigns. Skip non-Commit names.
+            if not (campaign.campaign_name or '').strip().lower().startswith('commit'):
+                continue
+
             # campaign.to_dict() now correctly handles ABO roll-up vs CBO row.
             # flight_status comes from Campaign.flight_status property — lowercase
             # ('active' / 'pending' / 'ended'). The AccountDashboard flight badge,
