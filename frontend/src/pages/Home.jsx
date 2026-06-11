@@ -303,6 +303,8 @@ function AccountSection({ acct, applying, skipped, results, search,
   const actionableCount = useMemo(() => {
     let n = 0;
     acct.campaigns.forEach(c => {
+      // Campaigns with no matching sheet row are not applyable — don't count them.
+      if (acct.has_sheet && c.sheet_budget_matched === false) return;
       if ((c.budget_mode || 'CBO') === 'ABO') {
         (c.adsets || []).forEach(a => {
           const alp = a.latest_pacing;
@@ -479,7 +481,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                         <td>{alp ? <StatusPill status={action} paceRatio={alp.pace_ratio} /> : <span style={{ color: 'var(--bb-mute)' }}>No data</span>}</td>
                         <td><span style={{ color: 'var(--bb-mute)' }}>—</span></td>
                         <td><ActionCell rowKey={rowKey} res={res} isApplying={isApplying} isSkipped={isSkipped}
-                          needsAction={needsAction} onApply={() => onApplyAdset(acct.id, campaign, adset)}
+                          needsAction={needsAction} unmatched={unmatched} onApply={() => onApplyAdset(acct.id, campaign, adset)}
                           onSkip={() => onSkip(rowKey)} onUnskip={() => onUnskip(rowKey)} /></td>
                       </tr>
                     );
@@ -522,7 +524,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                     <td>{lp ? <StatusPill status={status} paceRatio={lp.pace_ratio} /> : <span style={{ color: 'var(--bb-mute)' }}>No data</span>}</td>
                     <td><NotesCell notes={campaign.sheet_notes || ''} /></td>
                     <td><ActionCell rowKey={rowKey} res={res} isApplying={isApplying} isSkipped={isSkipped}
-                      needsAction={needsAction} onApply={() => onApplyCbo(acct.id, campaign)}
+                      needsAction={needsAction} unmatched={cboUnmatched} onApply={() => onApplyCbo(acct.id, campaign)}
                       onSkip={() => onSkip(rowKey)} onUnskip={() => onUnskip(rowKey)} /></td>
                   </tr>
                 )];
@@ -536,7 +538,16 @@ function AccountSection({ acct, applying, skipped, results, search,
   );
 }
 
-function ActionCell({ rowKey, res, isApplying, isSkipped, needsAction, onApply, onSkip, onUnskip }) {
+function ActionCell({ rowKey, res, isApplying, isSkipped, needsAction, unmatched, onApply, onSkip, onUnskip }) {
+  // No matching Google Sheet row → budget isn't sheet-sourced, so block Apply.
+  if (unmatched) return (
+    <span
+      style={{ color: '#b45309', fontSize: 'var(--bb-text-sm)', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'help' }}
+      title="No matching row found on the Google Sheet for this campaign. Check that the campaign name matches the sheet, then re-sync."
+    >
+      <AlertCircle size={12} /> Check sheet — no match
+    </span>
+  );
   if (res?.ok) return (
     <span className="bb-applied"><ICheck /> Applied</span>
   );
@@ -854,6 +865,8 @@ function Home({ user, onLogout }) {
   };
   const handleApplyAll = (acct) => {
     acct.campaigns.forEach(c => {
+      // Skip campaigns with no matching sheet row — their budget isn't sheet-sourced.
+      if (acct.has_sheet && c.sheet_budget_matched === false) return;
       const mode = c.budget_mode || 'CBO';
       if (mode === 'ABO') {
         (c.adsets || []).forEach(a => {
