@@ -625,6 +625,7 @@ def run_pacing(account_id):
                 "campaign_name": campaign.campaign_name,
                 "monthly_budget": campaign.monthly_budget,
                 "budget_mode": "ABO",
+                "sheet_budget_matched": campaign.sheet_budget_matched,
                 "actual_spend": round(campaign_actual_total, 2),
                 "expected_spend": round(campaign_expected, 2),
                 "pace_ratio": round(campaign_pace, 3),
@@ -683,6 +684,7 @@ def run_pacing(account_id):
                 "campaign_name": campaign.campaign_name,
                 "monthly_budget": round(alloc_monthly, 2),   # this campaign's share
                 "budget_mode": "CBO",
+                "sheet_budget_matched": campaign.sheet_budget_matched,
                 "budget_group_id": group.id,
                 "budget_group_name": group.name,
                 "budget_group_total": round(group.monthly_budget, 2),
@@ -721,6 +723,7 @@ def run_pacing(account_id):
                 "campaign_name": campaign.campaign_name,
                 "monthly_budget": campaign.monthly_budget,
                 "budget_mode": "CBO",
+                "sheet_budget_matched": campaign.sheet_budget_matched,
                 "actual_spend": round(actual_spend, 2),
                 "expected_spend": round(expected_mtd, 2),
                 "pace_ratio": round(pace_ratio, 3),

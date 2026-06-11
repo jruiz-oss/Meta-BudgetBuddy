@@ -296,6 +296,9 @@ function AccountDashboard({ user, onLogout }) {
     if (!lastRun || !lastRun.recommendations) return;
     const adjustments = [];
     lastRun.recommendations.forEach((r) => {
+      // Skip campaigns with no matching sheet row — their budget isn't sourced
+      // from the sheet, so we don't push a recommendation we can't trust.
+      if (r.sheet_budget_matched === false) return;
       if ((r.budget_mode || 'CBO') === 'ABO') {
         (r.adset_level || []).forEach((a) => {
           if (a.action === 'ON_PACE') return;
@@ -814,6 +817,20 @@ function AccountDashboard({ user, onLogout }) {
                 <tbody>
                   {lastRun.recommendations.flatMap(r => {
                     const mode = r.budget_mode || 'CBO';
+                    // No matching row on the Google Sheet → budget isn't sheet-sourced,
+                    // so we surface a warning instead of an applyable recommendation.
+                    const noMatch = r.sheet_budget_matched === false;
+                    const noMatchCell = (
+                      <td>
+                        <span
+                          className="bb-status"
+                          style={{ '--bb-tone': '#f59e0b', cursor: 'help' }}
+                          title="No matching row found on the Google Sheet for this campaign. Check that the campaign name matches the sheet, then re-sync."
+                        >
+                          ⚠ Check sheet — no match
+                        </span>
+                      </td>
+                    );
                     if (mode === 'ABO') {
                       const parentRow = (
                         <tr key={`c-${r.campaign_id}`} style={{ background: 'var(--bb-surface-2)' }}>
@@ -824,7 +841,7 @@ function AccountDashboard({ user, onLogout }) {
                           <td className="num">{(r.pace_ratio || 0).toFixed(2)}x</td>
                           <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
                           <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
-                          <td><span className="bb-status" style={{ '--bb-tone': 'var(--bb-mute)' }}>rollup</span></td>
+                          {noMatch ? noMatchCell : <td><span className="bb-status" style={{ '--bb-tone': 'var(--bb-mute)' }}>rollup</span></td>}
                         </tr>
                       );
                       const adsetRows = (r.adset_level || []).map(a => {
@@ -845,15 +862,15 @@ function AccountDashboard({ user, onLogout }) {
                             <td className="num">${(a.current_daily_budget || 0).toFixed(2)}</td>
                             <td className="num">
                               <div className="bb-rec-cell">
-                                <span>${(a.recommended_daily_budget || 0).toFixed(2)}</span>
-                                {a.change_percent != null && Math.abs(a.change_percent) >= 0.5 && (
+                                <span style={noMatch ? { color: 'var(--bb-mute)' } : undefined}>${(a.recommended_daily_budget || 0).toFixed(2)}</span>
+                                {!noMatch && a.change_percent != null && Math.abs(a.change_percent) >= 0.5 && (
                                   <span className={a.change_percent > 0 ? 'bb-delta up' : 'bb-delta down'}>
                                     {a.change_percent > 0 ? '↑' : '↓'}{Math.abs(a.change_percent).toFixed(1)}%
                                   </span>
                                 )}
                               </div>
                             </td>
-                            <td><StatusPill status={action} paceRatio={a.pace_ratio} /></td>
+                            {noMatch ? noMatchCell : <td><StatusPill status={action} paceRatio={a.pace_ratio} /></td>}
                           </tr>
                         );
                       });
@@ -870,15 +887,15 @@ function AccountDashboard({ user, onLogout }) {
                         <td className="num">${(r.current_daily_budget || 0).toFixed(2)}</td>
                         <td className="num">
                           <div className="bb-rec-cell">
-                            <span>${(r.recommended_daily_budget || 0).toFixed(2)}</span>
-                            {r.change_percent != null && Math.abs(r.change_percent) >= 0.5 && (
+                            <span style={noMatch ? { color: 'var(--bb-mute)' } : undefined}>${(r.recommended_daily_budget || 0).toFixed(2)}</span>
+                            {!noMatch && r.change_percent != null && Math.abs(r.change_percent) >= 0.5 && (
                               <span className={r.change_percent > 0 ? 'bb-delta up' : 'bb-delta down'}>
                                 {r.change_percent > 0 ? '↑' : '↓'}{Math.abs(r.change_percent).toFixed(1)}%
                               </span>
                             )}
                           </div>
                         </td>
-                        <td><StatusPill status={action} paceRatio={r.pace_ratio} /></td>
+                        {noMatch ? noMatchCell : <td><StatusPill status={action} paceRatio={r.pace_ratio} /></td>}
                       </tr>
                     )];
                   })}
