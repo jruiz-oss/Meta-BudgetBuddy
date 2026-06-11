@@ -534,7 +534,17 @@ def get_all_campaigns():
                 if campaign.budget_mode == 'ABO':
                     camp_dict['adsets'] = [a.to_dict() for a in campaign.adsets if a.is_active]
 
-                if is_zero_spend:
+                # Flight gate: if the flight has ended, hide it regardless of
+                # spend. This mirrors pacing's _campaign_should_run_today, which
+                # already excludes expired LIMITED flights from pacing runs. The
+                # 'ended' label (Campaign.flight_status) and the visibility filter
+                # used to disagree — an ended campaign that spent earlier this
+                # month, was re-imported in the last 7 days, or had only 1 MTD row
+                # would slip past the zero-spend filter and still show.
+                if campaign.flight_status == 'ended':
+                    camp_dict['hidden_reason'] = 'flight_ended'
+                    hidden_list.append(camp_dict)
+                elif is_zero_spend:
                     camp_dict['hidden_reason'] = 'no_spend_this_month'
                     hidden_list.append(camp_dict)
                 else:
@@ -713,7 +723,12 @@ def get_campaigns(account_id):
                                  key=lambda p: (p.date or date_type.min, p.id or 0))
                     is_zero_spend = (latest.actual_spend or 0) == 0
 
-            if is_zero_spend:
+            # Flight gate — mirrors get_all_campaigns and pacing's flight logic.
+            # An ended flight is hidden regardless of spend.
+            if campaign.flight_status == 'ended':
+                camp_dict['hidden_reason'] = 'flight_ended'
+                hidden_data.append(camp_dict)
+            elif is_zero_spend:
                 camp_dict['hidden_reason'] = 'no_spend_this_month'
                 hidden_data.append(camp_dict)
             else:
