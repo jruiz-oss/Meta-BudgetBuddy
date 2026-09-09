@@ -824,6 +824,7 @@ function AccountDashboard({ user, onLogout }) {
             )}
 
             {lastRun.recommendations && lastRun.recommendations.length > 0 && (
+              <div className="bb-table-scroll">
               <table className="bb-table">
                 <thead>
                   <tr>
@@ -919,6 +920,7 @@ function AccountDashboard({ user, onLogout }) {
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         )}
@@ -999,6 +1001,7 @@ function AccountDashboard({ user, onLogout }) {
               c => c.sheet_budget_matched !== null && c.sheet_budget_matched !== undefined
             );
             return (
+            <div className="bb-table-scroll">
             <table className="bb-table">
               <thead>
                 <tr>
@@ -1127,6 +1130,7 @@ function AccountDashboard({ user, onLogout }) {
                 })}
               </tbody>
             </table>
+            </div>
             );
           })()}
         </div>
@@ -1251,6 +1255,7 @@ function AccountDashboard({ user, onLogout }) {
                       Pick the campaigns you want to track and set a monthly budget for each.
                       The default monthly budget is current daily × 30.
                     </p>
+                    <div className="bb-table-scroll">
                     <table className="bb-table">
                       <thead>
                         <tr>
@@ -1379,6 +1384,7 @@ function AccountDashboard({ user, onLogout }) {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </>
                 )}
 

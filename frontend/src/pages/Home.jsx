@@ -406,6 +406,7 @@ function AccountSection({ acct, applying, skipped, results, search,
               <IAlert /> {nothingRunningAlert.msg}
             </div>
           )}
+          <div className="bb-table-scroll">
           <table className="bb-table">
             <thead>
               <tr>
@@ -545,6 +546,7 @@ function AccountSection({ acct, applying, skipped, results, search,
               })}
             </tbody>
           </table>
+          </div>
           </>
         )
       )}

@@ -117,6 +117,7 @@ function GlobalHistory({ user }) {
               body="When you apply a recommendation, it will be logged here."
             />
           ) : (
+            <div className="bb-table-scroll">
             <table className="bb-table">
               <thead>
                 <tr>
@@ -167,6 +168,7 @@ function GlobalHistory({ user }) {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       </main>

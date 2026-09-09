@@ -343,6 +343,7 @@ function Settings({ user, onLogout }) {
                   body="Import some campaigns from the dashboard first."
                 />
               ) : (
+                <div className="bb-table-scroll">
                 <table className="bb-table">
                   <thead>
                     <tr>
@@ -393,6 +394,7 @@ function Settings({ user, onLogout }) {
                     })}
                   </tbody>
                 </table>
+                </div>
               )}
 
               {flights.length > 0 && (
@@ -494,6 +496,7 @@ function Settings({ user, onLogout }) {
                   </div>
                 </div>
 
+                <div className="bb-table-scroll">
                 <table className="bb-table">
                   <thead>
                     <tr>
@@ -532,6 +535,7 @@ function Settings({ user, onLogout }) {
                     ))}
                   </tbody>
                 </table>
+                </div>
 
                 <div className="bb-form-help" style={{ marginTop: 10 }}>
                   <strong>Sync Budgets</strong> reads column B → updates monthly budget in the DB.{' '}

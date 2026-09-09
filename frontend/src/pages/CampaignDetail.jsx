@@ -637,6 +637,7 @@ function CampaignDetail({ user, onLogout }) {
               </div>
             )}
 
+            <div className="bb-table-scroll">
             <table className="bb-table">
               <thead>
                 <tr>
@@ -750,6 +751,7 @@ function CampaignDetail({ user, onLogout }) {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         )}
 
@@ -766,6 +768,7 @@ function CampaignDetail({ user, onLogout }) {
               No adjustments yet. Apply a recommendation to see history here.
             </div>
           ) : (
+            <div className="bb-table-scroll">
             <table className="bb-table">
               <thead>
                 <tr>
@@ -805,6 +808,7 @@ function CampaignDetail({ user, onLogout }) {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
