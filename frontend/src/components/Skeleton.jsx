@@ -87,14 +87,12 @@ export function SkeletonTable({ rows = 5, cols = 6 }) {
 /** Skeleton that mirrors the per-account block on the Home page. */
 export function SkeletonAccountBlock() {
   return (
-    <div className="bb-card" style={{ marginBottom: 20 }} aria-busy="true">
+    <div className="bb-card" style={{ marginBottom: 14 }} aria-busy="true">
       <div
         className="bb-row-between"
         style={{
-          padding: '12px 20px',
-          background: '#f0f2f4',
-          borderRadius: '10px 10px 0 0',
-          borderBottom: '1px solid #e2e5e8',
+          padding: '14px 20px',
+          borderBottom: '1px solid var(--bb-line-3)',
         }}
       >
         <div style={{ flex: 1 }}>

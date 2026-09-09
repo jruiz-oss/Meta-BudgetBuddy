@@ -5,12 +5,6 @@ import { Loader2, Save, X, RefreshCw } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { useToast } from '../components/Toast';
 
-// Deterministic hue for card bar color
-function acctHue(id) {
-  const n = parseInt(id, 10) || 0;
-  return (n * 137 + 43) % 360;
-}
-
 // Inline icons
 const IKey = () => (
   <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -350,7 +344,6 @@ function Accounts({ user, onLogout }) {
               const label = labelForCategory(account.status_category);
               return (
                 <div key={account.id} className="bb-acct-card"
-                  style={{ '--acct-hue': acctHue(account.id) }}
                   onClick={() => navigate(`/account/${account.id}`)}>
                   <div className="bb-acct-card-head">
                     <div style={{ minWidth: 0, flex: 1 }}>

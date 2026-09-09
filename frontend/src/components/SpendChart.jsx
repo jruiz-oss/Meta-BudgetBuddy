@@ -43,6 +43,15 @@ ChartJS.register(
   Legend
 );
 
+// Chart palette — mirrors the CSS tokens (Chart.js can't read CSS vars).
+const FONT        = 'Inter, system-ui, sans-serif';
+const ACCENT      = '#2563eb';
+const ACCENT_FILL = 'rgba(37, 99, 235, 0.08)';
+const INK         = '#181a1d';
+const MUTE        = '#8b929b';
+const MUTE_2      = '#aeb4bc';
+const LINE_ROW    = '#eff1f4';
+
 function startOfMonth(d) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
@@ -105,9 +114,9 @@ export default function SpendChart({
         {
           label: 'Expected',
           data: expected,
-          borderColor: 'oklch(75% 0.01 240)',
+          borderColor: INK,
           backgroundColor: 'transparent',
-          borderDash: [5, 4],
+          borderDash: [4, 4],
           borderWidth: 1.5,
           pointRadius: 0,
           tension: 0,
@@ -116,17 +125,18 @@ export default function SpendChart({
         {
           label: 'Actual',
           data: actualSeries,
-          borderColor: 'oklch(58% 0.18 258)',
-          backgroundColor: 'oklch(58% 0.18 258 / 0.08)',
-          borderWidth: 2.5,
+          borderColor: ACCENT,
+          backgroundColor: ACCENT_FILL,
+          borderWidth: 2,
+          // End marker: a white-filled dot at today's point.
           pointRadius: (ctx) => (ctx.dataIndex + 1 === todayDay ? 4 : 0),
-          pointBackgroundColor: 'oklch(58% 0.18 258)',
-          pointBorderColor: '#fff',
+          pointBackgroundColor: '#fff',
+          pointBorderColor: ACCENT,
           pointBorderWidth: 2,
           spanGaps: false,
           fill: {
             target: { value: 0 },
-            above: 'oklch(58% 0.18 258 / 0.06)',
+            above: ACCENT_FILL,
           },
           tension: 0.18,
           order: 1,
@@ -148,16 +158,18 @@ export default function SpendChart({
           labels: {
             boxWidth: 10,
             boxHeight: 10,
-            font: { family: 'Inter, system-ui, sans-serif', size: 11 },
-            color: '#6b7280',
+            font: { family: FONT, size: 11 },
+            color: MUTE,
             usePointStyle: true,
           },
         },
         tooltip: {
-          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+          backgroundColor: 'rgba(24, 26, 29, 0.95)',
           padding: 10,
-          titleFont: { family: 'Inter, system-ui, sans-serif', size: 12, weight: '600' },
-          bodyFont: { family: 'Inter, system-ui, sans-serif', size: 12 },
+          cornerRadius: 8,
+          displayColors: false,
+          titleFont: { family: FONT, size: 12, weight: '600' },
+          bodyFont: { family: FONT, size: 12 },
           callbacks: {
             title: (items) => `Day ${items[0].label}`,
             label: (ctx) => {
@@ -178,10 +190,11 @@ export default function SpendChart({
       },
       scales: {
         x: {
+          border: { display: false },
           grid: { display: false },
           ticks: {
-            color: 'oklch(60% 0.012 240)',
-            font: { family: 'Geist, Inter, system-ui, sans-serif', size: 10 },
+            color: MUTE_2,
+            font: { family: FONT, size: 10 },
             maxRotation: 0,
             // Show ~10 ticks on the x axis to keep things readable.
             autoSkip: true,
@@ -190,10 +203,12 @@ export default function SpendChart({
         },
         y: {
           beginAtZero: true,
-          grid: { color: 'oklch(91% 0.006 240)' },
+          border: { display: false },
+          grid: { color: LINE_ROW, drawTicks: false },
           ticks: {
-            color: 'oklch(60% 0.012 240)',
-            font: { family: 'Geist Mono, JetBrains Mono, ui-monospace, monospace', size: 10 },
+            color: MUTE_2,
+            font: { family: FONT, size: 10 },
+            padding: 8,
             callback: (v) => fmt$(v),
           },
         },

@@ -204,11 +204,9 @@ function statusLabel(status, paceRatio) {
 function StatusPill({ status, paceRatio }) {
   const tone = statusTone(status, paceRatio);
   const label = statusLabel(status, paceRatio);
-  const s = (status || '').toUpperCase();
-  const Icon = s === 'ON_PACE' ? ICheck : s === 'INCREASE' ? ITrendUp : ITrendDown;
   return (
     <span className="bb-status" style={{ '--bb-tone': tone }}>
-      <Icon />{label}
+      <span className="bb-dot" />{label}
     </span>
   );
 }
@@ -221,6 +219,21 @@ function ChangeBadge({ pct }) {
   return (
     <span className="bb-delta down"><IArrowDown />{Math.abs(pct).toFixed(1)}%</span>
   );
+}
+
+// Account-level health: red when anything is over pace, amber when
+// something needs a nudge, green when the whole account is on pace.
+function accountTone(acct, actionableCount) {
+  const hasOver = acct.campaigns.some(c => {
+    if ((c.budget_mode || 'CBO') === 'ABO')
+      return (c.adsets || []).some(a => ((a.latest_pacing?.action || a.latest_pacing?.status || '')).toUpperCase() === 'DECREASE');
+    return ((c.latest_pacing?.status || '')).toUpperCase() === 'DECREASE';
+  });
+  if (hasOver) return 'var(--bb-warn)';
+  if (actionableCount > 0) return 'var(--bb-warn-cool)';
+  const hasData = acct.campaigns.some(c =>
+    (c.budget_mode || 'CBO') === 'ABO' ? (c.adsets || []).some(a => a.latest_pacing) : !!c.latest_pacing);
+  return hasData ? 'var(--bb-ok)' : 'var(--bb-mute-2)';
 }
 
 // ── Account section with collapse ────────────────────────────
@@ -332,11 +345,10 @@ function AccountSection({ acct, applying, skipped, results, search,
   }, 0);
 
   return (
-    <section className={'bb-acct' + (collapsed ? ' bb-acct-collapsed' : '')}
-      style={{ '--acct-hue': (parseInt(acct.id, 10) * 137 + 43) % 360 }}>
+    <section className={'bb-acct' + (collapsed ? ' bb-acct-collapsed' : '')}>
 
       <header className="bb-acct-head" onClick={() => setCollapsed(c => !c)}>
-        <div className="bb-acct-bar" />
+        <div className="bb-acct-bar" style={{ '--bb-tone': accountTone(acct, actionableCount) }} />
         <div className="bb-flex-col">
           <div className={`bb-acct-title${sheetStatus ? ` bb-acct-title-sheet-${sheetStatus}` : ''}`}>{acct.account_name}</div>
           <div className="bb-acct-meta">
@@ -360,7 +372,7 @@ function AccountSection({ acct, applying, skipped, results, search,
           </div>
           <div>
             <div className="bb-stat-label">Actionable</div>
-            <div className="bb-stat-val" style={{ color: actionableCount > 0 ? 'var(--bb-warn)' : 'var(--bb-mute)' }}>
+            <div className="bb-stat-val" style={{ color: actionableCount > 0 ? 'var(--bb-warn)' : 'var(--bb-mute-2)' }}>
               {actionableCount}
             </div>
           </div>
@@ -371,7 +383,7 @@ function AccountSection({ acct, applying, skipped, results, search,
             className="bb-btn bb-btn-sm bb-btn-primary"
             onClick={e => { e.stopPropagation(); onApplyAll(acct); }}
           >
-            <ICheck /> Apply all ({actionableCount})
+            <ICheck /> Apply all · {actionableCount}
           </button>
         )}
 
@@ -421,6 +433,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                       <td>
                         <div className="bb-row-name">
                           <Link to={`/account/${acct.id}/campaign/${campaign.id}`}
+                            title={campaign.campaign_name}
                             style={{ fontWeight: 600, color: 'var(--bb-fg)' }}>
                             {campaign.campaign_name}
                           </Link>
@@ -454,7 +467,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                         <td>
                           <div className="bb-row-name">
                             <span className="bb-arrow"><IArrowSub /></span>
-                            {adset.adset_name}
+                            <span className="bb-row-label" title={adset.adset_name}>{adset.adset_name}</span>
                             <button
                               type="button"
                               className="bb-row-weight"
@@ -503,6 +516,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                     <td>
                       <div className="bb-row-name">
                         <Link to={`/account/${acct.id}/campaign/${campaign.id}`}
+                          title={campaign.campaign_name}
                           style={{ fontWeight: 600, color: 'var(--bb-fg)', textDecoration: 'none' }}>
                           {campaign.campaign_name}
                         </Link>
@@ -542,10 +556,10 @@ function ActionCell({ rowKey, res, isApplying, isSkipped, needsAction, unmatched
   // No matching Google Sheet row → budget isn't sheet-sourced, so block Apply.
   if (unmatched) return (
     <span
-      style={{ color: '#b45309', fontSize: 'var(--bb-text-sm)', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'help' }}
+      style={{ color: 'var(--bb-warn-cool)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'help', whiteSpace: 'nowrap' }}
       title="No matching row found on the Google Sheet for this campaign. Check that the campaign name matches the sheet, then re-sync."
     >
-      <AlertCircle size={12} /> Check sheet — no match
+      <AlertCircle size={12} /> No sheet match
     </span>
   );
   if (res?.ok) return (
@@ -568,7 +582,7 @@ function ActionCell({ rowKey, res, isApplying, isSkipped, needsAction, unmatched
   if (!needsAction) return <span style={{ color: 'var(--bb-mute)', fontSize: 'var(--bb-text-sm)' }}>—</span>;
   return (
     <div className="bb-actions">
-      <button className="bb-apply" onClick={onApply} disabled={isApplying}>
+      <button className="bb-apply-row" onClick={onApply} disabled={isApplying}>
         {isApplying ? <Loader2 size={11} className="bb-spin" /> : <ICheck />}
         {isApplying ? '…' : 'Apply'}
       </button>
@@ -723,7 +737,27 @@ function Home({ user, onLogout }) {
   const [search, setSearch] = useState('');
   const [runningAll, setRunningAll]   = useState(false);
   const [runProgress, setRunProgress] = useState({ done: 0, total: 0 });
+  const searchRef = useRef(null);
   const navigate = useNavigate();
+
+  // Where we are in the month — drives the ideal-pace tick on the spend bar.
+  const monthProgress = useMemo(() => {
+    const now = new Date();
+    const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return { day: now.getDate(), dim, pct: (now.getDate() / dim) * 100 };
+  }, []);
+
+  // ⌘K / Ctrl+K focuses the search from anywhere on the page.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const runConcurrent = async (items, fn, limit = 2) => {
     const res = new Array(items.length);
@@ -950,6 +984,15 @@ function Home({ user, onLogout }) {
     return map;
   }, [accountBlocks, results, skipped]);
 
+  // Spend pace against where the month says we should be. ±5% reads as on pace.
+  const spendPace = useMemo(() => {
+    const diff = totals.pct - monthProgress.pct;
+    if (Math.abs(diff) <= 5) return { label: 'on pace', color: 'var(--bb-ok)' };
+    return diff > 0
+      ? { label: 'over pace',  color: 'var(--bb-warn)' }
+      : { label: 'under pace', color: 'var(--bb-warn-cool)' };
+  }, [totals.pct, monthProgress.pct]);
+
   const fmt$M = (n) => {
     if (!n) return '$0';
     if (n >= 1000000) return `$${(n/1000000).toFixed(1)}M`;
@@ -965,14 +1008,14 @@ function Home({ user, onLogout }) {
         {/* Header */}
         <div className="bb-header">
           <div>
-            <h1 className="bb-h1">All Campaigns</h1>
+            <h1 className="bb-h1 bb-h1-sm">All Campaigns</h1>
             <div className="bb-sub">Every tracked campaign across all accounts. Apply pacing recommendations or skip the ones you've already addressed.</div>
           </div>
           <div className="bb-header-actions">
             <button className="bb-btn bb-btn-primary" onClick={handleRunAll}
               disabled={runningAll || loading || allAccounts.length === 0}>
               {runningAll ? <Loader2 size={13} className="bb-spin" /> : <IPlay />}
-              {runningAll ? `Running ${runProgress.done}/${runProgress.total}…` : `Run Pacing (All ${allAccounts.length})`}
+              {runningAll ? `Running ${runProgress.done}/${runProgress.total}…` : `Run pacing · ${allAccounts.length}`}
             </button>
             <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
               <ILogout /> Log out
@@ -986,27 +1029,37 @@ function Home({ user, onLogout }) {
         {!loading && accountBlocks.length > 0 && (
           <div className="bb-summary-grid">
             <div className="bb-summary-cell">
-              <div className="bb-summary-label">Monthly Budget</div>
+              <div className="bb-summary-label">Monthly budget</div>
               <div className="bb-summary-value">{fmt$M(totals.monthly)}</div>
               <div className="bb-summary-meta">{totals.campaignCount} campaigns · {accountBlocks.length} accounts</div>
             </div>
             <div className="bb-summary-cell">
               <div className="bb-summary-label">Spend (MTD)</div>
-              <div className="bb-summary-value">{fmt$(totals.spent, 2)}</div>
-              <div className="bb-progress"><div className="bb-progress-fill" style={{ width: totals.pct + '%' }} /></div>
-              <div className="bb-summary-meta">{totals.pct.toFixed(1)}% of budget · pacing on track</div>
+              <div className="bb-summary-value">
+                {fmt$(Math.floor(totals.spent))}
+                <span className="bb-cents">.{(totals.spent % 1).toFixed(2).slice(2)}</span>
+              </div>
+              <div className="bb-progress">
+                <div className="bb-progress-fill" style={{ width: totals.pct + '%' }} />
+                {/* Ideal pace for today — the bar should be sitting here. */}
+                <div className="bb-progress-tick" style={{ left: `calc(${monthProgress.pct}% - 0.75px)` }} />
+              </div>
+              <div className="bb-summary-meta">
+                {totals.pct.toFixed(1)}% of budget · <span style={{ color: spendPace.color, fontWeight: 500 }}>{spendPace.label}</span>
+              </div>
             </div>
             <div className="bb-summary-cell">
-              <div className="bb-summary-label">Tracked Units</div>
+              <div className="bb-summary-label">Tracked units</div>
               <div className="bb-summary-value">
                 {totals.campaignCount}
-                {totals.adsetCount > 0 && <span style={{ color: 'var(--bb-mute)', fontSize: 14, fontWeight: 400 }}> / {totals.adsetCount} ad sets</span>}
+                {totals.adsetCount > 0 && <span className="bb-suffix">/ {totals.adsetCount} ad sets</span>}
               </div>
               <div className="bb-summary-meta">across {accountBlocks.length} accounts</div>
             </div>
             <div className="bb-summary-cell">
-              <div className="bb-summary-label">Needs Attention</div>
-              <div className="bb-summary-value" style={{ color: attentionCount > 0 ? 'var(--bb-warn)' : 'var(--bb-ok)' }}>
+              <div className="bb-summary-label">Needs attention</div>
+              <div className="bb-summary-value">
+                <span className="bb-dot bb-dot-lg" style={{ '--bb-tone': attentionCount > 0 ? 'var(--bb-warn)' : 'var(--bb-ok)' }} />
                 {attentionCount}
               </div>
               <div className="bb-summary-meta">{attentionCount > 0 ? 'pending recommendations' : "you're all caught up"}</div>
@@ -1022,12 +1075,10 @@ function Home({ user, onLogout }) {
         {/* Attention strip */}
         {attentionCount > 0 && (
           <div className="bb-attention">
-            <span style={{ color: 'var(--bb-warn)' }}><IAlert /></span>
+            <span className="bb-dot bb-dot-lg" style={{ '--bb-tone': 'var(--bb-warn)' }} />
             <div>
               <strong>{attentionCount}</strong> recommendation{attentionCount !== 1 ? 's' : ''} across <strong>{accountBlocks.filter(a => a.campaigns.some(c => c.latest_pacing && (c.latest_pacing.status || '').toUpperCase() !== 'ON_PACE')).length}</strong> accounts. Newly-detected pace deviations from this morning's run.
             </div>
-            <span className="bb-spacer" />
-            <button className="bb-btn bb-btn-sm">Review oldest first</button>
           </div>
         )}
 
@@ -1036,6 +1087,7 @@ function Home({ user, onLogout }) {
           <div className="bb-search">
             <ISearch />
             <input
+              ref={searchRef}
               type="text"
               placeholder="Search accounts, campaigns, or ad sets…"
               value={search}

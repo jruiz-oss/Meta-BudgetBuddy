@@ -598,13 +598,7 @@ function AccountDashboard({ user, onLogout }) {
   // ── Inline SVG icons for new design ──
   const IPlay = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg>;
   const ILogout = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>;
-  const IDownloadCloud = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>;
-  const IHistory = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>;
-  const ISettings = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>;
-  const IDiagnostic = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>;
   const ICheck = () => <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>;
-  const ITrendUp = () => <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>;
-  const ITrendDown = () => <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 7 6 6 4-4 8 8"/><path d="M14 17h7v-7"/></svg>;
   const IDownload = () => <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>;
 
   const statusTone = (status, paceRatio) => {
@@ -626,9 +620,7 @@ function AccountDashboard({ user, onLogout }) {
   const StatusPill = ({ status, paceRatio }) => {
     const tone = statusTone(status, paceRatio);
     const label = statusLabel(status, paceRatio);
-    const s = (status || '').toUpperCase();
-    const Icon = s === 'ON_PACE' ? ICheck : s === 'INCREASE' ? ITrendUp : ITrendDown;
-    return <span className="bb-status" style={{ '--bb-tone': tone }}><Icon />{label}</span>;
+    return <span className="bb-status" style={{ '--bb-tone': tone }}><span className="bb-dot" />{label}</span>;
   };
 
   if (loading) {
@@ -660,9 +652,17 @@ function AccountDashboard({ user, onLogout }) {
   }
 
   const spendPct = stats.monthlyBudget > 0 ? Math.min(100, (stats.totalSpend / stats.monthlyBudget) * 100) : 0;
-  const expectedSoFar = stats.monthlyBudget > 0 ? (stats.monthlyBudget / new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate()) * new Date().getDate() : 0;
+  const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+  const dayOfMonth = new Date().getDate();
+  const idealPct = (dayOfMonth / daysInMonth) * 100;
+  const expectedSoFar = stats.monthlyBudget > 0 ? (stats.monthlyBudget / daysInMonth) * dayOfMonth : 0;
   const spendDelta = expectedSoFar > 0 ? ((stats.totalSpend - expectedSoFar) / expectedSoFar) * 100 : 0;
-  const acctHueVal = ((parseInt(accountId, 10) || 0) * 137 + 43) % 360;
+  // ±5% off ideal reads as on pace; over is red, under is amber.
+  const paceState = Math.abs(spendDelta) <= 5
+    ? { label: 'pace', color: 'var(--bb-ok)' }
+    : spendDelta > 0
+      ? { label: 'pace · over', color: 'var(--bb-warn)' }
+      : { label: 'pace · under', color: 'var(--bb-warn-cool)' };
 
   return (
     <div className="bb-app">
@@ -670,30 +670,43 @@ function AccountDashboard({ user, onLogout }) {
 
       <main className="bb-main">
         {/* Breadcrumb */}
-        <div style={{ fontSize: 'var(--bb-text-sm)', color: 'var(--bb-mute)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Link to="/accounts" style={{ color: 'var(--bb-fg-2)', textDecoration: 'none' }}>Accounts</Link>
+        <div className="bb-breadcrumb">
+          <Link to="/accounts" style={{ color: 'var(--bb-fg-3)' }}>Accounts</Link>
           <span>/</span>
-          <span style={{ color: 'var(--bb-fg)' }}>{account.account_name}</span>
+          <span style={{ color: 'var(--bb-fg)', fontWeight: 500 }}>{account.account_name}</span>
         </div>
 
         {/* Header */}
-        <div className="bb-header">
-          <div>
+        <div className="bb-header" style={{ alignItems: 'flex-end', flexWrap: 'wrap', rowGap: 14 }}>
+          <div style={{ flex: '1 1 100%', minWidth: 0 }}>
             <h1 className="bb-h1">{account.account_name}</h1>
-            <div className="bb-sub">
-              Meta account ID: <span style={{ fontFamily: 'var(--bb-font-mono)' }}>{account.meta_account_id || '—'}</span>
+            {/* One meta line replaces the old subtitle + separate pace badge. */}
+            <div className="bb-metaline">
+              <span className="bb-metaline-item">{campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}</span>
+              <span className="bb-metaline-sep">·</span>
+              <span className="bb-metaline-item">monthly ${stats.monthlyBudget.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+              <span className="bb-metaline-sep">·</span>
+              <span className="bb-metaline-item">day {dayOfMonth} of {daysInMonth}</span>
+              <span className="bb-metaline-sep">·</span>
+              <span className="bb-metaline-item" style={{ color: paceState.color, fontWeight: 500 }}>
+                <span className="bb-dot" style={{ '--bb-tone': paceState.color }} />
+                {spendDelta > 0 ? '+' : ''}{spendDelta.toFixed(1)}% {paceState.label}
+              </span>
+              <span className="bb-metaline-sep">·</span>
+              <span className="bb-metaline-item" style={{ color: 'var(--bb-mute)' }}>acct {account.meta_account_id || '—'}</span>
             </div>
           </div>
-          <div className="bb-header-actions">
-            <button className="bb-btn" onClick={openImport}><IDownloadCloud /> Import from Meta</button>
-            <Link to={`/account/${accountId}/history`} className="bb-btn"><IHistory /> History</Link>
-            <Link to={`/account/${accountId}/settings`} className="bb-btn"><ISettings /> Settings</Link>
-            <button className="bb-btn bb-btn-ghost" onClick={handleDownloadDiagnostic} title="Download diagnostic JSON">
-              <IDiagnostic /> Diagnostic
+          <div className="bb-header-actions" style={{ marginLeft: 'auto' }}>
+            <button className="bb-btn" onClick={openImport}>Import from Meta</button>
+            <Link to={`/account/${accountId}/history`} className="bb-btn">History</Link>
+            <Link to={`/account/${accountId}/settings`} className="bb-btn">Settings</Link>
+            <button className="bb-btn" onClick={handleDownloadDiagnostic} title="Download diagnostic JSON">
+              Diagnostic
             </button>
+            <span className="bb-actions-divider" />
             <button className="bb-btn bb-btn-primary" onClick={handleRunPacing} disabled={pacingRunning}>
               {pacingRunning ? <Loader2 size={13} className="bb-spin" /> : <IPlay />}
-              {pacingRunning ? 'Running…' : 'Run Pacing'}
+              {pacingRunning ? 'Running…' : 'Run pacing'}
             </button>
             <button className="bb-btn bb-btn-ghost" onClick={handleLogout}><ILogout /> Log out</button>
           </div>
@@ -704,30 +717,32 @@ function AccountDashboard({ user, onLogout }) {
         {/* Status cards */}
         <div className="bb-state-grid-4">
           <div className="bb-state-card is-ok">
-            <div className="bb-state-label"><ICheck /> On Pace</div>
+            <div className="bb-state-label"><span className="bb-dot" style={{ '--bb-tone': 'var(--bb-ok)' }} /> On pace</div>
             <div className="bb-state-value">{stats.onPace}</div>
             <div className="bb-state-meta">campaigns hitting target</div>
           </div>
           <div className="bb-state-card is-cool">
-            <div className="bb-state-label"><ITrendUp /> Need Increase</div>
+            <div className="bb-state-label"><span className="bb-dot" style={{ '--bb-tone': 'var(--bb-warn-cool)' }} /> Need increase</div>
             <div className="bb-state-value">{stats.needIncrease}</div>
             <div className="bb-state-meta">spending below pace</div>
           </div>
           <div className="bb-state-card is-warn">
-            <div className="bb-state-label"><ITrendDown /> Need Decrease</div>
+            <div className="bb-state-label"><span className="bb-dot" style={{ '--bb-tone': 'var(--bb-warn)' }} /> Need decrease</div>
             <div className="bb-state-value">{stats.needDecrease}</div>
             <div className="bb-state-meta">spending above pace</div>
           </div>
-          <div className="bb-state-card">
-            <div className="bb-state-label">Total Spend (MTD)</div>
+          {/* Featured card — the number this page exists to answer. */}
+          <div className="bb-state-card is-featured">
+            <div className="bb-state-label">Spend (MTD)</div>
             <div className="bb-state-value">${stats.totalSpend.toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
             <div className="bb-progress" style={{ marginTop: 8 }}>
               <div className="bb-progress-fill" style={{ width: spendPct + '%' }} />
+              <div className="bb-progress-tick" style={{ left: `calc(${idealPct}% - 0.75px)`, background: 'rgba(255,255,255,0.75)' }} />
             </div>
-            <div className="bb-state-meta" style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div className="bb-state-meta" style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
               <span>of ${stats.monthlyBudget.toLocaleString('en-US', { maximumFractionDigits: 0 })} monthly</span>
-              <span style={{ color: spendDelta > 0 ? 'var(--bb-warn)' : 'var(--bb-warn-cool)', fontVariantNumeric: 'tabular-nums' }}>
-                {spendDelta > 0 ? '+' : ''}{spendDelta.toFixed(1)}% vs. expected
+              <span style={{ color: '#fff', fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                {spendDelta > 0 ? '+' : ''}{spendDelta.toFixed(1)}% vs ideal
               </span>
             </div>
           </div>
@@ -750,35 +765,38 @@ function AccountDashboard({ user, onLogout }) {
 
         {/* Spend chart */}
         {stats.monthlyBudget > 0 && (
-          <div className="bb-acct" style={{ padding: '18px 20px 12px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <div className="bb-summary-label" style={{ marginBottom: 0 }}>
-                <ITrendUp /> Account spend vs. target
+          <div className="bb-panel" style={{ marginBottom: 14 }}>
+            <div className="bb-panel-head">
+              <div>
+                <div className="bb-panel-title">Pace vs projection</div>
+                <div className="bb-panel-sub">Cumulative spend against ideal — data through day {dayOfMonth}</div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 'var(--bb-text-sm)', color: 'var(--bb-fg-2)' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 16, height: 2.5, background: 'var(--bb-accent)', borderRadius: 2, display: 'inline-block' }} /> Actual
-                </span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 16, height: 0, borderTop: '1.5px dashed var(--bb-mute)', display: 'inline-block' }} /> Expected
-                </span>
-              </div>
+              <div className="bb-panel-aside">day {dayOfMonth} of {daysInMonth}</div>
             </div>
-            <SpendChart
-              monthlyBudget={stats.monthlyBudget}
-              history={accountHistory}
-              currentMtd={stats.totalSpend}
-              height={260}
-              title=""
-            />
+            <div className="bb-panel-body">
+              <div className="bb-legend" style={{ marginBottom: 12 }}>
+                <span className="bb-legend-item" style={{ color: 'var(--bb-accent)' }}>
+                  <span className="bb-legend-swatch" /><span style={{ color: 'var(--bb-fg-2)' }}>Actual MTD</span>
+                </span>
+                <span className="bb-legend-item" style={{ color: 'var(--bb-fg)' }}>
+                  <span className="bb-legend-swatch is-dashed" /><span style={{ color: 'var(--bb-fg-2)' }}>Ideal pace</span>
+                </span>
+              </div>
+              <SpendChart
+                monthlyBudget={stats.monthlyBudget}
+                history={accountHistory}
+                currentMtd={stats.totalSpend}
+                height={260}
+                title=""
+              />
+            </div>
           </div>
         )}
 
         {/* Latest run summary */}
         {lastRun && (
-          <div className="bb-acct" style={{ marginBottom: 16 }}>
+          <div className="bb-acct" style={{ marginBottom: 14 }}>
             <div className="bb-acct-head" style={{ cursor: 'default' }}>
-              <div className="bb-acct-bar" style={{ '--acct-hue': acctHueVal }} />
               <div className="bb-flex-col">
                 <div className="bb-acct-title">Latest pacing run — {lastRun.campaigns_processed} campaigns, {lastRun.adjustments_needed} need adjusting</div>
                 <div className="bb-acct-meta">Recommendations from the most recent calculation.</div>
@@ -791,11 +809,11 @@ function AccountDashboard({ user, onLogout }) {
                 a.href = url; a.download = `pacing-run-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
                 a.click(); URL.revokeObjectURL(url);
               }}>
-                <IDownload /> Download Run Log
+<IDownload /> Download run log
               </button>
               <button className="bb-apply" onClick={handleApplyAll} disabled={applying || lastRun.adjustments_needed === 0}>
                 {applying ? <Loader2 size={13} className="bb-spin" /> : <ICheck />}
-                {applying ? 'Applying…' : 'Apply all to Meta'}
+                {applying ? 'Applying…' : `Apply all · ${lastRun.adjustments_needed}`}
               </button>
             </div>
 
@@ -824,10 +842,10 @@ function AccountDashboard({ user, onLogout }) {
                       <td>
                         <span
                           className="bb-status"
-                          style={{ '--bb-tone': '#f59e0b', cursor: 'help' }}
+                          style={{ '--bb-tone': 'var(--bb-warn-cool)', cursor: 'help' }}
                           title="No matching row found on the Google Sheet for this campaign. Check that the campaign name matches the sheet, then re-sync."
                         >
-                          ⚠ Check sheet — no match
+                          <span className="bb-dot" /> No sheet match
                         </span>
                       </td>
                     );
@@ -851,7 +869,7 @@ function AccountDashboard({ user, onLogout }) {
                             <td>
                               <div className="bb-row-name">
                                 <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="bb-arrow"><path d="M5 4v8a3 3 0 0 0 3 3h11"/><path d="m15 11 4 4-4 4"/></svg>
-                                {a.adset_name}
+                                <span className="bb-row-label" title={a.adset_name}>{a.adset_name}</span>
                                 <span className="bb-row-weight">{a.allocation_pct}%</span>
                               </div>
                             </td>
@@ -941,7 +959,6 @@ function AccountDashboard({ user, onLogout }) {
         {/* Tracked campaigns table */}
         <div className="bb-acct">
           <div className="bb-acct-head" style={{ cursor: 'default' }}>
-            <div className="bb-acct-bar" style={{ '--acct-hue': acctHueVal }} />
             <div className="bb-flex-col">
               <div className="bb-acct-title">Tracked campaigns ({campaigns.length})</div>
               <div className="bb-acct-meta">
@@ -1002,7 +1019,7 @@ function AccountDashboard({ user, onLogout }) {
                       <tr key={`c-${c.id}`} className={noSheetMatch ? 'bb-table-row-unmatched' : ''} style={!noSheetMatch ? { background: 'var(--bb-surface-2)' } : undefined}>
                         <td>
                           <div className="bb-row-name" style={{ fontWeight: 600 }}>
-                            <Link to={`/account/${accountId}/campaign/${c.id}`} style={{ color: 'var(--bb-fg)', textDecoration: 'none' }}>
+                            <Link to={`/account/${accountId}/campaign/${c.id}`} title={c.campaign_name} style={{ color: 'var(--bb-fg)', textDecoration: 'none' }}>
                               {c.campaign_name}
                             </Link>
                           </div>
@@ -1020,7 +1037,7 @@ function AccountDashboard({ user, onLogout }) {
                               end: c.flight_end_date || '',
                             })}
                           >
-                            {c.flight_status === 'ended' ? '⚑ ended' : c.flight_status === 'pending' ? '○ pending' : c.flight_type === 'ALWAYS_ON' ? '∞ always on' : '● active'}
+                            {c.flight_status === 'ended' ? 'ended' : c.flight_status === 'pending' ? 'pending' : c.flight_type === 'ALWAYS_ON' ? 'always on' : 'active'}
                           </button>
                         </td>
                         <td className="num">{noSheetMatch ? <span style={{ color: 'var(--bb-warn-hot)' }}>—</span> : `$${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}</td>
@@ -1041,7 +1058,7 @@ function AccountDashboard({ user, onLogout }) {
                         <td>
                           <div className="bb-row-name">
                             <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="bb-arrow"><path d="M5 4v8a3 3 0 0 0 3 3h11"/><path d="m15 11 4 4-4 4"/></svg>
-                            {a.adset_name}
+                            <span className="bb-row-label" title={a.adset_name}>{a.adset_name}</span>
                             <span className="bb-row-weight">{(a.allocation_pct || 0).toFixed(0)}%</span>
                           </div>
                         </td>
@@ -1062,7 +1079,7 @@ function AccountDashboard({ user, onLogout }) {
                     <tr key={`c-${c.id}`} className={noSheetMatch ? 'bb-table-row-unmatched' : ''}>
                       <td>
                         <div className="bb-row-name" style={{ fontWeight: 600 }}>
-                          <Link to={`/account/${accountId}/campaign/${c.id}`} style={{ color: noSheetMatch ? 'var(--bb-warn-hot)' : 'var(--bb-fg)', textDecoration: 'none' }}>
+                          <Link to={`/account/${accountId}/campaign/${c.id}`} title={c.campaign_name} style={{ color: noSheetMatch ? 'var(--bb-warn-hot)' : 'var(--bb-fg)', textDecoration: 'none' }}>
                             {c.campaign_name}
                           </Link>
                         </div>
@@ -1080,7 +1097,7 @@ function AccountDashboard({ user, onLogout }) {
                             end: c.flight_end_date || '',
                           })}
                         >
-                          {c.flight_status === 'ended' ? '⚑ ended' : c.flight_status === 'pending' ? '○ pending' : c.flight_type === 'ALWAYS_ON' ? '∞ always on' : '● active'}
+                          {c.flight_status === 'ended' ? 'ended' : c.flight_status === 'pending' ? 'pending' : c.flight_type === 'ALWAYS_ON' ? 'always on' : 'active'}
                         </button>
                       </td>
                       <td className="num">{noSheetMatch ? <span style={{ color: 'var(--bb-warn-hot)' }}>—</span> : `$${(c.monthly_budget || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}</td>
@@ -1293,7 +1310,7 @@ function AccountDashboard({ user, onLogout }) {
 
                           const allocRow = (
                             <tr key={`${c.meta_campaign_id}-alloc`}>
-                              <td colSpan={6} style={{ padding: 0, background: '#fafbfb' }}>
+                              <td colSpan={6} style={{ padding: 0, background: 'var(--bb-surface-2)' }}>
                                 <div style={{ padding: '12px 16px 16px 48px' }}>
                                   <div className="bb-row-between" style={{ marginBottom: 8 }}>
                                     <div className="bb-section-meta">
@@ -1347,7 +1364,7 @@ function AccountDashboard({ user, onLogout }) {
                                     Total:{' '}
                                     <span style={{
                                       fontWeight: 700,
-                                      color: allocOk ? '#0f5132' : '#b45309',
+                                      color: allocOk ? 'var(--bb-ok)' : 'var(--bb-warn-cool)',
                                     }}>
                                       {allocSum.toFixed(2)}%
                                     </span>
