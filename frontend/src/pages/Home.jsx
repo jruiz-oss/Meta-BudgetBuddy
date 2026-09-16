@@ -654,6 +654,7 @@ function AllocationEditorModal({ accountId, campaign, focusAdsetId, onClose, onS
             These percentages split this campaign's monthly budget of{' '}
             <strong style={{ color: 'var(--bb-fg)' }}>{fmtMo(monthly)}</strong> across its ad sets. Must sum to 100% (±1.5%).
           </div>
+          <div className="bb-table-scroll">
           <table className="bb-table">
             <thead>
               <tr>
@@ -702,6 +703,7 @@ function AllocationEditorModal({ accountId, campaign, focusAdsetId, onClose, onS
               </tr>
             </tbody>
           </table>
+          </div>
           {!validTotal && !anyEmpty && (
             <div className="bb-alert bb-alert-warn" style={{ marginTop: 12 }}>
               Allocations must sum to 100% (±1.5%). Current total: <strong>{total.toFixed(2)}%</strong>.
@@ -1173,6 +1175,7 @@ function Home({ user, onLogout }) {
                   This will push <strong>1 budget change</strong> directly to Meta via the API.
                   This cannot be undone automatically.
                 </div>
+                <div className="bb-table-scroll">
                 <table className="bb-table">
                   <thead><tr><th>Target</th><th>Current Daily</th><th>New Daily</th><th>Change</th></tr></thead>
                   <tbody>
@@ -1192,6 +1195,7 @@ function Home({ user, onLogout }) {
                     </tr>
                   </tbody>
                 </table>
+                </div>
               </div>
               <div className="bb-modal-foot">
                 <button className="bb-btn" onClick={() => setPendingConfirm(null)}>Cancel</button>

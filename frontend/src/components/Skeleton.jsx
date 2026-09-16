@@ -60,6 +60,7 @@ export function SkeletonTable({ rows = 5, cols = 6 }) {
       <div className="bb-section" style={{ paddingBottom: 4 }}>
         <Skeleton width="30%" height={14} />
       </div>
+      <div className="bb-table-scroll">
       <table className="bb-table">
         <thead>
           <tr>
@@ -80,6 +81,7 @@ export function SkeletonTable({ rows = 5, cols = 6 }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -101,6 +103,7 @@ export function SkeletonAccountBlock() {
         </div>
         <Skeleton width={110} height={32} radius={8} />
       </div>
+      <div className="bb-table-scroll">
       <table className="bb-table">
         <thead>
           <tr>
@@ -121,6 +124,7 @@ export function SkeletonAccountBlock() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
