@@ -318,6 +318,9 @@ function AccountSection({ acct, applying, skipped, results, search,
     acct.campaigns.forEach(c => {
       // Campaigns with no matching sheet row are not applyable — don't count them.
       if (acct.has_sheet && c.sheet_budget_matched === false) return;
+      // 0% budget-group members are spend-only: their spend counts toward the group
+      // total but they get no budget, so there is nothing to apply.
+      if (c.group_allocation_pct === 0) return;
       if ((c.budget_mode || 'CBO') === 'ABO') {
         (c.adsets || []).forEach(a => {
           const alp = a.latest_pacing;
@@ -336,6 +339,44 @@ function AccountSection({ acct, applying, skipped, results, search,
 
   // Early return after all hooks
   const campaignsToShow = q && !acct.account_name.toLowerCase().includes(q) ? filteredCampaigns : acct.campaigns;
+
+  // Order campaigns so that members of the same budget group (one sheet row with a
+  // split in its notes, e.g. "Harrah's Ak-Chin - Core") sit together, in sheet order,
+  // instead of being scattered through the table. Ungrouped campaigns follow.
+  const orderedCampaigns = useMemo(() => {
+    const groups = new Map();   // group id → [campaigns]
+    const loose = [];
+    campaignsToShow.forEach(c => {
+      if (c.budget_group_id) {
+        if (!groups.has(c.budget_group_id)) groups.set(c.budget_group_id, []);
+        groups.get(c.budget_group_id).push(c);
+      } else {
+        loose.push(c);
+      }
+    });
+    // Highest allocation first inside a group — the primary campaign reads first and
+    // spend-only (0%) members sink to the bottom.
+    const out = [];
+    groups.forEach(members => {
+      members.sort((a, b) => (b.group_allocation_pct ?? 100) - (a.group_allocation_pct ?? 100));
+      out.push(...members);
+    });
+    out.push(...loose);
+    return out;
+  }, [campaignsToShow]);
+
+  // Aggregates shown on each group's header row.
+  const groupTotals = useMemo(() => {
+    const totals = new Map();
+    orderedCampaigns.forEach(c => {
+      if (!c.budget_group_id) return;
+      const t = totals.get(c.budget_group_id) || { spend: 0, members: 0, budget: c.budget_group_total ?? null, name: c.budget_group_name };
+      t.spend += (c.latest_pacing?.actual_spend || 0);
+      t.members += 1;
+      totals.set(c.budget_group_id, t);
+    });
+    return totals;
+  }, [orderedCampaigns]);
   if (q && !acct.account_name.toLowerCase().includes(q) && filteredCampaigns.length === 0) return null;
 
   const totalBudget = acct.campaigns.reduce((s, c) => s + (c.monthly_budget || 0), 0);
@@ -387,6 +428,19 @@ function AccountSection({ acct, applying, skipped, results, search,
           </button>
         )}
 
+        {acct.meta_account_id && (
+          <a
+            href={adsManagerUrl(acct.meta_account_id)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bb-dash-link"
+            onClick={e => e.stopPropagation()}
+            title={'Open Ads Manager for this account — month-to-date through yesterday, filtered to campaigns with "Commit" in the name'}
+          >
+            Ads Manager <IArrowRight />
+          </a>
+        )}
+
         <Link to={`/account/${acct.id}`} className="bb-dash-link" onClick={e => e.stopPropagation()}>
           Dashboard <IArrowRight />
         </Link>
@@ -423,8 +477,34 @@ function AccountSection({ acct, applying, skipped, results, search,
               </tr>
             </thead>
             <tbody>
-              {campaignsToShow.flatMap(campaign => {
+              {orderedCampaigns.flatMap((campaign, idx) => {
                 const mode = campaign.budget_mode || 'CBO';
+                // First member of a budget group gets a header row above it carrying the
+                // sheet row name, the combined budget and the combined spend — the numbers
+                // the pacing recommendation is actually computed from.
+                const prevGroup = idx > 0 ? orderedCampaigns[idx - 1].budget_group_id : null;
+                const startsGroup = campaign.budget_group_id && campaign.budget_group_id !== prevGroup;
+                const gt = startsGroup ? groupTotals.get(campaign.budget_group_id) : null;
+                const groupHead = startsGroup ? [(
+                  <tr key={`g-${campaign.budget_group_id}`} className="bb-row-group-head"
+                    style={{ background: 'var(--bb-surface-2)' }}>
+                    <td style={{ fontWeight: 700 }}>
+                      {gt?.name || 'Budget group'}
+                      <span style={{ fontWeight: 400, color: 'var(--bb-mute)', marginLeft: 8, fontSize: 12 }}>
+                        sheet row · {gt?.members} campaigns
+                      </span>
+                    </td>
+                    <td><span className="bb-mode" style={{ background: 'transparent', color: 'var(--bb-mute)' }}>group</span></td>
+                    <td className="num" style={{ fontWeight: 600 }}>{gt?.budget != null ? fmtMo(gt.budget) : '—'}</td>
+                    <td className="num" style={{ fontWeight: 600 }}>{fmt$(gt?.spend || 0, 2)}</td>
+                    <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
+                    <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
+                    <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
+                    <td><span style={{ fontSize: 12, color: 'var(--bb-mute)' }}>combined</span></td>
+                    <td />
+                    <td />
+                  </tr>
+                )] : [];
                 if (mode === 'ABO') {
                   const lp = campaign.latest_pacing;
                   const unmatched = acct.has_sheet && campaign.sheet_budget_matched === false;
@@ -500,7 +580,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                       </tr>
                     );
                   });
-                  return [parentRow, ...adsetRows];
+                  return [...groupHead, parentRow, ...adsetRows];
                 }
 
                 // CBO
@@ -512,7 +592,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                 const isSkipped  = !!skipped[rowKey];
                 const needsAction = lp && status.toUpperCase() !== 'ON_PACE';
                 const cboUnmatched = acct.has_sheet && campaign.sheet_budget_matched === false;
-                return [(
+                return [...groupHead, (
                   <tr key={rowKey} className={cboUnmatched ? 'bb-row-sheet-unmatched' : ''}>
                     <td>
                       <div className="bb-row-name">
@@ -539,7 +619,9 @@ function AccountSection({ acct, applying, skipped, results, search,
                     <td>{lp ? <StatusPill status={status} paceRatio={lp.pace_ratio} /> : <span style={{ color: 'var(--bb-mute)' }}>No data</span>}</td>
                     <td><NotesCell notes={campaign.sheet_notes || ''} /></td>
                     <td><ActionCell rowKey={rowKey} res={res} isApplying={isApplying} isSkipped={isSkipped}
-                      needsAction={needsAction} unmatched={cboUnmatched} onApply={() => onApplyCbo(acct.id, campaign)}
+                      needsAction={needsAction} unmatched={cboUnmatched}
+                      spendOnly={campaign.group_allocation_pct === 0}
+                      onApply={() => onApplyCbo(acct.id, campaign)}
                       onSkip={() => onSkip(rowKey)} onUnskip={() => onUnskip(rowKey)} /></td>
                   </tr>
                 )];
@@ -554,7 +636,43 @@ function AccountSection({ acct, applying, skipped, results, search,
   );
 }
 
-function ActionCell({ rowKey, res, isApplying, isSkipped, needsAction, unmatched, onApply, onSkip, onUnskip }) {
+// Deep-link into Ads Manager for one ad account, pre-filtered the way pacing looks at
+// the world: MTD through YESTERDAY (Ads Manager's default includes today, which is why
+// its totals read higher than ours) and only campaigns with "Commit" in the name.
+//
+// filter_set uses Meta's record-separator format:
+//   SEARCH_BY_CAMPAIGN_GROUP_NAME-STRING_SET <RS> CONTAINS_ALL <RS> ["commit"]
+// where <RS> is U+001E. The whole string is URI-encoded.
+function adsManagerUrl(metaAccountId) {
+  const pad = n => String(n).padStart(2, '0');
+  const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  // On the 1st, yesterday belongs to last month — clamp so the range never inverts.
+  const end = yesterday < monthStart ? monthStart : yesterday;
+  const range = `${fmt(monthStart)}_${fmt(end)}`;
+  const RS = '\u001E';
+  const filterSet = `SEARCH_BY_CAMPAIGN_GROUP_NAME-STRING_SET${RS}CONTAINS_ALL${RS}["commit"]`;
+  const act = String(metaAccountId || '').replace(/^act_/, '');
+  return 'https://adsmanager.facebook.com/adsmanager/manage/campaigns'
+    + `?act=${encodeURIComponent(act)}`
+    + `&date=${range}&insights_date=${range}`
+    + `&filter_set=${encodeURIComponent(filterSet)}`;
+}
+
+function ActionCell({ rowKey, res, isApplying, isSkipped, needsAction, unmatched, spendOnly, onApply, onSkip, onUnskip }) {
+  // 0% member of a budget group: spend still counts toward the group total, but there
+  // is no budget share to push to Meta.
+  if (spendOnly) return (
+    <span
+      style={{ color: 'var(--bb-mute)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'help', whiteSpace: 'nowrap' }}
+      title="0% allocation in its budget group. Spend counts toward the group total; there is no budget to apply."
+    >
+      Spend only
+    </span>
+  );
   // No matching Google Sheet row → budget isn't sheet-sourced, so block Apply.
   if (unmatched) return (
     <span

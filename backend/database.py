@@ -322,7 +322,13 @@ class Campaign(db.Model):
             'sheet_notes': self.sheet_notes or '',
             'sheet_budget_matched': self.sheet_budget_matched,
             'budget_group_id': self.budget_group_id,
-            'group_allocation_pct': round(self.group_allocation_pct or 100.0, 2),
+            # Sheet row that owns this campaign's budget, so the UI can group members
+            # of one split together instead of scattering them alphabetically.
+            'budget_group_name': self.budget_group.name if self.budget_group else None,
+            'budget_group_total': (round(self.budget_group.monthly_budget, 2)
+                                   if self.budget_group else None),
+            'group_allocation_pct': round(
+                self.group_allocation_pct if self.group_allocation_pct is not None else 100.0, 2),
             'adset_count': len(self.adsets),
             'created_at': self.created_at.isoformat(),
             'latest_pacing': latest,

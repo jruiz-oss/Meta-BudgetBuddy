@@ -53,6 +53,11 @@ function AccountDashboard({ user, onLogout }) {
   const [metaCampaigns, setMetaCampaigns] = useState([]);
   const [importSelections, setImportSelections] = useState({});
 
+  // Sheet-match diagnosis + one-account refresh (no Meta calls, no re-pacing)
+  const [sheetDiag, setSheetDiag] = useState(null);
+  const [sheetDiagLoading, setSheetDiagLoading] = useState(false);
+  const [refreshingSheet, setRefreshingSheet] = useState(false);
+
   useEffect(() => {
     // Clear stale data from the previous account so it never flashes on screen
     setCampaigns([]);
@@ -66,6 +71,37 @@ function AccountDashboard({ user, onLogout }) {
     // re-create it on every render. Re-running on accountId change is enough.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
+
+  // Re-read this account's rows from the Google Sheet: budgets, allocations, notes.
+  // Deliberately does NOT run pacing — no Meta calls, so it can't hit rate limits or
+  // touch other accounts.
+  const handleRefreshFromSheet = async () => {
+    setRefreshingSheet(true);
+    try {
+      const res = await axios.post(`/api/sheets/${accountId}/sync-budgets`);
+      toast.success(res.data?.message || 'Refreshed budgets from the sheet.');
+      invalidateCache(`dashboard-${accountId}`);
+      await fetchAll(true);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not refresh from the sheet.');
+    } finally {
+      setRefreshingSheet(false);
+    }
+  };
+
+  // Read-only: shows every row on the current month's tab, what it resolved to, and
+  // when it didn't resolve, why — plus the closest-scoring campaign names.
+  const handleDiagnoseSheet = async () => {
+    setSheetDiagLoading(true);
+    try {
+      const res = await axios.get(`/api/sheets/${accountId}/preview`);
+      setSheetDiag(res.data);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not read the sheet.');
+    } finally {
+      setSheetDiagLoading(false);
+    }
+  };
 
   const fetchAll = async (force = false) => {
     const cacheKey = `dashboard-${accountId}`;
@@ -703,6 +739,22 @@ function AccountDashboard({ user, onLogout }) {
             <button className="bb-btn" onClick={handleDownloadDiagnostic} title="Download diagnostic JSON">
               Diagnostic
             </button>
+            <button
+              className="bb-btn"
+              onClick={handleRefreshFromSheet}
+              disabled={refreshingSheet}
+              title="Re-read budgets and splits from the Google Sheet for this account only. Does not run pacing."
+            >
+              {refreshingSheet ? 'Refreshing…' : 'Refresh from sheet'}
+            </button>
+            <button
+              className="bb-btn"
+              onClick={handleDiagnoseSheet}
+              disabled={sheetDiagLoading}
+              title="Show which sheet rows matched which campaigns, and why the rest didn't"
+            >
+              {sheetDiagLoading ? 'Checking…' : 'Sheet match'}
+            </button>
             <span className="bb-actions-divider" />
             <button className="bb-btn bb-btn-primary" onClick={handleRunPacing} disabled={pacingRunning}>
               {pacingRunning ? <Loader2 size={13} className="bb-spin" /> : <IPlay />}
@@ -843,8 +895,9 @@ function AccountDashboard({ user, onLogout }) {
                       <td>
                         <span
                           className="bb-status"
-                          style={{ '--bb-tone': 'var(--bb-warn-cool)', cursor: 'help' }}
-                          title="No matching row found on the Google Sheet for this campaign. Check that the campaign name matches the sheet, then re-sync."
+                          style={{ '--bb-tone': 'var(--bb-warn-cool)', cursor: 'pointer' }}
+                          onClick={handleDiagnoseSheet}
+                          title="No matching row on the Google Sheet. Click to see which rows were considered and why none matched."
                         >
                           <span className="bb-dot" /> No sheet match
                         </span>
@@ -1134,6 +1187,60 @@ function AccountDashboard({ user, onLogout }) {
             );
           })()}
         </div>
+
+        {/* Sheet-match diagnosis (read-only) */}
+        {sheetDiag && (
+          <div className="bb-modal-backdrop" onClick={() => setSheetDiag(null)}>
+            <div className="bb-modal" style={{ maxWidth: 820 }} onClick={e => e.stopPropagation()}>
+              <div className="bb-modal-head">
+                <div className="bb-modal-title">Sheet match · {sheetDiag.sheet_tab}</div>
+                <button className="bb-icon-btn" onClick={() => setSheetDiag(null)}><X size={18} /></button>
+              </div>
+              <div className="bb-modal-body">
+                <div className="bb-state-meta" style={{ marginBottom: 12 }}>
+                  {sheetDiag.matched} of {sheetDiag.total_sheet_rows} rows on this tab resolved to a tracked campaign.
+                </div>
+                <div style={{ maxHeight: '55vh', overflow: 'auto' }}>
+                  <table className="bb-table">
+                    <thead>
+                      <tr><th>Sheet row</th><th>Resolved to</th><th>Why</th></tr>
+                    </thead>
+                    <tbody>
+                      {(sheetDiag.matches || []).map(m => (
+                        <tr key={m.row_index}>
+                          <td style={{ whiteSpace: 'pre-wrap' }}>{m.sheet_name}</td>
+                          <td>
+                            {m.matched_campaign_name
+                              ? <span style={{ fontWeight: 600 }}>{m.matched_campaign_name}</span>
+                              : <span style={{ color: 'var(--bb-warn-cool)' }}>{m.match_type}</span>}
+                          </td>
+                          <td style={{ fontSize: 12, color: 'var(--bb-mute)' }}>
+                            {m.reason || '—'}
+                            {(m.candidates || []).length > 0 && (
+                              <div style={{ marginTop: 4 }}>
+                                Closest: {m.candidates.map(c => `${c.campaign_name} (${c.score})`).join(', ')}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="bb-modal-foot">
+                <button className="bb-btn" onClick={() => setSheetDiag(null)}>Close</button>
+                <button
+                  className="bb-btn bb-btn-primary"
+                  onClick={handleRefreshFromSheet}
+                  disabled={refreshingSheet}
+                >
+                  {refreshingSheet ? 'Refreshing…' : 'Refresh from sheet'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Inline flight editor modal */}
         {editingFlight && (

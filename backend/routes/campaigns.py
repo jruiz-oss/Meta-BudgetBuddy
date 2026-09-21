@@ -440,6 +440,7 @@ def get_all_campaigns():
         accounts = (
             Account.query
             .options(
+                selectinload(Account.campaigns).selectinload(Campaign.budget_group),
                 selectinload(Account.campaigns).selectinload(Campaign.pacing_data),
                 selectinload(Account.campaigns).selectinload(Campaign.adsets).selectinload(AdSet.pacing_data),
                 selectinload(Account.pacing_runs),
@@ -572,6 +573,8 @@ def get_all_campaigns():
             result.append({
                 'id': account.id,
                 'account_name': account.account_name,
+                # Needed by Home's Ads Manager deep-link button.
+                'meta_account_id': account.meta_account_id,
                 'last_run': last_run,
                 'campaigns': camp_list,
                 'hidden_campaigns': hidden_list,
@@ -671,6 +674,7 @@ def get_campaigns(account_id):
             Campaign.query
             .filter_by(account_id=account_id, is_active=True)
             .options(
+                selectinload(Campaign.budget_group),
                 selectinload(Campaign.pacing_data),
                 selectinload(Campaign.adsets).selectinload(AdSet.pacing_data),
             )

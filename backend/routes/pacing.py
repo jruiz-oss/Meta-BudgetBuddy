@@ -381,6 +381,14 @@ def run_pacing(account_id):
     )
     included = [c for c in campaigns if _campaign_should_run_today(c, today)]
 
+    # Budget-group members excluded by their flight window still need their spend
+    # fetched. A group's recommendation is (group budget - COMBINED group spend), so
+    # dropping an ended member overstates what's left and over-funds the live ones.
+    # These are fetched for spend only; they never produce a recommendation.
+    _included_ids = {c.id for c in included}
+    spend_only = [c for c in campaigns
+                  if c.id not in _included_ids and c.budget_group_id]
+
     # ------------------------------------------------------------------
     # Dead-campaign pre-filter (mirrors the dashboard's is_zero_spend logic)
     # ------------------------------------------------------------------
@@ -441,18 +449,22 @@ def run_pacing(account_id):
     # ------------------------------------------------------------------
     campaigns_with_meta_id = [c for c in included if c.meta_campaign_id]
     campaigns_missing_meta  = [c for c in included if not c.meta_campaign_id]
+    # Spend-only group members (see above). Skipped for single-campaign runs.
+    spend_only_fetch = ([] if single_campaign_id
+                        else [c for c in spend_only if c.meta_campaign_id])
+    fetch_targets = campaigns_with_meta_id + spend_only_fetch
 
     fetch_data = {}   # campaign.id → result dict from _fetch_cbo_data / _fetch_abo_data
 
-    if campaigns_with_meta_id:
-        outer_workers = min(len(campaigns_with_meta_id), 10)
+    if fetch_targets:
+        outer_workers = min(len(fetch_targets), 10)
         # Hand the actual Flask app object to each worker so it can push its own
         # app context. current_app is a request-bound proxy and won't follow the
         # work onto a thread.
         flask_app = current_app._get_current_object()
         with ThreadPoolExecutor(max_workers=outer_workers) as pool:
             fut_map = {}
-            for campaign in campaigns_with_meta_id:
+            for campaign in fetch_targets:
                 if campaign.budget_mode == 'ABO':
                     f = pool.submit(_fetch_abo_data, flask_app, meta, campaign, month_start, spend_until)
                 else:
@@ -474,7 +486,7 @@ def run_pacing(account_id):
     # group members that had a successful fetch.
     group_spend_map = {}   # group_id → float
     group_obj_map  = {}    # group_id → BudgetGroup
-    for c in campaigns_with_meta_id:
+    for c in fetch_targets:
         if not c.budget_group_id:
             continue
         data = fetch_data.get(c.id, {})
@@ -647,7 +659,12 @@ def run_pacing(account_id):
         # for in the other campaign's recommendation.
         if campaign.budget_group_id and campaign.budget_group_id in group_obj_map:
             group      = group_obj_map[campaign.budget_group_id]
-            alloc_pct  = campaign.group_allocation_pct or 100.0
+            # 0% is a legitimate allocation: a spend-only group member (e.g. a campaign
+            # that stopped running mid-month) still contributes its spend to the group
+            # total but receives none of the remaining budget. `or 100.0` treated 0 as
+            # "unset" and handed that campaign the entire group budget.
+            alloc_pct  = (campaign.group_allocation_pct
+                          if campaign.group_allocation_pct is not None else 100.0)
 
             # Group-level totals
             group_total_spend = group_spend_map.get(campaign.budget_group_id, actual_spend)
@@ -669,7 +686,13 @@ def run_pacing(account_id):
                                else daily_target)
             change_pct      = ((new_daily - ref_daily) / ref_daily * 100.0
                                if ref_daily > 0 else 0.0)
-            if abs(new_daily - ref_daily) < 0.01:
+            if alloc_pct == 0:
+                # Spend-only member: its spend is already inside group_total_spend, it gets
+                # no share of what's left, and it must never be pushed to Meta.
+                action = 'NO_ALLOCATION'
+                new_daily = 0.0
+                change_pct = 0.0
+            elif abs(new_daily - ref_daily) < 0.01:
                 action = 'ON_PACE'
             elif new_daily > ref_daily:
                 action = 'INCREASE'
@@ -685,6 +708,7 @@ def run_pacing(account_id):
                 "monthly_budget": round(alloc_monthly, 2),   # this campaign's share
                 "budget_mode": "CBO",
                 "sheet_budget_matched": campaign.sheet_budget_matched,
+                "applyable": alloc_pct > 0,
                 "budget_group_id": group.id,
                 "budget_group_name": group.name,
                 "budget_group_total": round(group.monthly_budget, 2),
@@ -877,6 +901,24 @@ def apply_recommendations(account_id):
                 "adset_id": adj.get("adset_id"),
             })
             continue
+
+        # Spend-only budget-group members (0% allocation) must never be pushed to Meta.
+        # Their share of the group budget is zero by definition, so an Apply-all would
+        # otherwise try to zero out — or revive — a campaign the sheet excluded on purpose.
+        _campaign_local_id = adj.get("campaign_id")
+        if _campaign_local_id and not adj.get("adset_id"):
+            _guard = Campaign.query.filter_by(
+                id=_campaign_local_id, account_id=account_id,
+            ).first()
+            if (_guard is not None and _guard.budget_group_id
+                    and _guard.group_allocation_pct is not None
+                    and _guard.group_allocation_pct == 0):
+                results.append({
+                    "skipped": True,
+                    "reason": "0% allocation in budget group — spend-only member",
+                    "campaign_id": _campaign_local_id,
+                })
+                continue
 
         adset_local_id = adj.get("adset_id")
         if adset_local_id:

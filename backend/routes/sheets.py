@@ -953,6 +953,57 @@ def sheet_config(account_id):
     return jsonify({"google_sheet_id": settings.google_sheet_id}), 200
 
 
+def _match_diagnostics(match_name, db_campaigns, notes=""):
+    """Explain (for preview only) why a sheet row failed to resolve to a campaign.
+
+    Returns {"reason": str, "candidates": [{"campaign_name": str, "score": float}]}.
+    Mirrors the decision points in _match_campaign_with_score so the UI can tell the
+    user which lever to pull instead of leaving them guessing.
+    """
+    if not db_campaigns:
+        return {"reason": "This account has no active tracked campaigns to match against.",
+                "candidates": []}
+
+    lower = (match_name or "").strip().lower()
+    substring_hits = [
+        c.campaign_name for c in db_campaigns
+        if lower and (lower in (c.campaign_name or "").lower()
+                      or (c.campaign_name or "").lower() in lower)
+    ]
+    scored = sorted(
+        ((_word_overlap_score(match_name, c.campaign_name), c.campaign_name)
+         for c in db_campaigns),
+        key=lambda x: (-x[0], x[1]),
+    )
+    candidates = [{"campaign_name": n, "score": round(sc, 2)} for sc, n in scored[:3]]
+    best = scored[0][0] if scored else 0.0
+    second = scored[1][0] if len(scored) > 1 else -1.0
+    tied = [n for sc, n in scored if abs(sc - best) <= _SCORE_TIE_EPS]
+
+    if len(substring_hits) > 1:
+        reason = (f"After stripping the account prefix, the row name is '{match_name}', which "
+                  f"appears inside {len(substring_hits)} campaign names — no single owner could "
+                  f"be chosen. Make the row name more specific, or define a split in the notes.")
+    elif best < _FUZZY_MATCH_THRESHOLD:
+        reason = (f"Best name score was {best:.2f}, under the {_FUZZY_MATCH_THRESHOLD:.2f} "
+                  f"threshold. Rename the row to share more words with the campaign name.")
+    elif len(tied) > 1:
+        reason = (f"{len(tied)} campaigns tie at {best:.2f} ({', '.join(tied[:3])}), so no winner "
+                  f"could be picked. Make the row name more specific, or define a split.")
+    elif best - second <= _SCORE_TIE_EPS:
+        reason = f"Top two candidates scored identically ({best:.2f}); no clear winner."
+    else:
+        reason = "No campaign cleared the matching rules for this row."
+
+    stripped_notes = (notes or "").strip()
+    if stripped_notes and _parse_allocations_from_notes(notes) is None \
+            and _parse_flight_promo_allocations(notes) is None:
+        reason += (" Notes are present but did not parse as a split: each allocation needs its "
+                   "own line as '<name> - <pct>%', percentages must total 100, and a '/' starts "
+                   "a new chunk — so slashes inside names or dates break the parse.")
+    return {"reason": reason, "candidates": candidates}
+
+
 @sheets_bp.route("/<int:account_id>/preview", methods=["GET"])
 @login_required
 def preview_matches(account_id):
@@ -1004,6 +1055,9 @@ def preview_matches(account_id):
                 "matched_campaign_id": None,
                 "matched_campaign_name": None,
                 "match_type": "account_scope_mismatch",
+                "reason": (f"Column D reads '{scope}', which does not name this Budget Buddy "
+                           f"account or its Meta ad account id, so the row was skipped."),
+                "candidates": [],
             })
             continue
         # When col D is a real text scope that explicitly names this account, trust it
@@ -1019,6 +1073,9 @@ def preview_matches(account_id):
                 "matched_campaign_id": None,
                 "matched_campaign_name": None,
                 "match_type": "account_scope_mismatch",
+                "reason": ("The row name's account prefix routes this row to a different "
+                           "Budget Buddy account."),
+                "candidates": [],
             })
             continue
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
@@ -1046,6 +1103,7 @@ def preview_matches(account_id):
                 alloc = _parse_flight_promo_allocations(notes)
                 is_flight = alloc is not None
             split_entry = None
+            split_fail = None
             if alloc is not None and row.get("monthly_budget") is not None:
                 scoped = _scope_campaigns_by_pivot(match_name, db_campaigns)
                 split_proposals = []
@@ -1056,6 +1114,7 @@ def preview_matches(account_id):
                         split_proposals.append({"id": c.id, "name": c.campaign_name, "pct": alloc_pct})
                     else:
                         all_ok = False
+                        split_fail = alloc_name
                         break
                 if all_ok and split_proposals:
                     split_entry = {
@@ -1075,6 +1134,16 @@ def preview_matches(account_id):
             if split_entry:
                 matches.append(split_entry)
             else:
+                diag = _match_diagnostics(match_name, db_campaigns, notes)
+                if split_fail:
+                    diag["reason"] = (
+                        f"A split was defined in the notes, but '{split_fail}' did not match any "
+                        f"campaign in scope, so the whole split was aborted. Fix that name (or "
+                        f"remove the line) and re-sync."
+                    )
+                elif alloc is not None and row.get("monthly_budget") is None:
+                    diag["reason"] = ("A split was defined in the notes, but column B has no "
+                                      "budget for this row, so there is nothing to divide.")
                 matches.append({
                     "sheet_name": row["name"],
                     "account_scope": scope,
@@ -1085,6 +1154,8 @@ def preview_matches(account_id):
                     "matched_campaign_id": None,
                     "matched_campaign_name": None,
                     "match_type": "none",
+                    "reason": diag["reason"],
+                    "candidates": diag["candidates"],
                 })
 
     bad_types = {"none", "account_scope_mismatch"}
@@ -1588,6 +1659,12 @@ def sync_budgets(account_id):
     }), 200
 
 
+def _current_month_start():
+    """First day of the current (UTC) month — the window MTD spend must come from."""
+    today = datetime.utcnow().date()
+    return today.replace(day=1)
+
+
 def _campaign_mtd_spend(campaign):
     """Return the MTD spend for a campaign using direct DB queries.
 
@@ -1609,6 +1686,10 @@ def _campaign_mtd_spend(campaign):
             .filter(
                 PacingData.campaign_id == campaign.id,
                 PacingData.adset_id.in_(active_adset_ids),
+                # Current month only. Without this, a campaign that last paced in a
+                # previous month reported THAT month's total as today's MTD spend and
+                # the sheet write-back pushed stale numbers into the current tab.
+                PacingData.date >= _current_month_start(),
             )
             .order_by(PacingData.date.desc(), PacingData.id.desc())
             .all()
@@ -1630,6 +1711,8 @@ def _campaign_mtd_spend(campaign):
     row = (
         PacingData.query
         .filter_by(campaign_id=campaign.id, adset_id=None)
+        # Current month only — see the ABO branch above.
+        .filter(PacingData.date >= _current_month_start())
         .order_by(PacingData.date.desc(), PacingData.id.desc())
         .first()
     )
