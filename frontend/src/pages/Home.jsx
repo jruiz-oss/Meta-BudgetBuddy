@@ -648,10 +648,12 @@ function adsManagerUrl(metaAccountId) {
   const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const today = new Date();
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  // On the 1st, yesterday belongs to last month — clamp so the range never inverts.
-  const end = yesterday < monthStart ? monthStart : yesterday;
+  // Ads Manager treats the END of date=A_B as EXCLUSIVE: passing _09-29 renders the
+  // picker as "Sep 1 – Sep 28". Verified against a live account. So to display
+  // month-start through YESTERDAY, the end we send is TODAY.
+  const end = new Date(today);
+  // On the 1st there is no elapsed day yet; show the 1st rather than an empty range.
+  if (end <= monthStart) end.setDate(monthStart.getDate() + 1);
   const range = `${fmt(monthStart)}_${fmt(end)}`;
   const RS = '\u001E';
   const filterSet = `SEARCH_BY_CAMPAIGN_GROUP_NAME-STRING_SET${RS}CONTAINS_ALL${RS}["commit"]`;
