@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import {
   LogOut, Save, Eye, ArrowDownToLine, ArrowUpFromLine, Loader2,
-  SlidersHorizontal, Calendar, FileSpreadsheet, Mail, Inbox,
+  SlidersHorizontal, Calendar, FileSpreadsheet, Mail, Inbox, BookOpen,
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { SkeletonCard } from '../components/Skeleton';
@@ -216,9 +216,18 @@ function Settings({ user, onLogout }) {
             <div className="bb-page-title">Account Settings</div>
             <div className="bb-page-subtitle">Pacing parameters, campaign flights, and Google Sheets sync.</div>
           </div>
-          <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
-            <LogOut size={14} aria-hidden="true" /> Log out
-          </button>
+          <div className="bb-header-actions">
+            {/* Opens the standalone docs area, on the page that matches the current tab. */}
+            <Link
+              className="bb-btn"
+              to={activeTab === 'flights' ? '/docs/flights' : activeTab === 'sheets' ? '/docs/google-sheets' : '/docs/settings'}
+            >
+              <BookOpen size={14} aria-hidden="true" /> Docs
+            </Link>
+            <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
+              <LogOut size={14} aria-hidden="true" /> Log out
+            </button>
+          </div>
         </div>
 
         {error && <div className="bb-alert bb-alert-error">{error}</div>}

@@ -285,6 +285,7 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
 
+<<<<<<< HEAD
 - [x] **2026-09-21 (session 18 — Opus, with Blake)** — Budget-group correctness fixes + sheet-match diagnosis + per-account sheet refresh.
   - **Why.** Setting up September surfaced four bugs that all produced *plausible but wrong* numbers rather than errors, plus two workflow gaps that made diagnosing sheet-match failures guesswork.
   - **`routes/pacing.py` — 0% allocations were silently treated as 100%.** `alloc_pct = campaign.group_allocation_pct or 100.0` turns a legitimate `0` into `100.0` in Python. A spend-only group member (a campaign that stopped running mid-month, kept in the group so its spend still counts against the combined budget) was therefore handed the *entire* group's remaining budget. Observed on Goodwill CNA: both members recommended the identical group daily rate. Now `... if ... is not None else 100.0`. Same falsy-zero fix in `database.py` `Campaign.to_dict`.
@@ -300,6 +301,13 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
   - ⚠️ **Behavior change worth knowing.** Sheet write-back will now leave col C blank (rather than writing a stale figure) for any campaign that has not paced in the current month. That is correct, but it will look like data disappeared on retired campaigns.
   - Verified: `ast.parse` clean across `routes/pacing.py`, `routes/sheets.py`, `database.py`; `@babel/parser` clean on `AccountDashboard.jsx` and `Home.jsx`; `_match_diagnostics` and `_parse_allocations_from_notes` exercised against the live Goodwill CNA row (correctly reports the three-way tie on "Commit 2026:" and the `/` chunk-split hazard).
   - 📋 **Still open / next session:** header-driven column mapping so the sheet can have a dedicated `Split` column separate from human `Notes`, then an in-app allocation editor that writes the split column back in canonical format. Also unfixed: `run_pacing` ignores the `commit` name gate that hides campaigns from the dashboard, `PacingRun.error_message` still swallows the underlying Meta error, and `meta_client` only backs off on HTTP 429 (Meta returns throttling as 400 with codes 17/613/80004).
+=======
+- [x] **2026-09-30 (docs site)** - Standalone in-app docs at `/docs` (usage + troubleshooting).
+  - **`frontend/src/pages/Docs.jsx` + `Docs.css`** - own shell (top bar with Home button, left nav with search, article, "On this page"). Does not use `Sidebar` or `.bb-app`. Routes `/docs` and `/docs/:slug` added in `App.jsx` (login required).
+  - **`frontend/src/docs/pages.jsx`** - all content, one object per page (`slug, group, title, lead, keywords, sections`). **Edit this file to update docs**; keep button labels in sync with the UI. `parts.jsx` has Callout/Steps/DocTable/Issue.
+  - Entry points: "Docs" item in `Sidebar.jsx`, and a "Docs" button in the `Settings.jsx` header that deep-links to the page matching the active tab.
+  - No backend or DB changes. Verified with `@babel/parser` (full build can't run over the device bridge).
+>>>>>>> 38f37f0 (add in-app docs page at /docs with Home button, nav, usage and troubleshooting)
 
 - [x] **2026-05-26 (session 16 — Opus)** — Global Meta token is now workspace-shared.
   - **Why.** Session 13 made every Meta ad account visible to every teammate, but `User.global_meta_token` stayed per-user. Jorge saved a global token on his account; when his coworker registered, the coworker saw "no token set" and got prompted to enter their own. That contradicted the shared-workspace model and forced duplicated token entry per teammate.

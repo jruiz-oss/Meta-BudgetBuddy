@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
+import { BookOpen } from 'lucide-react';
 
 // Dot color based on pacing status.
 // accountActionable map: { [id]: count } — undefined = no data yet
@@ -163,6 +164,10 @@ function Sidebar({ user, accounts = [], accountActionable, onAddAccount }) {
           <ISettings /><span>Settings</span>
         </span>
       )}
+
+      <NavLink to="/docs" className={({ isActive }) => 'bb-nav-item' + (isActive ? ' is-active' : '')}>
+        <BookOpen size={14} aria-hidden="true" /><span>Docs</span>
+      </NavLink>
 
       {/* User block */}
       <div className="bb-user">

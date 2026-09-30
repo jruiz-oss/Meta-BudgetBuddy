@@ -20,6 +20,7 @@ import CampaignDetail from './pages/CampaignDetail';
 import Settings from './pages/Settings';
 import History from './pages/History';
 import GlobalHistory from './pages/GlobalHistory';
+import Docs from './pages/Docs';          // Standalone docs area (own shell, no app sidebar)
 
 // Default timeout — Railway cold starts can take ~15s, but anything past 60s is dead.
 // Without this, hung requests sit forever and look like the app is "loading" with no spinner state ever resolving.
@@ -79,6 +80,8 @@ function App() {
               <Route path="/account/:accountId/settings"                         element={<Settings         user={user} onLogout={handleLogout} />} />
               <Route path="/history"                                              element={<GlobalHistory    user={user} onLogout={handleLogout} />} />
               <Route path="/account/:accountId/history"                          element={<History          user={user} onLogout={handleLogout} />} />
+              <Route path="/docs"       element={<Docs />} />
+              <Route path="/docs/:slug" element={<Docs />} />
               <Route path="*"         element={<Navigate to="/" />} />
             </>
           )}
