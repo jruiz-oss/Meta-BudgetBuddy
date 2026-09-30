@@ -17,6 +17,11 @@ app = Flask(__name__)
 _db_url = os.getenv('DATABASE_URL', 'postgresql://localhost/meta_budgetbuddy')
 if _db_url.startswith('postgres://'):
     _db_url = 'postgresql://' + _db_url[len('postgres://'):]
+# Pin the driver explicitly. SQLAlchemy 2.1 changed the default for plain
+# postgresql:// from psycopg2 to psycopg (v3), which we don't install, and the
+# app crashed on boot. We ship psycopg2-binary, so say so.
+if _db_url.startswith('postgresql://'):
+    _db_url = 'postgresql+psycopg2://' + _db_url[len('postgresql://'):]
 app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Recycle connections before Neon kills idle ones; pre-ping to catch dead ones.

@@ -1,5 +1,8 @@
 Flask==2.3.3
 Flask-SQLAlchemy==3.0.5
+# Flask-SQLAlchemy 3.0.x was built against 2.0. Unpinned, Railway picked up 2.1.1 (new default
+# postgres driver = psycopg v3), which crashed the app on boot. Keep it on 2.0.x.
+SQLAlchemy>=2.0.30,<2.1
 # 4.0.1 fixes CVE-2024-1681 (log injection / path-normalization).
 Flask-CORS==4.0.1
 python-dotenv==1.0.0
