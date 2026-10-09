@@ -97,7 +97,8 @@ function AccountDashboard({ user, onLogout }) {
       const res = await axios.get(`/api/sheets/${accountId}/preview`);
       setSheetDiag(res.data);
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Could not read the sheet.');
+      const d = err.response?.data || {};
+      toast.error([d.error || 'Could not read the sheet.', d.detail].filter(Boolean).join(' — '));
     } finally {
       setSheetDiagLoading(false);
     }

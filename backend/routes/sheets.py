@@ -1081,6 +1081,21 @@ def preview_matches(account_id):
         logger.exception("Could not open Google Sheet for account %s", account_id)
         return jsonify({"error": "Could not open Google Sheet. Check the URL and that the service account has access."}), 400
 
+    try:
+        return _build_preview(account_id, ws, tab_name)
+    except Exception as e:
+        # This endpoint is login-gated and internal, and a generic 500 here cost a
+        # round-trip to Railway's logs to find a one-line bug. Return the exception
+        # type and message so the UI can show it; the full traceback still only goes
+        # to the server log.
+        logger.exception("Sheet preview failed for account %s", account_id)
+        return jsonify({
+            "error": "Sheet preview failed while reading the tab.",
+            "detail": f"{type(e).__name__}: {e}"[:300],
+        }), 500
+
+
+def _build_preview(account_id, ws, tab_name):
     sheet_rows, colmap = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     account = Account.query.get(account_id)
@@ -1181,7 +1196,13 @@ def preview_matches(account_id):
             if split_entry:
                 matches.append(split_entry)
             else:
-                diag = _match_diagnostics(match_name, db_campaigns, notes)
+                try:
+                    diag = _match_diagnostics(match_name, db_campaigns, notes)
+                except Exception as diag_err:
+                    # A diagnosis failing must never take down the preview it explains.
+                    logger.exception("match diagnostics failed for row %s", row.get("row_index"))
+                    diag = {"reason": f"(diagnosis unavailable: {type(diag_err).__name__})",
+                            "candidates": []}
                 if split_fail:
                     diag["reason"] = (
                         f"A split was defined in the notes, but '{split_fail}' did not match any "
@@ -1211,6 +1232,8 @@ def preview_matches(account_id):
         "total_sheet_rows": len(sheet_rows),
         "matched": sum(1 for m in matches if m["match_type"] not in bad_types),
         "unmatched": sum(1 for m in matches if m["match_type"] in {"none"}),
+        "columns_detected": {k: (_col_letter(v) if v is not None else None)
+                             for k, v in colmap.items()},
         "matches": matches,
     }), 200
 
