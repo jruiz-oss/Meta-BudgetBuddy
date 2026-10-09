@@ -375,6 +375,20 @@ def _get_meta_section(worksheet):
         })
     return rows, colmap
 
+# Common words we ignore when scoring overlap — they appear everywhere and would
+# inflate the score without indicating a real match.
+#
+# NOTE: this block sat between _get_meta_section and _stem, and was deleted by the
+# session-19 rewrite of _get_meta_section — which took out every line up to the next
+# `def`. _tokenise then raised NameError on the first match attempt, silently
+# breaking sheet sync as well as preview. Keep it here.
+_STOP_TOKENS = {
+    "the", "and", "ads", "ad", "campaign", "campaigns", "fb", "ig", "facebook",
+    "instagram", "meta", "social", "for", "of", "to", "in", "on", "at", "a",
+    "an", "is", "by", "or", "with", "now", "new",
+}
+
+
 def _stem(token: str) -> str:
     """Light stemmer — strip common English suffixes so 'weddings' == 'wedding'.
 
