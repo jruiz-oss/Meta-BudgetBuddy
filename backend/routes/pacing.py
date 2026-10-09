@@ -107,6 +107,19 @@ def _campaign_should_run_today(campaign, today):
     return False
 
 
+def _days_remaining_for(campaign, today, month_end):
+    """Days from today through the end of this campaign's pacing window, inclusive.
+
+    For a LIMITED flight the window ends at the flight end (or month end, whichever
+    comes first). Without this, a promo flighted 10/5-10/12 spreads its budget over
+    the whole month and finishes its flight having spent a fraction of it.
+    """
+    end = month_end
+    if campaign.flight_type == 'LIMITED' and campaign.flight_end_date:
+        end = min(month_end, campaign.flight_end_date)
+    return max(1, (end - today).days + 1)
+
+
 def _compute_recommendation(
     monthly_budget,
     actual_spend,
@@ -114,6 +127,7 @@ def _compute_recommendation(
     days_elapsed,
     settings,
     actual_current_daily=None,
+    days_remaining=None,
 ):
     """
     Core pacing math, mirroring the Google Sheet exactly.
@@ -140,7 +154,11 @@ def _compute_recommendation(
     """
     days_in_month = max(1, days_in_month)
     days_elapsed = max(1, min(days_in_month, days_elapsed))
-    days_remaining = max(1, days_in_month - days_elapsed)
+    # Callers pass days_remaining when the campaign's window ends before the month
+    # does (a LIMITED flight). Otherwise it's the rest of the calendar month.
+    if days_remaining is None:
+        days_remaining = max(1, days_in_month - days_elapsed)
+    days_remaining = max(1, days_remaining)
 
     daily_target = monthly_budget / days_in_month if days_in_month > 0 else 0.0
     expected_mtd = daily_target * days_elapsed
@@ -547,7 +565,7 @@ def run_pacing(account_id):
 
             # Campaign-level recommended daily: sheet's =(B - C) / D3.
             campaign_remaining_budget = max(0.0, campaign.monthly_budget - campaign_actual_total)
-            days_remaining = max(1, days_in_month - days_elapsed)
+            days_remaining = _days_remaining_for(campaign, today, month_end)
             campaign_recommended_daily = (
                 campaign_remaining_budget / days_remaining if days_remaining > 0 else 0.0
             )
@@ -668,12 +686,13 @@ def run_pacing(account_id):
 
             # Group-level totals
             group_total_spend = group_spend_map.get(campaign.budget_group_id, actual_spend)
-            days_remaining    = max(1, days_in_month - days_elapsed)
+            # Each member paces over ITS OWN window: a flighted member must spend its
+            # share by the flight end, not by month end.
+            days_remaining    = _days_remaining_for(campaign, today, month_end)
             group_remaining   = max(0.0, group.monthly_budget - group_total_spend)
-            group_rec_daily   = group_remaining / days_remaining if days_remaining > 0 else 0.0
-
-            # This campaign's share
-            new_daily = group_rec_daily * (alloc_pct / 100.0)
+            member_remaining  = group_remaining * (alloc_pct / 100.0)
+            new_daily = member_remaining / days_remaining if days_remaining > 0 else 0.0
+            group_rec_daily   = group_remaining / max(1, days_remaining)
 
             # Diagnostic columns (per-campaign, informational)
             alloc_monthly   = group.monthly_budget * (alloc_pct / 100.0)
@@ -737,6 +756,7 @@ def run_pacing(account_id):
                 days_elapsed=days_elapsed,
                 settings=settings,
                 actual_current_daily=live_cbo_daily,
+                days_remaining=_days_remaining_for(campaign, today, month_end),
             )
 
             display_current = live_cbo_daily if live_cbo_daily is not None else daily_target

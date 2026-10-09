@@ -201,7 +201,7 @@ def _scheduled_pacing_job():
             )
             from meta_client import MetaClient, MetaAPIError
             from routes.pacing import (
-                _month_bounds, _campaign_should_run_today, _compute_recommendation,
+                _month_bounds, _campaign_should_run_today, _compute_recommendation, _days_remaining_for,
             )
 
             today = datetime.utcnow().date()
@@ -317,7 +317,7 @@ def _scheduled_pacing_job():
                         campaign_actual_total = sum(adset_actuals.values())
 
                         # Campaign-level recommended daily = (B - C) / D3.
-                        days_remaining_local = max(1, days_in_month - days_elapsed)
+                        days_remaining_local = _days_remaining_for(campaign, today, month_end)
                         campaign_remaining = max(0.0, campaign.monthly_budget - campaign_actual_total)
                         campaign_recommended_daily = (
                             campaign_remaining / days_remaining_local
@@ -412,6 +412,7 @@ def _scheduled_pacing_job():
                                 days_elapsed=days_elapsed,
                                 settings=settings,
                                 actual_current_daily=live_cbo_daily,
+                                days_remaining=_days_remaining_for(campaign, today, month_end),
                             )
                         )
                         cbo_display_current = live_cbo_daily if live_cbo_daily is not None else daily_target

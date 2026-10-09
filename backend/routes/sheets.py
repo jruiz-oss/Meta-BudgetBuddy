@@ -208,26 +208,112 @@ def _extract_bracket_scope(name: str, fallback_scope: str):
     return (remainder or name), (bracket_content or fallback_scope)
 
 
+# Any of these in column A ends the Meta section. Reddit, SnapChat and the rest were
+# missing, so their rows were parsed as Meta campaigns and could be matched, budgeted
+# and written back against Meta campaigns with similar names.
+STOP_KEYWORDS = {
+    "linkedin", "tiktok", "reddit", "snapchat", "snap chat", "snap",
+    "pinterest", "youtube", "twitter", "x", "google", "programmatic",
+    "display", "spotify", "nextdoor",
+}
+
+
+def _col_letter(idx0):
+    """0-based column index → A1 letter (0→A, 25→Z, 26→AA)."""
+    out = ""
+    n = idx0
+    while True:
+        out = chr(ord('A') + (n % 26)) + out
+        n = n // 26 - 1
+        if n < 0:
+            break
+    return out
+
+
+# Default column positions, used when a header can't be found by name. These are the
+# historical fixed positions the sheet used before headers were honoured.
+_DEFAULT_COLMAP = {
+    'name': 0,          # A
+    'budget': 1,        # B
+    'mtd': 2,           # C
+    'scope': 3,         # D
+    'split': 5,         # F
+    'notes': 5,         # F (same cell served both jobs before the Split column existed)
+    'last_paced': 6,    # G
+    'flight_start': None,
+    'flight_end': None,
+}
+
+
+def _build_colmap(all_values, meta_idx):
+    """Map logical fields → column indexes by reading the header row.
+
+    Looks for the header row above the "Meta" marker (the row containing a
+    "…Monthly Budget…" cell) and matches each header by name, so inserting a
+    column no longer silently shifts every field by one.
+
+    Falls back to _DEFAULT_COLMAP for anything it can't find, which keeps tabs
+    that pre-date the Split / Flight columns working untouched.
+    """
+    colmap = dict(_DEFAULT_COLMAP)
+    header_row = None
+    for i in range(0, meta_idx):
+        row = all_values[i] or []
+        if any('monthly budget' in str(c).strip().lower() for c in row):
+            header_row = row
+            break
+    if header_row is None:
+        return colmap, None
+
+    found = {}
+    for idx, cell in enumerate(header_row):
+        h = str(cell or '').strip().lower()
+        if not h:
+            continue
+        if 'monthly budget' in h:
+            found['budget'] = idx
+        elif 'current spend' in h or h == 'mtd spend' or h.startswith('mtd'):
+            found['mtd'] = idx
+        elif 'account scope' in h or h == 'scope':
+            found['scope'] = idx
+        elif 'percentage' in h:
+            continue                      # "Percentage Splits" display block — not our Split column
+        elif h == 'split' or h == 'splits' or 'budget split' in h:
+            found['split'] = idx
+        elif h == 'notes' or h.endswith(' notes'):
+            found['notes'] = idx
+        elif 'last paced' in h:
+            found['last_paced'] = idx
+        elif 'flight start' in h or h in ('start date', 'start'):
+            found['flight_start'] = idx
+        elif 'flight end' in h or h in ('end date', 'end'):
+            found['flight_end'] = idx
+
+    colmap.update(found)
+    # Back-compat: before the Split column existed, one cell held both. If only one of
+    # the pair is present by name, point both at it.
+    if 'split' in found and 'notes' not in found:
+        colmap['notes'] = found['split']
+    elif 'notes' in found and 'split' not in found:
+        colmap['split'] = found['notes']
+    return colmap, header_row
+
+
 def _get_meta_section(worksheet):
     """
-    Return rows from the Meta section of the worksheet.
+    Return (rows, colmap) for the Meta section of the worksheet.
 
-    Scans for a row where column A is exactly "Meta" (case-insensitive header),
-    then reads data rows until a "LinkedIn" or "TikTok" header or EOF.
+    Scans for a row where column A is exactly "Meta" (case-insensitive), then reads
+    data rows until another platform header (LinkedIn, TikTok, Reddit, SnapChat, …)
+    or EOF. Columns are resolved by HEADER NAME via _build_colmap, falling back to the
+    historical fixed positions, so a new column can be inserted without shifting the
+    fields the app reads.
 
-    Data is loaded with a fixed **A:G** range per row so empty column C (MTD)
-    does not collapse — ``get_all_values()`` jagged rows used to shift column D
-    into index 2, making monthly budget look like it came from D.
-
-    Column layout: A name, B monthly budget, C MTD spend, D account scope,
-    E reserved, F notes, G last paced.
-
-    Returns a list of dicts:
-      { row_index (1-based int), name (str), account_scope (str),
-        monthly_budget (float|None), mtd_spend (float|None), notes (str), last_paced (str) }
+    Each row dict carries:
+      { row_index (1-based), name, account_scope, monthly_budget, mtd_spend,
+        split, notes, flight_start, flight_end, last_paced }
     """
     all_values = _sheets_retry(worksheet.get_all_values)
-    STOP_KEYWORDS = {"linkedin", "tiktok"}
 
     meta_idx = None
     stop_idx = len(all_values)
@@ -242,91 +328,48 @@ def _get_meta_section(worksheet):
             break
 
     if meta_idx is None:
-        return []
+        return [], dict(_DEFAULT_COLMAP)
 
-    # 1-based sheet rows: "Meta" is meta_idx+1; first data row is meta_idx+2.
+    colmap, _header = _build_colmap(all_values, meta_idx)
+
     first_sr = meta_idx + 2
-    # stop_idx is 0-based index of LinkedIn/TikTok row, or len(all_values).
-    # Last Meta data row (1-based) equals stop_idx when terminator exists, else len.
     last_sr = stop_idx if stop_idx < len(all_values) else len(all_values)
-
     if first_sr > last_sr:
-        return []
+        return [], colmap
 
-    # Slice the already-fetched all_values instead of making a second API call.
-    # first_sr and last_sr are 1-based; Python slicing is 0-based exclusive end.
-    grid = all_values[first_sr - 1 : last_sr]
+    width = max([v for v in colmap.values() if v is not None] + [6]) + 1
+    grid = all_values[first_sr - 1: last_sr]
+
+    def cell(r, key):
+        idx = colmap.get(key)
+        if idx is None or idx >= len(r):
+            return ""
+        return str(r[idx] or "").strip()
 
     rows = []
-    if grid:
-        for off, raw in enumerate(grid):
-            r = list(raw) + [""] * (7 - len(raw))
-            r = r[:7]
-            if not any(str(c).strip() for c in r):
-                continue
-            name = r[0].strip()
-            monthly_budget = _parse_float(r[1])
-            mtd_spend = _parse_float(r[2])
-            account_scope = r[3].strip()
-            notes = r[5].strip()
-            last_paced = r[6].strip()
-            sheet_row = first_sr + off
-            # Bracket-scope notation: "[Account Name] Campaign Name"
-            # Takes priority over column D. Strips the bracket from the name
-            # so campaign matching only sees "Campaign Name".
-            name, account_scope = _extract_bracket_scope(name, account_scope)
-            if name:
-                rows.append({
-                    "row_index": sheet_row,
-                    "name": name,
-                    "account_scope": account_scope,
-                    "monthly_budget": monthly_budget,
-                    "mtd_spend": mtd_spend,
-                    "notes": notes,
-                    "last_paced": last_paced,
-                })
-        return rows
-
-    # Fallback if range read failed: old jagged behavior (best-effort).
-    in_meta = False
-    for i, row in enumerate(all_values):
-        col_a = (row[0] if row else "").strip().lower()
-        if not in_meta:
-            if col_a == "meta":
-                in_meta = True
+    for off, raw in enumerate(grid):
+        r = list(raw) + [""] * (width - len(raw))
+        if not any(str(c).strip() for c in r):
             continue
-        if col_a in STOP_KEYWORDS:
-            break
-        if not any(cell.strip() for cell in row):
-            continue
-        name = row[0].strip() if len(row) > 0 else ""
-        account_scope = row[3].strip() if len(row) > 3 else ""
-        monthly_budget = _parse_float(row[1]) if len(row) > 1 else None
-        mtd_spend = _parse_float(row[2]) if len(row) > 2 else None
-        notes = row[5].strip() if len(row) > 5 else ""
-        last_paced = row[6].strip() if len(row) > 6 else ""
+        name = str(r[colmap['name']] or "").strip()
+        account_scope = cell(r, 'scope')
+        # Bracket-scope notation: "[Account Name] Campaign Name" beats column D.
         name, account_scope = _extract_bracket_scope(name, account_scope)
-        if name:
-            rows.append({
-                "row_index": i + 1,
-                "name": name,
-                "account_scope": account_scope,
-                "monthly_budget": monthly_budget,
-                "mtd_spend": mtd_spend,
-                "notes": notes,
-                "last_paced": last_paced,
-            })
-    return rows
-
-
-# Common words we ignore when scoring overlap — they appear everywhere and would
-# inflate the score without indicating a real match.
-_STOP_TOKENS = {
-    "the", "and", "ads", "ad", "campaign", "campaigns", "fb", "ig", "facebook",
-    "instagram", "meta", "social", "for", "of", "to", "in", "on", "at", "a",
-    "an", "is", "by", "or", "with", "now", "new",
-}
-
+        if not name:
+            continue
+        rows.append({
+            "row_index": first_sr + off,
+            "name": name,
+            "account_scope": account_scope,
+            "monthly_budget": _parse_float(cell(r, 'budget')),
+            "mtd_spend": _parse_float(cell(r, 'mtd')),
+            "split": cell(r, 'split'),
+            "notes": cell(r, 'notes'),
+            "flight_start": cell(r, 'flight_start'),
+            "flight_end": cell(r, 'flight_end'),
+            "last_paced": cell(r, 'last_paced'),
+        })
+    return rows, colmap
 
 def _stem(token: str) -> str:
     """Light stemmer — strip common English suffixes so 'weddings' == 'wedding'.
@@ -1034,7 +1077,7 @@ def preview_matches(account_id):
         logger.exception("Could not open Google Sheet for account %s", account_id)
         return jsonify({"error": "Could not open Google Sheet. Check the URL and that the service account has access."}), 400
 
-    sheet_rows = _get_meta_section(ws)
+    sheet_rows, colmap = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     account = Account.query.get(account_id)
     # Session 13 — shared workspace: prefix scoping considers every account
@@ -1096,7 +1139,7 @@ def preview_matches(account_id):
             # No 1-to-1 match — check if this is a CBO allocation-split row
             # (e.g. "70% to Weddings / 30% to Wedding Brochure" in the Notes col).
             # This mirrors the allocation_only_rows path in sync_budgets_for_account.
-            notes = row.get("notes") or ""
+            notes = row.get("split") or row.get("notes") or ""
             alloc = _parse_allocations_from_notes(notes)
             is_flight = False
             if alloc is None:
@@ -1168,6 +1211,54 @@ def preview_matches(account_id):
     }), 200
 
 
+def _parse_sheet_date(raw, fallback_year=None):
+    """Parse a sheet flight date: 10/5, 10/5/26, 10/5/2026, 2026-10-05."""
+    from datetime import datetime as _dt, date as _date
+    txt = str(raw or '').strip()
+    if not txt:
+        return None
+    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%m-%d-%Y', '%m-%d-%y'):
+        try:
+            return _dt.strptime(txt, fmt).date()
+        except ValueError:
+            pass
+    # Bare M/D — reuse the promo-note parser, which assumes the current year.
+    year = fallback_year or _date.today().year
+    return _parse_flight_date(txt, year)
+
+
+def _apply_sheet_flight(campaign, row):
+    """Make the sheet authoritative for a campaign's flight window.
+
+    Both dates present  → LIMITED with those dates.
+    Both blank          → ALWAYS_ON (the sheet wins, same as it does for budgets).
+    Only one present    → left alone; a half-filled pair is a typo, not an instruction.
+    """
+    has_cols = ('flight_start' in row) or ('flight_end' in row)
+    if not has_cols:
+        return False
+    start = _parse_sheet_date(row.get('flight_start'))
+    end = _parse_sheet_date(row.get('flight_end'))
+    if start and end:
+        if end < start:            # e.g. 12/20 - 1/5 — roll the end into next year
+            end = end.replace(year=end.year + 1)
+        changed = (campaign.flight_type != 'LIMITED'
+                   or campaign.flight_start_date != start
+                   or campaign.flight_end_date != end)
+        campaign.flight_type = 'LIMITED'
+        campaign.flight_start_date = start
+        campaign.flight_end_date = end
+        return changed
+    if not start and not end and str(row.get('flight_start', '')).strip() == '' \
+            and str(row.get('flight_end', '')).strip() == '':
+        changed = campaign.flight_type != 'ALWAYS_ON'
+        campaign.flight_type = 'ALWAYS_ON'
+        campaign.flight_start_date = None
+        campaign.flight_end_date = None
+        return changed
+    return False
+
+
 def sync_budgets_for_account(account_id):
     """Pull monthly budgets (and ABO adset allocations) from the configured sheet.
 
@@ -1199,7 +1290,7 @@ def sync_budgets_for_account(account_id):
     spreadsheet = _sheets_retry(gc.open_by_key, settings.effective_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet)
 
-    sheet_rows = _get_meta_section(ws)
+    sheet_rows, colmap = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     # Used by prefix scoping — so rows like "Commit - Campaign" are only processed
     # for the Commit Agency account, not for Amara or other accounts whose campaigns
@@ -1257,7 +1348,7 @@ def sync_budgets_for_account(account_id):
             # Also handles flight-date promo groups ("Clock: 6/5 - 6/20 5pm\nAmazon: 6/5-6/13").
             # Queue for a separate pass AFTER direct matches are resolved so this row can't
             # collide with or be outscored by a campaign that also has its own direct row.
-            raw_notes_check = row.get("notes") or ""
+            raw_notes_check = row.get("split") or row.get("notes") or ""
             alloc_check = _parse_allocations_from_notes(raw_notes_check)
             is_flight_promo = False
             if alloc_check is None:
@@ -1295,6 +1386,9 @@ def sync_budgets_for_account(account_id):
         # re-fetching the sheet. Only update when the notes actually change to avoid
         # marking rows dirty unnecessarily.
         raw_notes = row.get("notes") or ""
+        raw_split = row.get("split") or raw_notes
+        # Flight window is sheet-driven when the tab has Flight Start / Flight End.
+        _apply_sheet_flight(campaign, row)
         if campaign.sheet_notes != raw_notes:
             campaign.sheet_notes = raw_notes
 
@@ -1312,7 +1406,7 @@ def sync_budgets_for_account(account_id):
             # the other should receive the full budget going forward.
             cbo_split_applied = False
             if campaign.budget_mode == 'CBO':
-                split_allocs = _parse_allocations_from_notes(raw_notes)
+                split_allocs = _parse_allocations_from_notes(raw_split)
                 if split_allocs:
                     # Scope the candidate pool to campaigns sharing the pivot word from the
                     # sheet row name (e.g. "Core" in "Core (FB/IG Ads)"). This prevents
@@ -1416,7 +1510,7 @@ def sync_budgets_for_account(account_id):
 
         # ABO adset allocations — only attempt if this campaign is ABO and notes parse
         if campaign.budget_mode == 'ABO':
-            allocations = _parse_allocations_from_notes(row.get("notes", ""))
+            allocations = _parse_allocations_from_notes(row.get("split") or row.get("notes") or "")
             if allocations:
                 active_adsets = [a for a in campaign.adsets if a.is_active]
                 proposed = []  # [(adset, new_pct, parsed_name)]
@@ -1743,7 +1837,7 @@ def write_spend_for_account(account_id):
     spreadsheet = _sheets_retry(gc.open_by_key, settings.effective_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet)
 
-    sheet_rows = _get_meta_section(ws)
+    sheet_rows, colmap = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     # Session 13 — shared workspace: prefix scoping considers every account
     # in the DB, not just the originally-linked user's accounts.
@@ -1799,8 +1893,10 @@ def write_spend_for_account(account_id):
         mtd_spend = round(total_spend, 2)
         r = row["row_index"]
         # Col C = MTD spend, Col G = Last Paced date
-        cell_updates.append({"range": f"C{r}", "values": [[mtd_spend]]})
-        cell_updates.append({"range": f"G{r}", "values": [[today_str]]})
+        mtd_col = _col_letter(colmap.get('mtd', 2))
+        paced_col = _col_letter(colmap.get('last_paced', 6))
+        cell_updates.append({"range": f"{mtd_col}{r}", "values": [[mtd_spend]]})
+        cell_updates.append({"range": f"{paced_col}{r}", "values": [[today_str]]})
         written.append({
             "campaign_name": " + ".join(campaign_names),
             "sheet_name": row["name"],
@@ -1825,8 +1921,8 @@ def write_spend_for_account(account_id):
                             "sheetId": ws.id,
                             "startRowIndex": w["row_index"] - 1,  # 0-based
                             "endRowIndex": w["row_index"],
-                            "startColumnIndex": 2,  # column C (0-based)
-                            "endColumnIndex": 3,
+                            "startColumnIndex": colmap.get('mtd', 2),
+                            "endColumnIndex": colmap.get('mtd', 2) + 1,
                         },
                         "cell": {
                             "userEnteredFormat": {
