@@ -242,6 +242,7 @@ _DEFAULT_COLMAP = {
     'last_paced': 6,    # G
     'flight_start': None,
     'flight_end': None,
+    'easy_pace': None,
 }
 
 
@@ -288,6 +289,8 @@ def _build_colmap(all_values, meta_idx):
             found['flight_start'] = idx
         elif 'flight end' in h or h in ('end date', 'end'):
             found['flight_end'] = idx
+        elif 'easy-pace' in h or 'easy pace' in h or h == 'easypace':
+            found['easy_pace'] = idx
 
     colmap.update(found)
     # Back-compat: before the Split column existed, one cell held both. If only one of
@@ -367,6 +370,7 @@ def _get_meta_section(worksheet):
             "notes": cell(r, 'notes'),
             "flight_start": cell(r, 'flight_start'),
             "flight_end": cell(r, 'flight_end'),
+            "easy_pace": cell(r, 'easy_pace'),
             "last_paced": cell(r, 'last_paced'),
         })
     return rows, colmap
@@ -1227,6 +1231,25 @@ def _parse_sheet_date(raw, fallback_year=None):
     return _parse_flight_date(txt, year)
 
 
+_TRUTHY = {'true', 'yes', 'y', '1', 'x', '\u2713', '\u2714', 'checked'}
+
+
+def _apply_sheet_easy_pace(campaign, row):
+    """Mirror the sheet's Easy-Pace checkbox onto the campaign.
+
+    Sheets checkboxes come back through the API as the strings TRUE / FALSE. Anything
+    the column doesn't recognise is treated as unchecked — failing closed matters here,
+    because this flag is what lets a budget reach Meta with nobody reading it first.
+    """
+    if 'easy_pace' not in row:
+        return False
+    raw = str(row.get('easy_pace') or '').strip().lower()
+    value = raw in _TRUTHY
+    changed = bool(campaign.easy_pace) != value
+    campaign.easy_pace = value
+    return changed
+
+
 def _apply_sheet_flight(campaign, row):
     """Make the sheet authoritative for a campaign's flight window.
 
@@ -1389,6 +1412,7 @@ def sync_budgets_for_account(account_id):
         raw_split = row.get("split") or raw_notes
         # Flight window is sheet-driven when the tab has Flight Start / Flight End.
         _apply_sheet_flight(campaign, row)
+        _apply_sheet_easy_pace(campaign, row)
         if campaign.sheet_notes != raw_notes:
             campaign.sheet_notes = raw_notes
 
@@ -1670,6 +1694,11 @@ def sync_budgets_for_account(account_id):
             c.budget_group_id = group.id
             c.group_allocation_pct = pct
             c.sheet_budget_matched = True
+            # Easy-Pace is a property of the sheet ROW, so every member of a split
+            # inherits it. Flight dates are deliberately NOT applied here: members of a
+            # split have their own windows (often defined in the notes), and the row's
+            # blank flight columns would otherwise reset them all to ALWAYS_ON.
+            _apply_sheet_easy_pace(c, row)
             if c.sheet_notes != raw_notes:
                 c.sheet_notes = raw_notes
             if old_budget != new_budget:

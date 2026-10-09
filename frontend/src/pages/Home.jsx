@@ -861,6 +861,12 @@ function Home({ user, onLogout }) {
   const [search, setSearch] = useState('');
   const [runningAll, setRunningAll]   = useState(false);
   const [runProgress, setRunProgress] = useState({ done: 0, total: 0 });
+
+  // "Pace all Easy-Pace" — run pacing, then auto-apply only the campaigns ticked
+  // Easy-Pace on the sheet. easyPacePlan holds the preview shown before anything
+  // is sent to Meta.
+  const [easyRunning, setEasyRunning] = useState(false);
+  const [easyPacePlan, setEasyPacePlan] = useState(null);
   const searchRef = useRef(null);
   const navigate = useNavigate();
 
@@ -952,6 +958,116 @@ function Home({ user, onLogout }) {
       invalidateCache('home-data');
       fetchAll(true);
     } finally { setRunningAll(false); }
+  };
+
+  // Step 1 of Easy-Pace: refresh every account, then collect the applyable
+  // recommendations for campaigns ticked Easy-Pace. Nothing is sent to Meta here —
+  // the plan goes into a confirmation modal first.
+  const handleEasyPacePreview = async () => {
+    if (easyRunning || allAccounts.length === 0) return;
+    setEasyRunning(true);
+    setRunProgress({ done: 0, total: allAccounts.length });
+    try {
+      const settled = await runConcurrent(
+        allAccounts,
+        a => axios.post(`/api/pacing/${a.id}/run`, { run_type: 'MANUAL' }, { timeout: 120_000 }),
+        1,
+      );
+      const plan = [];
+      const skipped = [];
+      settled.forEach((res, i) => {
+        const acct = allAccounts[i];
+        if (res.status !== 'fulfilled') {
+          skipped.push({ account: acct.account_name, name: '(whole account)',
+            reason: res.reason?.response?.data?.error || 'Pacing run failed' });
+          return;
+        }
+        const recs = res.value?.data?.recommendations || [];
+        recs.forEach(r => {
+          // ABO campaigns are applied per ad set; CBO at the campaign level.
+          const rows = (r.budget_mode === 'ABO' && Array.isArray(r.adset_level) && r.adset_level.length)
+            ? r.adset_level.map(a => ({ ...a, campaign_id: r.campaign_id, campaign_name: r.campaign_name,
+                easy_pace: a.easy_pace ?? r.easy_pace, sheet_budget_matched: r.sheet_budget_matched }))
+            : [r];
+          rows.forEach(row => {
+            if (!row.easy_pace) return;
+            if (row.sheet_budget_matched === false) {
+              skipped.push({ account: acct.account_name, name: row.campaign_name, reason: 'No sheet match' });
+              return;
+            }
+            if ((row.action || '').toUpperCase() === 'NO_ALLOCATION') {
+              skipped.push({ account: acct.account_name, name: row.campaign_name, reason: '0% of its budget group' });
+              return;
+            }
+            const cur = Number(row.current_daily_budget || 0);
+            const next = Number(row.recommended_daily_budget || 0);
+            if (cur > 0 && Math.abs(next - cur) < 0.01) return;   // nothing to change
+            if (cur > 0 && (next / cur > 3 || next / cur < 1 / 3)) {
+              skipped.push({ account: acct.account_name, name: row.campaign_name,
+                reason: `${(next / cur).toFixed(1)}x change — needs a look` });
+              return;
+            }
+            plan.push({
+              accountId: acct.id,
+              accountName: acct.account_name,
+              name: row.adset_name ? `${row.campaign_name} › ${row.adset_name}` : row.campaign_name,
+              current: cur,
+              next,
+              adjustment: {
+                campaign_id: row.campaign_id,
+                adset_id: row.adset_id,
+                current_daily_budget: cur,
+                recommended_daily_budget: next,
+                change_percent: row.change_percent,
+                action: row.action,
+              },
+            });
+          });
+        });
+      });
+      invalidateCache('home-data');
+      fetchAll(true);
+      if (plan.length === 0) {
+        toast.info(skipped.length
+          ? `Nothing to apply. ${skipped.length} campaign(s) were held back — see the sheet.`
+          : 'No Easy-Pace campaigns need a change right now.');
+        return;
+      }
+      setEasyPacePlan({ plan, skipped });
+    } finally { setEasyRunning(false); }
+  };
+
+  // Step 2: send the confirmed plan. `auto: true` makes the server re-check the
+  // Easy-Pace flag and the 3x guard itself rather than trusting this payload.
+  const handleEasyPaceApply = async () => {
+    const { plan } = easyPacePlan || {};
+    if (!plan || !plan.length) return;
+    setEasyRunning(true);
+    const byAccount = new Map();
+    plan.forEach(p => {
+      if (!byAccount.has(p.accountId)) byAccount.set(p.accountId, []);
+      byAccount.get(p.accountId).push(p.adjustment);
+    });
+    let applied = 0; let held = 0; let failed = 0;
+    try {
+      for (const [accountId, adjustments] of byAccount.entries()) {
+        try {
+          const { data } = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments, auto: true });
+          (data?.results || []).forEach(r => {
+            if (r.error) failed++;
+            else if (r.skipped) held++;
+            else applied++;
+          });
+        } catch { failed += adjustments.length; }
+      }
+      const parts = [`${applied} applied`];
+      if (held) parts.push(`${held} held back`);
+      if (failed) parts.push(`${failed} failed`);
+      (failed ? toast.warn : toast.success)(parts.join(' · '), { title: 'Easy-Pace' });
+      setEasyPacePlan(null);
+      invalidateCache('home-data');
+      fetchAll(true);
+    } finally { setEasyRunning(false); }
   };
 
   const handleLogout = async () => {
@@ -1141,11 +1257,59 @@ function Home({ user, onLogout }) {
               {runningAll ? <Loader2 size={13} className="bb-spin" /> : <IPlay />}
               {runningAll ? `Running ${runProgress.done}/${runProgress.total}…` : `Run pacing · ${allAccounts.length}`}
             </button>
+            <button className="bb-btn" onClick={handleEasyPacePreview}
+              disabled={easyRunning || runningAll || loading || allAccounts.length === 0}
+              title="Run pacing, then apply the campaigns ticked Easy-Pace on the sheet. You see the list before anything is sent.">
+              {easyRunning ? <Loader2 size={13} className="bb-spin" /> : null}
+              {easyRunning ? 'Checking…' : 'Pace all Easy-Pace'}
+            </button>
             <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
               <ILogout /> Log out
             </button>
           </div>
         </div>
+
+        {easyPacePlan && (
+          <div className="bb-modal-backdrop" onClick={() => setEasyPacePlan(null)}>
+            <div className="bb-modal" style={{ maxWidth: 760 }} onClick={e => e.stopPropagation()}>
+              <div className="bb-modal-head">
+                <div className="bb-modal-title">Apply {easyPacePlan.plan.length} Easy-Pace change(s)?</div>
+              </div>
+              <div className="bb-modal-body">
+                <div style={{ maxHeight: '45vh', overflow: 'auto' }}>
+                  <table className="bb-table">
+                    <thead><tr><th>Campaign</th><th className="num">Current daily</th><th className="num">New daily</th></tr></thead>
+                    <tbody>
+                      {easyPacePlan.plan.map((p, i) => (
+                        <tr key={i}>
+                          <td>{p.name}<div style={{ fontSize: 11, color: 'var(--bb-mute)' }}>{p.accountName}</div></td>
+                          <td className="num">${p.current.toFixed(2)}</td>
+                          <td className="num" style={{ fontWeight: 600 }}>${p.next.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {easyPacePlan.skipped.length > 0 && (
+                  <div style={{ marginTop: 14, fontSize: 12, color: 'var(--bb-mute)' }}>
+                    <strong>{easyPacePlan.skipped.length} held back for you to check:</strong>
+                    <ul style={{ margin: '6px 0 0 16px' }}>
+                      {easyPacePlan.skipped.slice(0, 8).map((sk, i) => (
+                        <li key={i}>{sk.name} — {sk.reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+              <div className="bb-modal-foot">
+                <button className="bb-btn" onClick={() => setEasyPacePlan(null)} disabled={easyRunning}>Cancel</button>
+                <button className="bb-btn bb-btn-primary" onClick={handleEasyPaceApply} disabled={easyRunning}>
+                  {easyRunning ? 'Applying…' : `Apply ${easyPacePlan.plan.length} to Meta`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {error && <div className="bb-alert bb-alert-error">{error}</div>}
 

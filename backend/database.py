@@ -229,6 +229,10 @@ class Campaign(db.Model):
     # NULL = never synced / unknown (legacy rows). True = matched. False = no sheet row found.
     # Reset to False for all active campaigns at the start of each sync, then set True on match.
     sheet_budget_matched = db.Column(db.Boolean, nullable=True)
+    # "Easy-Pace" checkbox on the sheet: this campaign's recommendation is trusted
+    # enough to push to Meta without a human reading it first.
+    # Migration: ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS easy_pace BOOLEAN NOT NULL DEFAULT FALSE;
+    easy_pace = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     pacing_data = db.relationship('PacingData', backref='campaign', lazy=True, cascade='all, delete-orphan')
@@ -321,6 +325,7 @@ class Campaign(db.Model):
             'budget_mode': self.budget_mode,
             'sheet_notes': self.sheet_notes or '',
             'sheet_budget_matched': self.sheet_budget_matched,
+            'easy_pace': bool(self.easy_pace),
             'budget_group_id': self.budget_group_id,
             # Sheet row that owns this campaign's budget, so the UI can group members
             # of one split together instead of scattering them alphabetically.

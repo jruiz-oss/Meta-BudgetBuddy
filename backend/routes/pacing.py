@@ -107,6 +107,12 @@ def _campaign_should_run_today(campaign, today):
     return False
 
 
+# Auto-apply sanity guard: a recommendation more than this multiple of the current
+# daily (or less than its reciprocal) is skipped for manual review instead of being
+# pushed unattended. Guards against a fat-fingered sheet budget, not against pacing.
+EASY_PACE_MAX_RATIO = 3.0
+
+
 def _days_remaining_for(campaign, today, month_end):
     """Days from today through the end of this campaign's pacing window, inclusive.
 
@@ -619,6 +625,7 @@ def run_pacing(account_id):
                     "meta_adset_id": adset.meta_adset_id,
                     "adset_name": adset.adset_name,
                     "allocation_pct": adset.allocation_pct,
+                    "easy_pace": bool(campaign.easy_pace),
                     "allocated_monthly_budget": round(allocated_budget, 2),
                     "actual_spend": round(actual_spend, 2),
                     "expected_spend": round(allocated_expected_mtd, 2),
@@ -656,6 +663,7 @@ def run_pacing(account_id):
                 "monthly_budget": campaign.monthly_budget,
                 "budget_mode": "ABO",
                 "sheet_budget_matched": campaign.sheet_budget_matched,
+                "easy_pace": bool(campaign.easy_pace),
                 "actual_spend": round(campaign_actual_total, 2),
                 "expected_spend": round(campaign_expected, 2),
                 "pace_ratio": round(campaign_pace, 3),
@@ -727,6 +735,7 @@ def run_pacing(account_id):
                 "monthly_budget": round(alloc_monthly, 2),   # this campaign's share
                 "budget_mode": "CBO",
                 "sheet_budget_matched": campaign.sheet_budget_matched,
+                "easy_pace": bool(campaign.easy_pace),
                 "applyable": alloc_pct > 0,
                 "budget_group_id": group.id,
                 "budget_group_name": group.name,
@@ -768,6 +777,7 @@ def run_pacing(account_id):
                 "monthly_budget": campaign.monthly_budget,
                 "budget_mode": "CBO",
                 "sheet_budget_matched": campaign.sheet_budget_matched,
+                "easy_pace": bool(campaign.easy_pace),
                 "actual_spend": round(actual_spend, 2),
                 "expected_spend": round(expected_mtd, 2),
                 "pace_ratio": round(pace_ratio, 3),
@@ -884,6 +894,14 @@ def apply_recommendations(account_id):
     if not adjustments:
         return jsonify({"error": "No adjustments provided"}), 400
 
+    # Unattended mode ("Pace all Easy-Pace"). Nobody is reading these numbers before
+    # they reach Meta, so the rules are enforced HERE rather than trusting the client:
+    #   * the campaign must be checked Easy-Pace on the sheet
+    #   * a change beyond EASY_PACE_MAX_RATIO x the current daily is skipped and
+    #     reported, on the assumption that it's a bad sheet edit rather than a real
+    #     correction. Normal month-to-month moves are nowhere near 3x.
+    auto_mode = bool(payload.get("auto"))
+
     try:
         meta = MetaClient(
             access_token=account.effective_meta_token,
@@ -921,6 +939,41 @@ def apply_recommendations(account_id):
                 "adset_id": adj.get("adset_id"),
             })
             continue
+
+        if auto_mode:
+            _auto_campaign_id = adj.get("campaign_id")
+            _auto_campaign = (Campaign.query.filter_by(id=_auto_campaign_id, account_id=account_id).first()
+                              if _auto_campaign_id else None)
+            if _auto_campaign is None or not _auto_campaign.easy_pace:
+                results.append({
+                    "skipped": True,
+                    "reason": "Not checked Easy-Pace on the sheet",
+                    "campaign_id": _auto_campaign_id,
+                    "adset_id": adj.get("adset_id"),
+                })
+                continue
+            if _auto_campaign.sheet_budget_matched is False:
+                results.append({
+                    "skipped": True,
+                    "reason": "No matching sheet row — budget isn't sheet-sourced",
+                    "campaign_id": _auto_campaign_id,
+                })
+                continue
+            if current_daily > 0:
+                ratio = new_daily / current_daily
+                if ratio > EASY_PACE_MAX_RATIO or ratio < (1.0 / EASY_PACE_MAX_RATIO):
+                    results.append({
+                        "needs_review": True,
+                        "skipped": True,
+                        "reason": (f"Change is {ratio:.1f}x the current daily "
+                                   f"(${current_daily:,.2f} -> ${new_daily:,.2f}); "
+                                   f"over the {EASY_PACE_MAX_RATIO:g}x auto-apply limit"),
+                        "campaign_id": _auto_campaign_id,
+                        "campaign_name": _auto_campaign.campaign_name,
+                        "current_daily_budget": round(current_daily, 2),
+                        "recommended_daily_budget": round(new_daily, 2),
+                    })
+                    continue
 
         # Spend-only budget-group members (0% allocation) must never be pushed to Meta.
         # Their share of the group budget is zero by definition, so an Apply-all would
