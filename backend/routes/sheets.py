@@ -1540,6 +1540,14 @@ def sync_budgets_for_account(account_id):
                             # Update per-campaign budget (individual share) and group link
                             c.budget_group_id = group.id
                             c.group_allocation_pct = pct
+                            # A split member IS sheet-sourced — its budget came from this
+                            # row's col B. Without this the flag stayed False (it's reset
+                            # for every campaign at the start of each sync and only set on
+                            # the row's primary match), so the UI showed the member's
+                            # budget as "—" and blocked Apply even though the split had
+                            # worked. The allocation-only path already did this.
+                            c.sheet_budget_matched = True
+                            _apply_sheet_easy_pace(c, row)
                             if old_budget != new_budget:
                                 c.monthly_budget = new_budget
                                 updated.append({
