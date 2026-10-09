@@ -283,9 +283,14 @@ def _fetch_abo_data(flask_app, meta, campaign, month_start, spend_until):
             return {'error': 'ABO campaign has no active ad sets tracked.'}
 
         # Live adset budgets (non-fatal).
+        # live_adsets MUST be initialised outside the try: the except branch below is
+        # deliberately non-fatal, and the mid-month-swap code further down reads this
+        # variable. Binding it only on success raised UnboundLocalError for every
+        # campaign whose budget fetch failed.
+        live_adsets = []
         live_daily_map = {}
         try:
-            live_adsets = meta.list_adsets_for_campaign(campaign.meta_campaign_id, only_active=False)
+            live_adsets = meta.list_adsets_for_campaign(campaign.meta_campaign_id, only_active=False) or []
             for la in live_adsets:
                 raw = la.get('daily_budget')
                 if raw is not None:
