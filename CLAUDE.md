@@ -291,6 +291,10 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
   - Entry points: "Docs" item in `Sidebar.jsx`, and a "Docs" button in the `Settings.jsx` header that deep-links to the page matching the active tab.
   - No backend or DB changes. Verified with `@babel/parser` (full build can't run over the device bridge).
 
+- [x] **2026-10-09 (session 19.3 — Opus, with Blake)** — Easy-Pace view tab on Home.
+  - **`Home.jsx`** — "All campaigns" / "Easy-Pace · N" tabs above the search box. The Easy-Pace tab keeps only campaigns with `easy_pace`, drops accounts left with none so the page isn't a wall of empty client headers, and its empty state points at the sheet checkbox rather than at Add Account. Purely a client-side view over data already in the `/api/campaigns/all` payload — no new endpoint, no extra request. The count in the tab label is the number of ticked campaigns, which doubles as a check that the sheet column is being read.
+  - Verified: `@babel/parser` clean; `bb-tabs` / `bb-tab-btn` already exist in `index.css` (same classes Settings uses).
+
 - [x] **2026-10-09 (session 19.2 — Opus, with Blake)** — The app patches its own schema on boot; no more hand-run SQL in Neon.
   - **Why.** Every feature since session 7 has shipped with "run this ALTER in the Neon SQL editor first." That only works if the person deploying has database access — Blake doesn't, and the missing `easy_pace` column was 500ing every query that loads a campaign.
   - **`app.py`** — new `_SCHEMA_PATCHES` list plus `_apply_schema_patches()`, run at import time using the app's own `DATABASE_URL`. Each statement runs in **its own transaction** (a failed statement in Postgres poisons the rest of its transaction, so one shared transaction would silently skip every patch after the first failure), serialised across workers and replicas with `pg_advisory_xact_lock(20260507)`, and any failure is logged rather than raised — a schema patch must never stop the app booting.

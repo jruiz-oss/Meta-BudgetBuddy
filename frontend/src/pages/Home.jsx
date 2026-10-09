@@ -850,6 +850,9 @@ function AllocationEditorModal({ accountId, campaign, focusAdsetId, onClose, onS
 function Home({ user, onLogout }) {
   const toast = useToast();
   const [accountBlocks, setAccountBlocks] = useState([]);
+  // 'all' | 'easy' — the Easy-Pace tab narrows the page to the campaigns ticked
+  // Easy-Pace on the sheet, so you can see exactly what the button will touch.
+  const [viewFilter, setViewFilter] = useState('all');
   const [allAccounts,   setAllAccounts]   = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [error,         setError]         = useState('');
@@ -928,6 +931,21 @@ function Home({ user, onLogout }) {
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  const easyPaceCount = useMemo(
+    () => accountBlocks.reduce(
+      (n, acct) => n + (acct.campaigns || []).filter(c => c.easy_pace).length, 0),
+    [accountBlocks],
+  );
+
+  // Easy-Pace tab: keep only ticked campaigns, and drop accounts left with none so
+  // the page doesn't fill up with empty client headers.
+  const visibleBlocks = useMemo(() => {
+    if (viewFilter !== 'easy') return accountBlocks;
+    return accountBlocks
+      .map(acct => ({ ...acct, campaigns: (acct.campaigns || []).filter(c => c.easy_pace) }))
+      .filter(acct => acct.campaigns.length > 0);
+  }, [accountBlocks, viewFilter]);
 
   const handleRunAll = async () => {
     if (runningAll || allAccounts.length === 0) return;
@@ -1370,6 +1388,21 @@ function Home({ user, onLogout }) {
           </div>
         )}
 
+        {/* View tabs */}
+        {!loading && accountBlocks.length > 0 && (
+          <div className="bb-tabs" style={{ marginBottom: 12 }}>
+            <button className={`bb-tab-btn ${viewFilter === 'all' ? 'is-active' : ''}`}
+              onClick={() => setViewFilter('all')}>
+              All campaigns
+            </button>
+            <button className={`bb-tab-btn ${viewFilter === 'easy' ? 'is-active' : ''}`}
+              onClick={() => setViewFilter('easy')}
+              title="Campaigns ticked Easy-Pace on the sheet — the ones 'Pace all Easy-Pace' will apply">
+              Easy-Pace{easyPaceCount ? ` · ${easyPaceCount}` : ''}
+            </button>
+          </div>
+        )}
+
         {/* Search */}
         {!loading && accountBlocks.length > 0 && (
           <div className="bb-search">
@@ -1400,17 +1433,21 @@ function Home({ user, onLogout }) {
         {/* Account sections */}
         {loading ? (
           <><SkeletonAccountBlock /><SkeletonAccountBlock /></>
-        ) : accountBlocks.length === 0 ? (
+        ) : visibleBlocks.length === 0 ? (
           <div className="bb-acct">
             <EmptyState
               icon={null}
-              title="No campaigns tracked yet"
-              body="Connect a Meta ad account and import campaigns to start pacing recommendations."
-              action={{ label: 'Add Account', onClick: () => navigate('/accounts') }}
+              title={viewFilter === 'easy' ? 'No Easy-Pace campaigns' : 'No campaigns tracked yet'}
+              body={viewFilter === 'easy'
+                ? 'Tick the Easy-Pace box on the sheet for the campaigns you want applied without review, then refresh from the sheet.'
+                : 'Connect a Meta ad account and import campaigns to start pacing recommendations.'}
+              action={viewFilter === 'easy'
+                ? { label: 'Show all campaigns', onClick: () => setViewFilter('all') }
+                : { label: 'Add Account', onClick: () => navigate('/accounts') }}
             />
           </div>
         ) : (
-          accountBlocks.map(acct => (
+          visibleBlocks.map(acct => (
             <AccountSection
               key={acct.id}
               acct={acct}
