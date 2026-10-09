@@ -1299,6 +1299,16 @@ def _apply_sheet_flight(campaign, row):
         return False
     start = _parse_sheet_date(row.get('flight_start'))
     end = _parse_sheet_date(row.get('flight_end'))
+    # End date alone is complete information: the monthly budget paces from the 1st,
+    # so "ends on the 17th" means "spend this month's budget by the 17th". Start alone
+    # is NOT — "starts the 5th" says nothing about when the money should be gone — so
+    # that case is still ignored.
+    if end and not start:
+        start = _current_month_start()
+        if end < start:
+            # An end date before this month began can't describe this month's window;
+            # treat it as stale rather than inverting the flight.
+            return False
     if start and end:
         if end < start:            # e.g. 12/20 - 1/5 — roll the end into next year
             end = end.replace(year=end.year + 1)
