@@ -146,6 +146,68 @@ def cron_run_all_accounts():
         return jsonify({'error': 'job failed', 'detail': str(e)}), 500
     return jsonify({'status': 'ok', 'ran_at': datetime.utcnow().isoformat()}), 200
 
+# ── Idempotent schema patches ───────────────────────────────────────────────
+# This project has no Alembic. Until now every new column needed a hand-run ALTER
+# in the Neon SQL editor BEFORE deploying — which fails the moment the person
+# deploying doesn't have database access, and leaves the app 500ing on every query
+# that touches the missing column. These statements run on boot instead, using the
+# app's own DATABASE_URL, so a deploy is self-sufficient.
+#
+# RULES for anything added here:
+#   * Idempotent. Always ADD COLUMN IF NOT EXISTS.
+#   * Instant. A nullable column, or one with a default, is metadata-only on
+#     Postgres 11+. NEVER put a backfill, a rename, or anything that rewrites a
+#     table in this list — those need a human and a maintenance window.
+#   * Append-only. Don't edit or delete a line once it has been deployed.
+#
+# This is a pragmatic substitute for migrations, not a migration system: no
+# ordering guarantees beyond list order, no down-path. If the schema keeps
+# growing, move to Alembic.
+#
+# Deliberately NOT gated on SKIP_CREATE_ALL — the whole point is to patch a
+# database whose tables already exist. New TABLES still come from create_all.
+_SCHEMA_PATCHES = [
+    # session 19.1 — Easy-Pace checkbox drives unattended apply
+    "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS easy_pace BOOLEAN NOT NULL DEFAULT FALSE",
+    # session 17 — sheet match flag
+    "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sheet_budget_matched BOOLEAN",
+    # session 15 — notes column from the sheet
+    "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sheet_notes TEXT",
+    # session 7 — ABO support
+    "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS budget_mode VARCHAR(10) NOT NULL DEFAULT 'CBO'",
+    # session 8 — daily digest opt-in
+    "ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS daily_digest_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+    # sheets integration — per-account sheet id
+    "ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS google_sheet_id VARCHAR(500)",
+]
+
+
+def _apply_schema_patches():
+    """Run every statement in _SCHEMA_PATCHES, one transaction each.
+
+    One transaction per statement on purpose: in Postgres a failed statement
+    poisons its whole transaction, so a single shared one would mean the first
+    failure silently skips every patch after it.
+
+    pg_advisory_xact_lock serialises this across gunicorn workers and Railway
+    replicas and releases itself on commit. A failure here is logged and never
+    raised — a schema patch that can't apply must not take the app down.
+    """
+    ran = 0
+    for stmt in _SCHEMA_PATCHES:
+        try:
+            with app.app_context():
+                with db.engine.begin() as conn:
+                    conn.execute(text("SELECT pg_advisory_xact_lock(20260507)"))
+                    conn.execute(text(stmt))
+            ran += 1
+        except Exception:
+            logging.exception("Schema patch failed (continuing): %s", stmt)
+    logging.info("Schema patches applied cleanly: %s/%s", ran, len(_SCHEMA_PATCHES))
+
+
+_apply_schema_patches()
+
 # Create tables on startup.
 # Uses a PostgreSQL advisory lock so only one gunicorn worker runs create_all —
 # otherwise two workers boot simultaneously, both try to CREATE TABLE, and one

@@ -291,6 +291,15 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
   - Entry points: "Docs" item in `Sidebar.jsx`, and a "Docs" button in the `Settings.jsx` header that deep-links to the page matching the active tab.
   - No backend or DB changes. Verified with `@babel/parser` (full build can't run over the device bridge).
 
+- [x] **2026-10-09 (session 19.2 — Opus, with Blake)** — The app patches its own schema on boot; no more hand-run SQL in Neon.
+  - **Why.** Every feature since session 7 has shipped with "run this ALTER in the Neon SQL editor first." That only works if the person deploying has database access — Blake doesn't, and the missing `easy_pace` column was 500ing every query that loads a campaign.
+  - **`app.py`** — new `_SCHEMA_PATCHES` list plus `_apply_schema_patches()`, run at import time using the app's own `DATABASE_URL`. Each statement runs in **its own transaction** (a failed statement in Postgres poisons the rest of its transaction, so one shared transaction would silently skip every patch after the first failure), serialised across workers and replicas with `pg_advisory_xact_lock(20260507)`, and any failure is logged rather than raised — a schema patch must never stop the app booting.
+  - **Deliberately not gated on `SKIP_CREATE_ALL`.** That flag exists to skip `create_all` once tables exist; patching columns on an existing database is exactly the case that matters here.
+  - **Seeded with every historical column**, all `IF NOT EXISTS`: `campaigns.easy_pace`, `sheet_budget_matched`, `sheet_notes`, `budget_mode`, `account_settings.daily_digest_enabled`, `google_sheet_id`. A fresh or half-migrated environment now repairs itself on first boot.
+  - ⚠️ **Rules for adding to the list:** idempotent, instant (nullable or defaulted columns are metadata-only on PG 11+), append-only. Backfills, renames and table rewrites do NOT belong here. New *tables* still come from `create_all`.
+  - ⚠️ **Not a migration system.** No ordering beyond list order, no down-path. If the schema keeps growing, move to Alembic.
+  - Verified: `ast.parse` clean on `app.py`.
+
 - [x] **2026-10-09 (session 19.1 — Opus, with Blake)** — Easy-Pace: sheet checkbox drives unattended apply.
   - **Why.** Some campaigns need a human to sanity-check the recommendation before it goes to Meta; most don't. Rather than a per-campaign setting in the app, the sheet — already the source of truth for budgets, splits and flights — gets an `Easy-Pace` checkbox column, and the app grows a one-click "apply everything that's ticked".
   - **`database.py`** — `Campaign.easy_pace` (boolean, default false). ⚠️ **Migration required:** `ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS easy_pace BOOLEAN NOT NULL DEFAULT FALSE;`
