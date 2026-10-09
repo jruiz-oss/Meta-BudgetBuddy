@@ -244,6 +244,22 @@ def _fetch_cbo_data(flask_app, meta, campaign, month_start, spend_until):
         return {'spend': spend, 'live_daily': live_daily}
 
 
+def _slot_key_score(name_a, name_b):
+    """Token overlap between two ad-set names, 0..1 — reuses the sheet matcher's
+    tokeniser so 'Instagram Oct 2025 - Present' and 'Instagram Oct 2026 - Present'
+    score as the same slot."""
+    from routes.sheets import _word_overlap_score
+    return _word_overlap_score(name_a or "", name_b or "")
+
+
+# A retired ad set has to share at least this much of its name with a live one to be
+# treated as the same slot. 0.5 matches the sheet matcher's threshold.
+_SLOT_MATCH_THRESHOLD = 0.5
+# Cap on how many paused/retired ad sets we'll pull spend for, per campaign. Keeps a
+# campaign with years of archived ad sets from turning one pacing run into 50 calls.
+_MAX_RETIRED_SPEND_LOOKUPS = 10
+
+
 def _fetch_abo_data(flask_app, meta, campaign, month_start, spend_until):
     """
     Fetch live adset budgets + per-adset MTD spend for an ABO campaign.
@@ -299,10 +315,69 @@ def _fetch_abo_data(flask_app, meta, campaign, month_start, spend_until):
                 except Exception as e:
                     adset_spends[adset.id] = {'error': str(e)}
 
+        # ------------------------------------------------------------------
+        # Mid-month ad-set swaps.
+        #
+        # When an ad set is replaced, the retired one keeps whatever it spent this
+        # month, but it's no longer tracked — so its slot looked like $0 spent and
+        # pacing would hand the replacement the slot's FULL monthly budget, spending
+        # the month's money twice. Pull spend for the ad sets Meta still lists but we
+        # no longer track, and fold each into the live slot whose name it matches
+        # ("Instagram Oct 2025 - Present" → "Instagram Oct 2026 - Present").
+        #
+        # Anything that matches no live slot is returned separately so the campaign
+        # total is still right even when the money can't be attributed to a slot.
+        # ------------------------------------------------------------------
+        tracked_ids = {a.meta_adset_id for a in active_adsets}
+        retired = [la for la in (live_adsets or []) if la.get('id') not in tracked_ids]
+        retired = retired[:_MAX_RETIRED_SPEND_LOOKUPS]
+        carried = []            # provenance, surfaced in the response
+        unattributed_spend = 0.0
+        if retired:
+            with ThreadPoolExecutor(max_workers=min(len(retired), 8)) as inner:
+                r_futs = {
+                    inner.submit(meta.get_adset_spend, la['id'], month_start, spend_until): la
+                    for la in retired if la.get('id')
+                }
+                for fut, la in r_futs.items():
+                    try:
+                        spent = float(fut.result() or 0.0)
+                    except Exception:
+                        continue          # a retired ad set failing must not break the run
+                    if spent <= 0:
+                        continue
+                    best, best_score = None, 0.0
+                    for adset in active_adsets:
+                        sc = _slot_key_score(la.get('name'), adset.adset_name)
+                        if sc > best_score:
+                            best, best_score = adset, sc
+                    if best is not None and best_score >= _SLOT_MATCH_THRESHOLD:
+                        prior = adset_spends.get(best.id)
+                        if isinstance(prior, (int, float)):
+                            adset_spends[best.id] = float(prior) + spent
+                            carried.append({
+                                'from_name': la.get('name'),
+                                'from_status': la.get('status'),
+                                'into_adset_id': best.id,
+                                'into_name': best.adset_name,
+                                'amount': round(spent, 2),
+                            })
+                            continue
+                    unattributed_spend += spent
+                    carried.append({
+                        'from_name': la.get('name'),
+                        'from_status': la.get('status'),
+                        'into_adset_id': None,
+                        'into_name': None,
+                        'amount': round(spent, 2),
+                    })
+
         return {
             'live_daily_map': live_daily_map,
             'adset_spends': adset_spends,
             'active_adsets': active_adsets,
+            'carried_spend': carried,
+            'unattributed_spend': round(unattributed_spend, 2),
         }
 
 
@@ -567,7 +642,10 @@ def run_pacing(account_id):
                     continue
                 adset_actuals[adset.id] = float(spend_result)
 
-            campaign_actual_total = sum(adset_actuals.values())
+            # Spend from retired ad sets that matched no live slot still came out of
+            # this campaign's monthly budget, so it counts against the campaign total
+            # even though no single ad set owns it.
+            campaign_actual_total = sum(adset_actuals.values()) + float(data.get('unattributed_spend') or 0.0)
 
             # Campaign-level recommended daily: sheet's =(B - C) / D3.
             campaign_remaining_budget = max(0.0, campaign.monthly_budget - campaign_actual_total)
@@ -664,6 +742,9 @@ def run_pacing(account_id):
                 "budget_mode": "ABO",
                 "sheet_budget_matched": campaign.sheet_budget_matched,
                 "easy_pace": bool(campaign.easy_pace),
+                # Spend inherited from ad sets that were replaced mid-month, so the
+                # number is auditable rather than appearing from nowhere.
+                "carried_spend": data.get('carried_spend') or [],
                 "actual_spend": round(campaign_actual_total, 2),
                 "expected_spend": round(campaign_expected, 2),
                 "pace_ratio": round(campaign_pace, 3),
