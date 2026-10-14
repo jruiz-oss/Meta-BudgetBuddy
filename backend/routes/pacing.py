@@ -551,6 +551,32 @@ def run_pacing(account_id):
     )
     included = [c for c in campaigns if _campaign_should_run_today(c, today)]
 
+    # ------------------------------------------------------------------
+    # The sheet decides what gets paced.
+    #
+    # When an account has a sheet configured, a campaign with no row behind it has no
+    # budget the app is entitled to act on: its monthly_budget is a leftover from an
+    # earlier state or the daily x 30 import seed. Pacing it produced confident-looking
+    # recommendations from numbers that exist nowhere in the sheet — and burned two
+    # Meta calls per campaign to do it.
+    #
+    # sheet_budget_matched is None for campaigns that have never been through a sync,
+    # so only an explicit False is excluded.
+    # ------------------------------------------------------------------
+    skipped_no_sheet_budget = []
+    if settings and (settings.effective_sheet_id or "").strip():
+        kept = []
+        for c in included:
+            if c.sheet_budget_matched is False:
+                skipped_no_sheet_budget.append({
+                    "campaign_id": c.id,
+                    "campaign_name": c.campaign_name,
+                    "reason": "No matching sheet row — nothing defines this campaign's budget",
+                })
+            else:
+                kept.append(c)
+        included = kept
+
     # Budget-group members excluded by their flight window still need their spend
     # fetched. A group's recommendation is (group budget - COMBINED group spend), so
     # dropping an ended member overstates what's left and over-funds the live ones.
@@ -1001,6 +1027,7 @@ def run_pacing(account_id):
         "recommendations": recommendations,
         "failures": failures,
         "skipped_ended": skipped_ended,
+        "skipped_no_sheet_budget": skipped_no_sheet_budget,
         "auto_sync": auto_sync_result,
         "sheet_sync": sheet_sync_result,
         "sheet_writeback": sheet_writeback,
