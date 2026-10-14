@@ -1374,6 +1374,13 @@ def sync_budgets_for_account(account_id):
     for c in db_campaigns:
         c.sheet_budget_matched = False
 
+    # Budget groups re-affirmed by THIS sync. A group holds the combined budget from
+    # its sheet row, and pacing uses group.monthly_budget — not the campaign's own —
+    # so a group left behind by a deleted or now-broken split row keeps pacing every
+    # member against a budget that exists nowhere in the sheet. Anything missing from
+    # this set is unlinked at the end of the sync.
+    groups_seen = set()
+
     updated = []          # campaign budget changes
     allocations_updated = []  # adset allocation changes
     skipped = []
@@ -1549,6 +1556,7 @@ def sync_budgets_for_account(account_id):
                             old_budget = c.monthly_budget
                             # Update per-campaign budget (individual share) and group link
                             c.budget_group_id = group.id
+                            groups_seen.add(group.id)
                             c.group_allocation_pct = pct
                             # A split member IS sheet-sourced — its budget came from this
                             # row's col B. Without this the flag stayed False (it's reset
@@ -1747,6 +1755,7 @@ def sync_budgets_for_account(account_id):
             new_budget = round(total_budget * pct / 100, 2)
             old_budget = c.monthly_budget
             c.budget_group_id = group.id
+            groups_seen.add(group.id)
             c.group_allocation_pct = pct
             c.sheet_budget_matched = True
             # Easy-Pace is a property of the sheet ROW, so every member of a split
@@ -1792,13 +1801,37 @@ def sync_budgets_for_account(account_id):
             "total": total_count,
             "synced_at": _dt.utcnow().isoformat(),
         })
-        db.session.commit()
+        # ------------------------------------------------------------------
+    # Unlink campaigns from groups this sync didn't re-affirm.
+    #
+    # Symptom this fixes: a split row stops resolving — renamed, broken into separate
+    # line items, or one allocation name stops matching so the whole split aborts. The
+    # BudgetGroup row survives with its OLD combined budget, members keep their
+    # budget_group_id, and pacing keeps recommending against that stale total. It is
+    # immune to re-running, because nothing ever rewrites a group nobody references.
+    # ------------------------------------------------------------------
+    unlinked = []
+    for c in db_campaigns:
+        if c.budget_group_id and c.budget_group_id not in groups_seen:
+            unlinked.append({
+                "campaign_name": c.campaign_name,
+                "former_group_id": c.budget_group_id,
+                "reason": "No sheet row defines this split any more — unlinked from its budget group",
+            })
+            c.budget_group_id = None
+            c.group_allocation_pct = 100.0
+    if unlinked:
+        logger.info("Sheet sync unlinked %s campaign(s) from stale budget groups (account %s)",
+                    len(unlinked), account_id)
+
+    db.session.commit()
 
     return {
         "sheet_tab": tab_name,
         "updated_count": len(updated),
         "skipped_count": len(skipped),
         "allocations_updated_count": len(allocations_updated),
+        "unlinked_groups": unlinked,
         "matched_count": matched_count,
         "total_count": total_count,
         "updated": updated,
