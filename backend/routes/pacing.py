@@ -107,6 +107,72 @@ def _campaign_should_run_today(campaign, today):
     return False
 
 
+def _latest_mtd_spend(campaign_id, adset_id=None):
+    """Most recent CURRENT-MONTH spend recorded for a campaign (or one ad set).
+
+    Returns None when this month has no pacing row — the caller must treat that as
+    "unverifiable" rather than zero, or a campaign that has never paced this month
+    would look like it had its whole budget left.
+    """
+    month_start = datetime.utcnow().date().replace(day=1)
+    q = (PacingData.query
+         .filter(PacingData.campaign_id == campaign_id,
+                 PacingData.date >= month_start))
+    q = q.filter(PacingData.adset_id == adset_id) if adset_id else q.filter(PacingData.adset_id.is_(None))
+    row = q.order_by(PacingData.date.desc(), PacingData.id.desc()).first()
+    return float(row.actual_spend or 0.0) if row else None
+
+
+def _expected_recommendation(campaign, adset, today, month_end):
+    """Recompute what pacing WOULD recommend right now, from current state.
+
+    The number stored on a PacingData row is only correct for the budget that was in
+    place when the run happened. Sheet syncs change budgets constantly, so an apply
+    must be checked against freshly computed truth rather than against whatever the
+    client submitted. Returns None when it can't be computed (no current-month spend
+    recorded), which callers treat as "refuse and ask for a re-run".
+    """
+    days = _days_remaining_for(campaign, today, month_end)
+
+    if adset is not None:
+        # ABO: campaign-level remainder, split by this ad set's allocation.
+        total_spend = 0.0
+        for a in campaign.adsets:
+            if not a.is_active:
+                continue
+            spent = _latest_mtd_spend(campaign.id, a.id)
+            if spent is None:
+                return None
+            total_spend += spent
+        remaining = max(0.0, (campaign.monthly_budget or 0.0) - total_spend)
+        pct = adset.allocation_pct if adset.allocation_pct is not None else 100.0
+        return (remaining / days) * (pct / 100.0)
+
+    if campaign.budget_group_id:
+        group = BudgetGroup.query.get(campaign.budget_group_id)
+        if group:
+            total_spend = 0.0
+            for member in Campaign.query.filter_by(budget_group_id=group.id).all():
+                spent = _latest_mtd_spend(member.id)
+                if spent is None:
+                    return None
+                total_spend += spent
+            remaining = max(0.0, (group.monthly_budget or 0.0) - total_spend)
+            pct = campaign.group_allocation_pct if campaign.group_allocation_pct is not None else 100.0
+            return (remaining * (pct / 100.0)) / days
+
+    spent = _latest_mtd_spend(campaign.id)
+    if spent is None:
+        return None
+    return max(0.0, (campaign.monthly_budget or 0.0) - spent) / days
+
+
+# How far a submitted recommendation may drift from freshly computed truth before it
+# is refused. A cent of float noise is fine; a budget that changed since the run is not.
+_STALE_TOLERANCE_ABS = 0.01
+_STALE_TOLERANCE_REL = 0.005
+
+
 # Auto-apply sanity guard: a recommendation more than this multiple of the current
 # daily (or less than its reciprocal) is skipped for manual review instead of being
 # pushed unattended. Guards against a fat-fingered sheet budget, not against pacing.
@@ -1076,6 +1142,50 @@ def apply_recommendations(account_id):
                     "skipped": True,
                     "reason": "0% allocation in budget group — spend-only member",
                     "campaign_id": _campaign_local_id,
+                })
+                continue
+
+        # ------------------------------------------------------------------
+        # Staleness guard. PacingData stores the recommendation computed AT RUN
+        # TIME; a sheet sync can change the budget a minute later and the stored
+        # number — and anything the client submits from it — is then wrong.
+        # Recompute from current state and refuse anything that no longer agrees.
+        # ------------------------------------------------------------------
+        _guard_campaign_id = adj.get("campaign_id")
+        _guard_adset_id = adj.get("adset_id")
+        _guard_campaign = (Campaign.query.filter_by(id=_guard_campaign_id, account_id=account_id).first()
+                           if _guard_campaign_id else None)
+        if _guard_campaign is None and _guard_adset_id:
+            _ga = AdSet.query.filter_by(id=_guard_adset_id).first()
+            _guard_campaign = (Campaign.query.filter_by(id=_ga.campaign_id, account_id=account_id).first()
+                               if _ga else None)
+        if _guard_campaign is not None:
+            _guard_adset = AdSet.query.filter_by(id=_guard_adset_id).first() if _guard_adset_id else None
+            _today = datetime.utcnow().date()
+            _, _month_end = _month_bounds(_today)
+            _expected = _expected_recommendation(_guard_campaign, _guard_adset, _today, _month_end)
+            if _expected is None:
+                results.append({
+                    "skipped": True,
+                    "stale": True,
+                    "reason": "No pacing data for the current month — run pacing before applying.",
+                    "campaign_id": _guard_campaign_id,
+                    "adset_id": _guard_adset_id,
+                })
+                continue
+            _tolerance = max(_STALE_TOLERANCE_ABS, abs(_expected) * _STALE_TOLERANCE_REL)
+            if abs(new_daily - _expected) > _tolerance:
+                results.append({
+                    "skipped": True,
+                    "stale": True,
+                    "reason": (f"Recommendation is stale: submitted ${new_daily:,.2f}, "
+                               f"current budget gives ${_expected:,.2f}. "
+                               f"Re-run pacing before applying."),
+                    "campaign_id": _guard_campaign_id,
+                    "campaign_name": _guard_campaign.campaign_name,
+                    "adset_id": _guard_adset_id,
+                    "submitted": round(new_daily, 2),
+                    "expected": round(_expected, 2),
                 })
                 continue
 

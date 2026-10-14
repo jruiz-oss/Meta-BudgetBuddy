@@ -522,7 +522,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                       </td>
                       <td><span className="bb-mode bb-mode-abo">ABO</span></td>
                       <td className="num">{unmatched ? <span style={{ color: 'var(--bb-mute)' }}>—</span> : fmtMo(campaign.monthly_budget)}</td>
-                      <td className="num">{lp ? fmt$(lp.actual_spend, 2) : '—'}</td>
+                      <td className="num">{lp ? <SpendCell lp={lp} /> : '—'}</td>
                       <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
                       <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
                       <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
@@ -605,7 +605,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                     </td>
                     <td><span className="bb-mode bb-mode-cbo">CBO</span></td>
                     <td className="num">{cboUnmatched ? <span style={{ color: 'var(--bb-mute)' }}>—</span> : fmtMo(campaign.monthly_budget)}</td>
-                    <td className="num">{lp ? fmt$(lp.actual_spend, 2) : '—'}</td>
+                    <td className="num">{lp ? <SpendCell lp={lp} /> : '—'}</td>
                     <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
                     <td className="num">{lp?.current_daily_budget != null ? fmt$(lp.current_daily_budget, 2) : '—'}</td>
                     <td className="num">
@@ -662,6 +662,31 @@ function adsManagerUrl(metaAccountId) {
     + `?act=${encodeURIComponent(act)}`
     + `&date=${range}&insights_date=${range}`
     + `&filter_set=${encodeURIComponent(filterSet)}`;
+}
+
+// Spend, plus the date it was actually measured. Pacing reads spend through
+// YESTERDAY, so a row dated before yesterday means the last run is old and every
+// number derived from it — including the recommendation — is older than it looks.
+function SpendCell({ lp }) {
+  const asOf = lp.date ? String(lp.date) : null;
+  let stale = false;
+  if (asOf) {
+    const d = new Date(asOf + 'T00:00:00');
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+    stale = d < yesterday;
+  }
+  return (
+    <>
+      {fmt$(lp.actual_spend, 2)}
+      {asOf && (
+        <div style={{ fontSize: 10, color: stale ? 'var(--bb-warn-hot)' : 'var(--bb-mute)' }}>
+          as of {asOf.slice(5).replace('-', '/')}
+        </div>
+      )}
+    </>
+  );
 }
 
 function ActionCell({ rowKey, res, isApplying, isSkipped, needsAction, unmatched, spendOnly, onApply, onSkip, onUnskip }) {
@@ -1066,13 +1091,14 @@ function Home({ user, onLogout }) {
       if (!byAccount.has(p.accountId)) byAccount.set(p.accountId, []);
       byAccount.get(p.accountId).push(p.adjustment);
     });
-    let applied = 0; let held = 0; let failed = 0;
+    let applied = 0; let held = 0; let failed = 0; let staleReason = '';
     try {
       for (const [accountId, adjustments] of byAccount.entries()) {
         try {
           const { data } = await axios.post(`/api/pacing/${accountId}/apply`, { adjustments, auto: true });
           (data?.results || []).forEach(r => {
             if (r.error) failed++;
+            else if (r.stale) { held++; staleReason = staleReason || r.reason; }
             else if (r.skipped) held++;
             else applied++;
           });
@@ -1081,7 +1107,8 @@ function Home({ user, onLogout }) {
       const parts = [`${applied} applied`];
       if (held) parts.push(`${held} held back`);
       if (failed) parts.push(`${failed} failed`);
-      (failed ? toast.warn : toast.success)(parts.join(' · '), { title: 'Easy-Pace' });
+      (failed || staleReason ? toast.warn : toast.success)(
+        parts.join(' · ') + (staleReason ? ' — ' + staleReason : ''), { title: 'Easy-Pace' });
       setEasyPacePlan(null);
       invalidateCache('home-data');
       fetchAll(true);
@@ -1110,8 +1137,16 @@ function Home({ user, onLogout }) {
         toast.warn(failures[0].error || 'Partial apply', { title: 'Apply warning' });
         invalidateCache('home-data'); fetchAll(true);
       } else if (skippedR.length && applied === 0) {
-        setResults(p => ({ ...p, [rowKey]: { ok: true, noop: true } }));
-        toast.info('No change sent — already on pace or unchanged.', { title: 'Apply' });
+        const staleHit = skippedR.find(r => r.stale);
+        if (staleHit) {
+          // The server recomputed from the current budget and refused. Saying
+          // "already on pace" here would be actively misleading.
+          setResults(p => ({ ...p, [rowKey]: { ok: false, msg: 'Stale — re-run pacing' } }));
+          toast.warn(staleHit.reason || 'Recommendation is stale — re-run pacing.', { title: 'Not applied' });
+        } else {
+          setResults(p => ({ ...p, [rowKey]: { ok: true, noop: true } }));
+          toast.info('No change sent — already on pace or unchanged.', { title: 'Apply' });
+        }
         invalidateCache('home-data'); fetchAll(true);
       } else {
         setResults(p => ({ ...p, [rowKey]: { ok: true } }));
