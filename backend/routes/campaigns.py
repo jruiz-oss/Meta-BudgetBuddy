@@ -8,7 +8,10 @@ import logging
 from flask import Blueprint, request, jsonify, session
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload, with_loader_criteria
-from database import db, Account, AdSet, Campaign, PacingData, PacingRun, User
+import json
+
+from database import (db, Account, AccountSettings, AdSet, Campaign,
+                      PacingData, PacingRun, User)
 from meta_client import MetaAPIError, MetaClient
 from routes.auth import login_required
 from datetime import datetime, timedelta, date as date_type
@@ -655,6 +658,43 @@ def get_account_pacing_history(account_id):
         return _internal_error(e, 'get_account_pacing_history failed')
 
 
+# How long an account's sheet data may go unrefreshed before simply opening its
+# dashboard re-reads the sheet. Sheets reads only — no Meta calls, so this cannot
+# contribute to Meta rate limiting.
+_SHEET_AUTOSYNC_MAX_AGE_SECONDS = 600
+
+
+def _auto_sync_sheet_if_stale(account_id):
+    """Re-read the sheet when the last sync is older than the threshold.
+
+    The sheet is the source of truth for budgets, splits and flights, but it was only
+    re-read on an explicit Refresh or a pacing run — so editing the sheet and opening
+    the app showed the previous values with nothing to indicate they were old.
+    Best-effort by design: a Sheets failure must never stop a dashboard from loading.
+    """
+    try:
+        settings = AccountSettings.query.filter_by(account_id=account_id).first()
+        if not settings or not (settings.effective_sheet_id or '').strip():
+            return False
+        raw = settings.sheet_sync_stats
+        if raw:
+            try:
+                synced_at = (json.loads(raw) or {}).get('synced_at')
+                if synced_at:
+                    age = (datetime.utcnow() - datetime.fromisoformat(synced_at)).total_seconds()
+                    if age < _SHEET_AUTOSYNC_MAX_AGE_SECONDS:
+                        return False
+            except Exception:
+                pass            # unparseable stats — fall through and sync
+        from routes.sheets import sync_budgets_for_account
+        sync_budgets_for_account(account_id)
+        logger.info("Auto-synced sheet for account %s on dashboard load", account_id)
+        return True
+    except Exception as e:
+        logger.warning("Auto sheet sync skipped for account %s: %s", account_id, e)
+        return False
+
+
 @campaigns_bp.route('/<account_id>', methods=['GET'])
 @login_required
 def get_campaigns(account_id):
@@ -667,6 +707,10 @@ def get_campaigns(account_id):
 
         if not account:
             return jsonify({'error': 'Account not found'}), 404
+
+        # Opening a dashboard pulls the sheet when it's gone stale, so the page can't
+        # show budgets the sheet no longer says.
+        _auto_sync_sheet_if_stale(account_id)
 
         # Eager-load pacing rows + adsets + pacing_runs so to_dict() and the
         # ended-campaign filter don't trigger extra queries.

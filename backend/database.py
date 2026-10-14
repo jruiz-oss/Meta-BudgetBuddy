@@ -1,5 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+
+import pacing_math
 from sqlalchemy.orm import validates
 from sqlalchemy.types import String, TypeDecorator
 
@@ -120,7 +122,12 @@ class Account(db.Model):
         # delete), so without this filter the dashboard reports stale campaigns the user
         # already removed.
         active_campaigns = [c for c in self.campaigns if c.is_active]
-        total_monthly_budget = sum((c.monthly_budget or 0) for c in active_campaigns)
+        # Unmatched campaigns are excluded: their stored budget is a leftover, and
+        # summing it reported money the sheet never allocated.
+        total_monthly_budget = sum(
+            (c.monthly_budget or 0) for c in active_campaigns
+            if c.sheet_budget_matched is not False
+        )
 
         on_track = over_pacing = under_pacing = 0
         for c in active_campaigns:
@@ -255,6 +262,56 @@ class Campaign(db.Model):
                 return 'active'
         return 'pending'
 
+    def _live_recommendation(self, latest):
+        """Recompute the recommendation from CURRENT state, replacing the stored one.
+
+        PacingData freezes the recommendation at run time. A sheet sync changes budgets
+        minutes later and the frozen number is then wrong — and nothing rewrites it
+        until someone re-runs pacing. Recomputing here means the figure on screen always
+        reflects the budget, flight and allocation the app holds right now; only the
+        SPEND is historical, which is why `spend_as_of` is reported alongside it.
+        """
+        if not latest:
+            return latest
+        today = datetime.utcnow().date()
+        _, month_end = pacing_math.month_bounds(today)
+        days = pacing_math.days_remaining(self.flight_type, self.flight_end_date, today, month_end)
+        spend = latest.get('actual_spend') or 0.0
+        pct = self.group_allocation_pct if self.group_allocation_pct is not None else 100.0
+
+        if self.budget_group_id and self.budget_group:
+            # Group member: the group's combined budget minus every member's spend,
+            # then this campaign's share of what is left.
+            combined = 0.0
+            for member in self.budget_group.campaigns:
+                member_spend = pacing_math.current_month_spend(member.pacing_data)
+                combined += member_spend or 0.0
+            remaining = max(0.0, (self.budget_group.monthly_budget or 0.0) - combined)
+            rec = (remaining * (pct / 100.0)) / max(1, days)
+        else:
+            rec = pacing_math.recommended_daily(self.monthly_budget, spend, days)
+
+        current = latest.get('current_daily_budget') or 0.0
+        out = dict(latest)
+        if self.sheet_budget_matched is False:
+            # Nothing in the sheet defines this campaign's budget, so there is no
+            # recommendation to make — showing one would be inventing a number.
+            out['recommended_daily_budget'] = None
+            out['change_percent'] = None
+            out['status'] = 'NO_SHEET_ROW'
+        elif self.budget_group_id and pct == 0:
+            out['recommended_daily_budget'] = 0.0
+            out['change_percent'] = 0.0
+            out['status'] = 'NO_ALLOCATION'
+        else:
+            out['recommended_daily_budget'] = round(rec, 2)
+            out['change_percent'] = round(pacing_math.change_percent(rec, current), 1)
+            out['status'] = pacing_math.classify(rec, current)
+        out['spend_as_of'] = latest.get('date')
+        out['days_remaining'] = days
+        out['recomputed'] = True
+        return out
+
     def to_dict(self):
         # For ABO campaigns, latest_pacing should be a roll-up across the campaign's adsets,
         # not just the most recent PacingData row (which may be one ad set's row).
@@ -311,12 +368,18 @@ class Campaign(db.Model):
             )
             latest = campaign_rows[-1].to_dict() if campaign_rows else None
 
+        # Always recompute before serializing — see _live_recommendation.
+        latest = self._live_recommendation(latest)
+
         return {
             'id': self.id,
             'account_id': self.account_id,
             'campaign_name': self.campaign_name,
             'meta_campaign_id': self.meta_campaign_id,
-            'monthly_budget': self.monthly_budget,
+            # A campaign with no sheet row has no budget the app can stand behind:
+            # whatever is stored is a leftover from an earlier row or the daily x 30
+            # import seed. Report it as unknown rather than as money.
+            'monthly_budget': (None if self.sheet_budget_matched is False else self.monthly_budget),
             'flight_type': self.flight_type,
             'flight_start_date': self.flight_start_date.isoformat() if self.flight_start_date else None,
             'flight_end_date': self.flight_end_date.isoformat() if self.flight_end_date else None,

@@ -894,6 +894,7 @@ function Home({ user, onLogout }) {
   // Easy-Pace on the sheet. easyPacePlan holds the preview shown before anything
   // is sent to Meta.
   const [easyRunning, setEasyRunning] = useState(false);
+  const [syncingSheets, setSyncingSheets] = useState(false);
   const [easyPacePlan, setEasyPacePlan] = useState(null);
   const searchRef = useRef(null);
   const navigate = useNavigate();
@@ -1115,6 +1116,30 @@ function Home({ user, onLogout }) {
     } finally { setEasyRunning(false); }
   };
 
+  // Re-read every account's rows from the sheet. Sheets only — no Meta calls, so it's
+  // quick and can't contribute to rate limiting. Opening a single account dashboard
+  // already auto-syncs when stale; this is the "I just edited the sheet" button.
+  const handleRefreshAllSheets = async () => {
+    if (syncingSheets || allAccounts.length === 0) return;
+    setSyncingSheets(true);
+    setRunProgress({ done: 0, total: allAccounts.length });
+    try {
+      const settled = await runConcurrent(
+        allAccounts.filter(a => a.has_sheet !== false),
+        a => axios.post(`/api/sheets/${a.id}/sync-budgets`),
+        2,
+      );
+      const ok = settled.filter(r => r.status === 'fulfilled').length;
+      const failed = settled.length - ok;
+      (failed ? toast.warn : toast.success)(
+        `${ok} account(s) refreshed from the sheet` + (failed ? ` · ${failed} failed` : ''),
+        { title: 'Sheet sync' },
+      );
+      invalidateCache('home-data');
+      fetchAll(true);
+    } finally { setSyncingSheets(false); }
+  };
+
   const handleLogout = async () => {
     try { await axios.post('/api/auth/logout'); } catch {}
     onLogout(); navigate('/login');
@@ -1309,6 +1334,11 @@ function Home({ user, onLogout }) {
               disabled={runningAll || loading || allAccounts.length === 0}>
               {runningAll ? <Loader2 size={13} className="bb-spin" /> : <IPlay />}
               {runningAll ? `Running ${runProgress.done}/${runProgress.total}…` : `Run pacing · ${allAccounts.length}`}
+            </button>
+            <button className="bb-btn" onClick={handleRefreshAllSheets}
+              disabled={syncingSheets || runningAll || loading || allAccounts.length === 0}
+              title="Re-read every account's budgets, splits and flights from the Google Sheet. No Meta calls.">
+              {syncingSheets ? 'Syncing…' : 'Refresh from sheet'}
             </button>
             <button className="bb-btn" onClick={handleEasyPacePreview}
               disabled={easyRunning || runningAll || loading || allAccounts.length === 0}
