@@ -958,6 +958,32 @@ function Home({ user, onLogout }) {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // A campaign still needs attention when it has a live recommendation that differs
+  // from what's set, and you haven't already applied or skipped it this session.
+  // Statuses that aren't actionable by definition are excluded: ON_PACE (nothing to
+  // change), NO_SHEET_ROW (no budget behind it), NO_ALLOCATION (0% of its group).
+  const needsAttention = useCallback((c) => {
+    const lp = c.latest_pacing;
+    if (!lp) return false;
+    const st = String(lp.status || '').toUpperCase();
+    if (['ON_PACE', 'NO_SHEET_ROW', 'NO_ALLOCATION'].includes(st)) return false;
+    if (lp.recommended_daily_budget == null) return false;
+    if ((c.budget_mode || 'CBO') === 'ABO') {
+      // ABO is applied per ad set, so the campaign is done only when every ad set is.
+      const sets = c.adsets || [];
+      if (!sets.length) return false;
+      return sets.some(a => !results[`a-${a.id}`]?.ok && !skipped[`a-${a.id}`]);
+    }
+    const rk = `c-${c.id}`;
+    return !results[rk]?.ok && !skipped[rk];
+  }, [results, skipped]);
+
+  const todoCount = useMemo(
+    () => accountBlocks.reduce(
+      (n, acct) => n + (acct.campaigns || []).filter(needsAttention).length, 0),
+    [accountBlocks, needsAttention],
+  );
+
   const easyPaceCount = useMemo(
     () => accountBlocks.reduce(
       (n, acct) => n + (acct.campaigns || []).filter(c => c.easy_pace).length, 0),
@@ -967,11 +993,12 @@ function Home({ user, onLogout }) {
   // Easy-Pace tab: keep only ticked campaigns, and drop accounts left with none so
   // the page doesn't fill up with empty client headers.
   const visibleBlocks = useMemo(() => {
-    if (viewFilter !== 'easy') return accountBlocks;
+    if (viewFilter === 'all') return accountBlocks;
+    const keep = viewFilter === 'easy' ? (c => c.easy_pace) : needsAttention;
     return accountBlocks
-      .map(acct => ({ ...acct, campaigns: (acct.campaigns || []).filter(c => c.easy_pace) }))
+      .map(acct => ({ ...acct, campaigns: (acct.campaigns || []).filter(keep) }))
       .filter(acct => acct.campaigns.length > 0);
-  }, [accountBlocks, viewFilter]);
+  }, [accountBlocks, viewFilter, needsAttention]);
 
   const handleRunAll = async () => {
     if (runningAll || allAccounts.length === 0) return;
@@ -1460,6 +1487,11 @@ function Home({ user, onLogout }) {
               onClick={() => setViewFilter('all')}>
               All campaigns
             </button>
+            <button className={`bb-tab-btn ${viewFilter === 'todo' ? 'is-active' : ''}`}
+              onClick={() => setViewFilter('todo')}
+              title="Campaigns with a recommendation you haven't applied or skipped yet">
+              Still to pace{todoCount ? ` · ${todoCount}` : ''}
+            </button>
             <button className={`bb-tab-btn ${viewFilter === 'easy' ? 'is-active' : ''}`}
               onClick={() => setViewFilter('easy')}
               title="Campaigns ticked Easy-Pace on the sheet — the ones 'Pace all Easy-Pace' will apply">
@@ -1502,13 +1534,17 @@ function Home({ user, onLogout }) {
           <div className="bb-acct">
             <EmptyState
               icon={null}
-              title={viewFilter === 'easy' ? 'No Easy-Pace campaigns' : 'No campaigns tracked yet'}
+              title={viewFilter === 'easy' ? 'No Easy-Pace campaigns'
+                : viewFilter === 'todo' ? 'Nothing left to pace'
+                : 'No campaigns tracked yet'}
               body={viewFilter === 'easy'
                 ? 'Tick the Easy-Pace box on the sheet for the campaigns you want applied without review, then refresh from the sheet.'
-                : 'Connect a Meta ad account and import campaigns to start pacing recommendations.'}
-              action={viewFilter === 'easy'
-                ? { label: 'Show all campaigns', onClick: () => setViewFilter('all') }
-                : { label: 'Add Account', onClick: () => navigate('/accounts') }}
+                : viewFilter === 'todo'
+                  ? 'Every campaign with a recommendation has been applied or skipped. Run pacing again for fresh numbers.'
+                  : 'Connect a Meta ad account and import campaigns to start pacing recommendations.'}
+              action={viewFilter === 'all'
+                ? { label: 'Add Account', onClick: () => navigate('/accounts') }
+                : { label: 'Show all campaigns', onClick: () => setViewFilter('all') }}
             />
           </div>
         ) : (
