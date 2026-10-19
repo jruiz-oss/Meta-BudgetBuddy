@@ -963,25 +963,40 @@ function Home({ user, onLogout }) {
   // Statuses that aren't actionable by definition are excluded: ON_PACE (nothing to
   // change), NO_SHEET_ROW (no budget behind it), NO_ALLOCATION (0% of its group).
   const needsAttention = useCallback((c) => {
-    const lp = c.latest_pacing;
-    if (!lp) return false;
-    const st = String(lp.status || '').toUpperCase();
-    if (['ON_PACE', 'NO_SHEET_ROW', 'NO_ALLOCATION'].includes(st)) return false;
-    if (lp.recommended_daily_budget == null) return false;
+    // Anything you haven't dealt with yet — not just applyable recommendations.
+    // A campaign with no sheet row, or one that never paced this month, is unresolved
+    // work too: it just needs a fix in the sheet rather than a click here.
+    if ((c.flight_status || '') === 'ended') return false;   // over; nothing to decide
+
+    const handled = (key) => results[key]?.ok || skipped[key];
     if ((c.budget_mode || 'CBO') === 'ABO') {
-      // ABO is applied per ad set, so the campaign is done only when every ad set is.
       const sets = c.adsets || [];
-      if (!sets.length) return false;
-      return sets.some(a => !results[`a-${a.id}`]?.ok && !skipped[`a-${a.id}`]);
+      // ABO applies per ad set, so it's done only when every ad set is.
+      if (sets.length && sets.every(a => handled(`a-${a.id}`))) return false;
+    } else if (handled(`c-${c.id}`)) {
+      return false;
     }
-    const rk = `c-${c.id}`;
-    return !results[rk]?.ok && !skipped[rk];
+
+    if (c.sheet_budget_matched === false) return true;       // needs a sheet row
+    const lp = c.latest_pacing;
+    if (!lp) return true;                                    // never paced this month
+    const st = String(lp.status || '').toUpperCase();
+    if (st === 'NO_SHEET_ROW') return true;
+    if (st === 'ON_PACE' || st === 'NO_ALLOCATION') return false;  // nothing to change
+    return lp.recommended_daily_budget != null;
   }, [results, skipped]);
 
+  // Hidden campaigns count too: an unmatched campaign is no longer paced, so it has
+  // no spend row and gets filtered off the main list — exactly the kind of thing this
+  // view exists to stop you missing.
+  const todoCampaignsFor = useCallback(
+    (acct) => (acct.campaigns || []).concat(acct.hidden_campaigns || []).filter(needsAttention),
+    [needsAttention],
+  );
+
   const todoCount = useMemo(
-    () => accountBlocks.reduce(
-      (n, acct) => n + (acct.campaigns || []).filter(needsAttention).length, 0),
-    [accountBlocks, needsAttention],
+    () => accountBlocks.reduce((n, acct) => n + todoCampaignsFor(acct).length, 0),
+    [accountBlocks, todoCampaignsFor],
   );
 
   const easyPaceCount = useMemo(
@@ -994,11 +1009,15 @@ function Home({ user, onLogout }) {
   // the page doesn't fill up with empty client headers.
   const visibleBlocks = useMemo(() => {
     if (viewFilter === 'all') return accountBlocks;
-    const keep = viewFilter === 'easy' ? (c => c.easy_pace) : needsAttention;
+    if (viewFilter === 'todo') {
+      return accountBlocks
+        .map(acct => ({ ...acct, campaigns: todoCampaignsFor(acct), hidden_campaigns: [] }))
+        .filter(acct => acct.campaigns.length > 0);
+    }
     return accountBlocks
-      .map(acct => ({ ...acct, campaigns: (acct.campaigns || []).filter(keep) }))
+      .map(acct => ({ ...acct, campaigns: (acct.campaigns || []).filter(c => c.easy_pace) }))
       .filter(acct => acct.campaigns.length > 0);
-  }, [accountBlocks, viewFilter, needsAttention]);
+  }, [accountBlocks, viewFilter, todoCampaignsFor]);
 
   const handleRunAll = async () => {
     if (runningAll || allAccounts.length === 0) return;
@@ -1489,7 +1508,7 @@ function Home({ user, onLogout }) {
             </button>
             <button className={`bb-tab-btn ${viewFilter === 'todo' ? 'is-active' : ''}`}
               onClick={() => setViewFilter('todo')}
-              title="Campaigns with a recommendation you haven't applied or skipped yet">
+              title="Everything still unresolved: recommendations you haven't applied or skipped, campaigns with no sheet row, and campaigns that haven't paced this month">
               Still to pace{todoCount ? ` · ${todoCount}` : ''}
             </button>
             <button className={`bb-tab-btn ${viewFilter === 'easy' ? 'is-active' : ''}`}
@@ -1540,7 +1559,7 @@ function Home({ user, onLogout }) {
               body={viewFilter === 'easy'
                 ? 'Tick the Easy-Pace box on the sheet for the campaigns you want applied without review, then refresh from the sheet.'
                 : viewFilter === 'todo'
-                  ? 'Every campaign with a recommendation has been applied or skipped. Run pacing again for fresh numbers.'
+                  ? 'Nothing unresolved: every campaign is either applied, skipped, on pace, or deliberately excluded.'
                   : 'Connect a Meta ad account and import campaigns to start pacing recommendations.'}
               action={viewFilter === 'all'
                 ? { label: 'Add Account', onClick: () => navigate('/accounts') }
