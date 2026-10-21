@@ -238,6 +238,14 @@ function urgency(c) {
   return null;
 }
 
+// Pool-level pace: combined spend against combined expected. For a pooled row this
+// is the number that matters — individual members can run hot or cold against each
+// other as long as the pot itself lands on budget.
+function groupPace(gt) {
+  if (!gt || !gt.expected) return null;
+  return gt.spend / gt.expected;
+}
+
 function statusTone(status, paceRatio) {
   const s = (status || '').toUpperCase();
   if (s === 'NO_SHEET_ROW' || s === 'NO_ALLOCATION') return 'var(--bb-mute)';
@@ -432,8 +440,18 @@ function AccountSection({ acct, applying, skipped, results, search, viewFilter,
     const totals = new Map();
     orderedCampaigns.forEach(c => {
       if (!c.budget_group_id) return;
-      const t = totals.get(c.budget_group_id) || { spend: 0, members: 0, budget: c.budget_group_total ?? null, name: c.budget_group_name };
-      t.spend += (c.latest_pacing?.actual_spend || 0);
+      const t = totals.get(c.budget_group_id) || {
+        spend: 0, expected: 0, current: 0, rec: 0, members: 0,
+        budget: c.budget_group_total ?? null, name: c.budget_group_name,
+      };
+      const lp = c.latest_pacing || {};
+      // The pool is the thing that has to land on budget, so every figure on the
+      // header row is the sum of its members: spend, expected-by-today, what Meta is
+      // set to today, and what pacing says it should be.
+      t.spend += (lp.actual_spend || 0);
+      t.expected += (lp.expected_spend || 0);
+      t.current += (lp.current_daily_budget || 0);
+      t.rec += (lp.recommended_daily_budget || 0);
       t.members += 1;
       totals.set(c.budget_group_id, t);
     });
@@ -560,11 +578,21 @@ function AccountSection({ acct, applying, skipped, results, search, viewFilter,
                     <td><span className="bb-mode" style={{ background: 'transparent', color: 'var(--bb-mute)' }}>group</span></td>
                     <td className="num" style={{ fontWeight: 600 }}>{gt?.budget != null ? fmtMo(gt.budget) : '—'}</td>
                     <td className="num" style={{ fontWeight: 600 }}>{fmt$(gt?.spend || 0, 2)}</td>
-                    <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
-                    <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
-                    <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
-                    <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
-                    <td><span style={{ fontSize: 12, color: 'var(--bb-mute)' }}>combined</span></td>
+                    <td className="num" style={{ color: 'var(--bb-mute)' }}>{gt?.expected ? fmt$(gt.expected, 2) : '—'}</td>
+                    <td className="num">
+                      {groupPace(gt) != null ? (
+                        <span style={{ color: statusTone(null, groupPace(gt)), fontWeight: 600 }}>
+                          {groupPace(gt).toFixed(2)}x
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td className="num" style={{ color: 'var(--bb-mute)' }}>{gt?.current ? fmt$(gt.current, 2) : '—'}</td>
+                    <td className="num" style={{ fontWeight: 600 }}>{gt?.rec ? fmt$(gt.rec, 2) : '—'}</td>
+                    <td>
+                      {groupPace(gt) != null
+                        ? <StatusPill status={null} paceRatio={groupPace(gt)} />
+                        : <span style={{ fontSize: 12, color: 'var(--bb-mute)' }}>combined</span>}
+                    </td>
                     <td />
                     <td />
                   </tr>
