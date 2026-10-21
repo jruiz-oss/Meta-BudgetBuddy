@@ -293,6 +293,18 @@ class Campaign(db.Model):
 
         current = latest.get('current_daily_budget') or 0.0
         out = dict(latest)
+
+        # Expected spend is measured over the campaign's OWN window, not the whole
+        # month. A campaign flighted from the 20th cannot spend between the 1st and the
+        # 19th, so judging it against 20 days it never had made every fresh launch read
+        # as ~95% behind (Sports Bar showed 0.05x on its second day).
+        effective_budget = (self.budget_group.monthly_budget or 0.0) * (pct / 100.0) \
+            if (self.budget_group_id and self.budget_group) else (self.monthly_budget or 0.0)
+        expected = pacing_math.expected_to_date(
+            effective_budget, self.flight_type, self.flight_start_date,
+            self.flight_end_date, today, (today.replace(day=1), month_end))
+        out['expected_spend'] = round(expected, 2)
+        out['pace_ratio'] = round(pacing_math.pace_ratio(spend, expected), 3)
         if self.sheet_budget_matched is False:
             # Nothing in the sheet defines this campaign's budget, so there is no
             # recommendation to make — showing one would be inventing a number.

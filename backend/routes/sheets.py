@@ -650,6 +650,70 @@ def _match_adset(needle_name: str, adsets: list):
     return None
 
 
+# The three allocation shapes, hoisted to module level so the window extractor can
+# work out which name a line belongs to. _parse_allocations_from_notes keeps its own
+# local copies for readability; these must stay in step with them.
+_PAT_A_RE = re.compile(r"^(.+?)\s*[-\u2013\u2014]\s*(\d+(?:\.\d+)?)\s*%\s*$")
+_PAT_B_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*%\s+to\s+(.+?)\s*(?:\d+\s*%)?\s*$", re.IGNORECASE)
+_PAT_C_RE = re.compile(r"^(.+?):\s*(\d+(?:\.\d+)?)\s*%\s*$")
+
+
+# Optional per-member flight window on a split line:
+#     Sports Bar - 20% (10/20 - 10/31)
+# Dates contain slashes and the allocation parser splits chunks on "/", so these MUST
+# be stripped before that parser sees the text or every window shreds the line.
+_SPLIT_WINDOW_RE = re.compile(
+    r'\(\s*(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*[-\u2013\u2014]\s*'
+    r'(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*\)\s*$'
+)
+
+
+def _extract_split_windows(notes: str):
+    """Split a Split cell into (text_without_windows, {name: (start, end)}).
+
+    Lets one pooled sheet row carry a flight per member — the group keeps a single
+    combined budget while each campaign paces over its own window.
+    """
+    if not notes:
+        return notes, {}
+    windows = {}
+    cleaned_lines = []
+    for line in str(notes).split('\n'):
+        m = _SPLIT_WINDOW_RE.search(line.strip())
+        if not m:
+            cleaned_lines.append(line)
+            continue
+        cleaned = line.strip()[:m.start()].strip()
+        cleaned_lines.append(cleaned)
+        # Name the window by whichever allocation pattern this line uses.
+        name = None
+        for pat, grp in ((_PAT_A_RE, 1), (_PAT_B_RE, 2), (_PAT_C_RE, 1)):
+            mm = pat.match(cleaned)
+            if mm:
+                name = mm.group(grp).strip()
+                break
+        if name:
+            windows[name.lower()] = (_parse_sheet_date(m.group(1)), _parse_sheet_date(m.group(2)))
+    return '\n'.join(cleaned_lines), windows
+
+
+def _apply_split_window(campaign, alloc_name, windows):
+    """Apply a split line's own flight window to the campaign it resolved to."""
+    if not windows:
+        return False
+    start, end = windows.get(str(alloc_name or '').strip().lower(), (None, None))
+    if not end:
+        return False
+    if not start:
+        start = _current_month_start()      # end-only means "spend it by then"
+    if end < start:
+        end = end.replace(year=end.year + 1)
+    campaign.flight_type = 'LIMITED'
+    campaign.flight_start_date = start
+    campaign.flight_end_date = end
+    return True
+
+
 def _parse_allocations_from_notes(notes: str):
     """Try to read allocation %s out of a Notes-column cell.
 
@@ -1172,7 +1236,8 @@ def _build_preview(account_id, ws, tab_name):
             # No 1-to-1 match — check if this is a CBO allocation-split row
             # (e.g. "70% to Weddings / 30% to Wedding Brochure" in the Notes col).
             # This mirrors the allocation_only_rows path in sync_budgets_for_account.
-            notes = row.get("split") or row.get("notes") or ""
+            notes, _preview_windows = _extract_split_windows(
+                row.get("split") or row.get("notes") or "")
             alloc = _parse_allocations_from_notes(notes)
             is_flight = False
             if alloc is None:
@@ -1425,7 +1490,8 @@ def sync_budgets_for_account(account_id):
             # Also handles flight-date promo groups ("Clock: 6/5 - 6/20 5pm\nAmazon: 6/5-6/13").
             # Queue for a separate pass AFTER direct matches are resolved so this row can't
             # collide with or be outscored by a campaign that also has its own direct row.
-            raw_notes_check = row.get("split") or row.get("notes") or ""
+            raw_notes_check, split_windows = _extract_split_windows(
+                row.get("split") or row.get("notes") or "")
             alloc_check = _parse_allocations_from_notes(raw_notes_check)
             is_flight_promo = False
             if alloc_check is None:
@@ -1484,7 +1550,8 @@ def sync_budgets_for_account(account_id):
             # the other should receive the full budget going forward.
             cbo_split_applied = False
             if campaign.budget_mode == 'CBO':
-                split_allocs = _parse_allocations_from_notes(raw_split)
+                split_text, split_windows_inline = _extract_split_windows(raw_split)
+                split_allocs = _parse_allocations_from_notes(split_text)
                 if split_allocs:
                     # Scope the candidate pool to campaigns sharing the pivot word from the
                     # sheet row name (e.g. "Core" in "Core (FB/IG Ads)"). This prevents
@@ -1555,6 +1622,10 @@ def sync_budgets_for_account(account_id):
                             new_budget = round(total_budget * pct / 100, 2)
                             old_budget = c.monthly_budget
                             # Update per-campaign budget (individual share) and group link
+                            # Per-member flight window from the split line, e.g.
+                            # "Sports Bar - 20% (10/20 - 10/31)". The group keeps one
+                            # combined budget while each member paces over its own days.
+                            _apply_split_window(c, alloc_name, split_windows_inline)
                             c.budget_group_id = group.id
                             groups_seen.add(group.id)
                             c.group_allocation_pct = pct
@@ -1597,7 +1668,8 @@ def sync_budgets_for_account(account_id):
 
         # ABO adset allocations — only attempt if this campaign is ABO and notes parse
         if campaign.budget_mode == 'ABO':
-            allocations = _parse_allocations_from_notes(row.get("split") or row.get("notes") or "")
+            _abo_text, _ = _extract_split_windows(row.get("split") or row.get("notes") or "")
+            allocations = _parse_allocations_from_notes(_abo_text)
             if allocations:
                 active_adsets = [a for a in campaign.adsets if a.is_active]
                 proposed = []  # [(adset, new_pct, parsed_name)]
@@ -1754,6 +1826,7 @@ def sync_budgets_for_account(account_id):
         for c, pct, alloc_name in split_proposed:
             new_budget = round(total_budget * pct / 100, 2)
             old_budget = c.monthly_budget
+            _apply_split_window(c, alloc_name, split_windows)
             c.budget_group_id = group.id
             groups_seen.add(group.id)
             c.group_allocation_pct = pct

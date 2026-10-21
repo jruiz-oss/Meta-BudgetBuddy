@@ -77,3 +77,48 @@ def current_month_spend(pacing_rows, adset_id=None, today=None):
         return None
     rows.sort(key=lambda r: (r.date, r.id or 0))
     return float(rows[-1].actual_spend or 0.0)
+
+
+def window_bounds(flight_type=None, flight_start=None, flight_end=None, today=None, month=None):
+    """The slice of this month a campaign is actually allowed to spend in.
+
+    A campaign flighted 10/20-10/31 cannot spend between the 1st and the 19th, so
+    measuring it against the whole month makes it look 90% behind on the day it
+    launches. Returns (start, end) clamped to the current month.
+    """
+    today = today or datetime.utcnow().date()
+    month_start, month_end = month or month_bounds(today)
+    start, end = month_start, month_end
+    if flight_type == 'LIMITED':
+        if flight_start and flight_start > start:
+            start = min(flight_start, month_end)
+        if flight_end and flight_end < end:
+            end = max(flight_end, start)
+    return start, end
+
+
+def expected_to_date(budget, flight_type=None, flight_start=None, flight_end=None,
+                     today=None, month=None):
+    """Spend expected by yesterday, measured over the campaign's OWN window.
+
+    Linear across the window it can spend in: budget / window_days * days_elapsed,
+    where days_elapsed counts from the window start through yesterday (pacing always
+    reads spend through yesterday). Returns 0.0 before the window opens.
+    """
+    today = today or datetime.utcnow().date()
+    month = month or month_bounds(today)
+    start, end = window_bounds(flight_type, flight_start, flight_end, today, month)
+    window_days = max(1, (end - start).days + 1)
+    yesterday = today - timedelta(days=1)
+    elapsed = (min(yesterday, end) - start).days + 1
+    if elapsed <= 0:
+        return 0.0
+    return (float(budget or 0.0) / window_days) * min(elapsed, window_days)
+
+
+def pace_ratio(actual_spend, expected):
+    """actual / expected, with 1.0 when nothing is expected yet (no judgement)."""
+    exp = float(expected or 0.0)
+    if exp <= 0:
+        return 1.0
+    return float(actual_spend or 0.0) / exp
