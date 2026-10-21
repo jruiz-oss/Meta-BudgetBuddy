@@ -74,6 +74,13 @@ code { font-family: var(--bb-font-mono, ui-monospace, monospace); }
   --bb-accent:       #2563eb;
   --bb-accent-hover: #1d4fd7;
   --bb-accent-soft:  #eaf0fe;   /* active nav background */
+
+  /* Pooled budget-group header rows. A tinted band in the accent family reads as a
+     section header without the heaviness of a dark slab, and keeps body text on a
+     light background where the rest of the table lives. */
+  --bb-group-bg:     #e2eafb;
+  --bb-group-rule:   #b9cdf2;
+  --bb-group-bar:    var(--bb-accent);
   --bb-accent-fg:    #2563eb;   /* active nav text */
 
   /* Pace semantics: green on pace, amber under, red over. */
@@ -93,6 +100,10 @@ code { font-family: var(--bb-font-mono, ui-monospace, monospace); }
   --bb-fg-3:         #a3aab3;
   --bb-mute:         #7d858f;
   --bb-mute-2:       #656d77;
+
+  --bb-group-bg:     #1d2838;
+  --bb-group-rule:   #31456a;
+  --bb-group-bar:    #5b8def;
 
   --bb-line:         #272b31;
   --bb-line-strong:  #333941;
@@ -1307,22 +1318,35 @@ button.bb-row-weight:focus-visible {
 }
 
 /* ── tabs ── */
-/* Pooled budget-group header rows: dark so a pool reads as a different kind of
-   thing from the campaigns under it, rather than just a slightly greyer row. */
+/* ── Pooled budget-group header row ──────────────────────────────────────────
+   A pool is a different KIND of row from the campaigns beneath it, so it reads as
+   a section header: tinted band, accent bar down the left, hairline rules top and
+   bottom. Text stays dark on light, which keeps contrast comfortable — the earlier
+   dark slab differentiated well but fought every other row on the page. */
 .bb-row-group-head > td {
-  background: #343b45 !important;
-  color: #f2f4f6;
-  border-bottom: 1px solid #2a303a;
+  background: var(--bb-group-bg);
+  color: var(--bb-fg);
+  border-top: 1px solid var(--bb-group-rule);
+  border-bottom: 1px solid var(--bb-group-rule);
+  padding-top: 11px;
+  padding-bottom: 11px;
 }
-.bb-row-group-head > td .bb-mode { color: #c3c9d2 !important; }
-.bb-row-group-head > td span[style*="--bb-mute"],
-.bb-row-group-head > td .bb-status { color: #e7eaee; }
+.bb-row-group-head > td:first-child {
+  box-shadow: inset 4px 0 0 var(--bb-group-bar);
+  letter-spacing: 0.01em;
+  font-weight: 700;
+}
+.bb-row-group-head > td.num { color: var(--bb-fg); font-variant-numeric: tabular-nums; }
+.bb-row-group-head .bb-mode {
+  background: transparent;
+  color: var(--bb-accent);
+  border: 1px solid var(--bb-group-rule);
+}
 
-/* Members of a pool: the pool's own status is what matters, so per-campaign pace
-   and status are muted rather than colour-coded for attention. */
-.bb-row-group-member .bb-status,
-.bb-row-group-member .bb-pace { color: #8b929b !important; }
-.bb-row-group-member .bb-status { --bb-tone: #a8aeb7 !important; }
+/* Members of a pool: the pool's own figures are what matter, so per-campaign pace
+   and status are muted rather than competing for attention. */
+.bb-row-group-member .bb-status { --bb-tone: var(--bb-mute-2) !important; color: var(--bb-mute) !important; }
+.bb-row-group-member .bb-pace { color: var(--bb-mute) !important; }
 
 .bb-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--bb-line); margin-bottom: 20px; }
 .bb-tab-btn {
