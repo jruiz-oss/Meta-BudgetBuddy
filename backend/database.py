@@ -242,6 +242,10 @@ class Campaign(db.Model):
     # NULL = never synced / unknown (legacy rows). True = matched. False = no sheet row found.
     # Reset to False for all active campaigns at the start of each sync, then set True on match.
     sheet_budget_matched = db.Column(db.Boolean, nullable=True)
+    # Meta's own campaign status (ACTIVE / PAUSED / ...), refreshed on every pacing
+    # run. A paused campaign still owns its month-to-date spend — it just shouldn't
+    # receive a recommendation.
+    meta_status = db.Column(db.String(32))
     # "Easy-Pace" checkbox on the sheet: this campaign's recommendation is trusted
     # enough to push to Meta without a human reading it first.
     # Migration: ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS easy_pace BOOLEAN NOT NULL DEFAULT FALSE;
@@ -406,6 +410,8 @@ class Campaign(db.Model):
             'budget_mode': self.budget_mode,
             'sheet_notes': self.sheet_notes or '',
             'sheet_budget_matched': self.sheet_budget_matched,
+            'meta_status': self.meta_status,
+            'is_paused_in_meta': (self.meta_status or '').upper() == 'PAUSED',
             'easy_pace': bool(self.easy_pace),
             'budget_group_id': self.budget_group_id,
             # Sheet row that owns this campaign's budget, so the UI can group members

@@ -577,13 +577,44 @@ def run_pacing(account_id):
                 kept.append(c)
         included = kept
 
+    # ------------------------------------------------------------------
+    # Refresh each campaign's status from Meta (one extra call for the whole
+    # account) and set paused campaigns aside. A campaign paused in Meta has nothing
+    # to pace — but its month-to-date spend still counts against the budget and still
+    # belongs in the sheet, so it is fetched for spend only, exactly like a
+    # flight-expired group member.
+    # ------------------------------------------------------------------
+    paused_campaigns = []
+    try:
+        live_rows = meta.list_campaigns(only_active=False)
+        status_by_id = {str(r.get('id')): (r.get('effective_status') or r.get('status') or '')
+                        for r in live_rows}
+        for c in campaigns:
+            status = status_by_id.get(str(c.meta_campaign_id))
+            if status and c.meta_status != status:
+                c.meta_status = status
+        db.session.commit()
+    except Exception as e:
+        logger.warning("Could not refresh campaign statuses for account %s: %s", account_id, e)
+
+    if not single_campaign_id:
+        live_included = []
+        for c in included:
+            if (c.meta_status or '').upper() == 'PAUSED':
+                paused_campaigns.append(c)
+            else:
+                live_included.append(c)
+        included = live_included
+
     # Budget-group members excluded by their flight window still need their spend
     # fetched. A group's recommendation is (group budget - COMBINED group spend), so
     # dropping an ended member overstates what's left and over-funds the live ones.
     # These are fetched for spend only; they never produce a recommendation.
     _included_ids = {c.id for c in included}
+    # Spend-only: flight-expired group members, plus everything paused in Meta.
     spend_only = [c for c in campaigns
-                  if c.id not in _included_ids and c.budget_group_id]
+                  if c.id not in _included_ids
+                  and (c.budget_group_id or (c.meta_status or '').upper() == 'PAUSED')]
 
     # ------------------------------------------------------------------
     # Dead-campaign pre-filter (mirrors the dashboard's is_zero_spend logic)
@@ -984,6 +1015,33 @@ def run_pacing(account_id):
         if action != 'ON_PACE':
             adjustments_needed += 1
 
+    # ------------------------------------------------------------------
+    # Spend-only snapshots.
+    #
+    # Paused campaigns (and flight-expired group members) get a PacingData row with
+    # their spend but NO recommendation. Without this they'd have no current-month row
+    # at all, and the sheet write-back — which reads PacingData — would leave their
+    # month-to-date spend out of column C entirely. The money was still spent; it just
+    # isn't being paced any more.
+    # ------------------------------------------------------------------
+    for campaign in spend_only_fetch:
+        data = fetch_data.get(campaign.id, {})
+        if 'error' in data or 'spend' not in data:
+            continue
+        spent = float(data.get('spend') or 0.0)
+        db.session.add(PacingData(
+            campaign_id=campaign.id,
+            adset_id=None,
+            date=snapshot_date,
+            current_daily_budget=data.get('live_daily'),
+            actual_spend=spent,
+            expected_spend=0.0,
+            pace_ratio=1.0,
+            status='PAUSED' if (campaign.meta_status or '').upper() == 'PAUSED' else 'SPEND_ONLY',
+            recommended_daily_budget=None,
+            change_percent=None,
+        ))
+
     run_type = body.get("run_type", "MANUAL")
 
     pacing_run = PacingRun(
@@ -1027,6 +1085,8 @@ def run_pacing(account_id):
         "recommendations": recommendations,
         "failures": failures,
         "skipped_ended": skipped_ended,
+        "skipped_paused": [{"campaign_id": c.id, "campaign_name": c.campaign_name}
+                           for c in paused_campaigns],
         "skipped_no_sheet_budget": skipped_no_sheet_budget,
         "auto_sync": auto_sync_result,
         "sheet_sync": sheet_sync_result,

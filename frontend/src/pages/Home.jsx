@@ -205,6 +205,7 @@ function urgency(c) {
   const st = String(lp.status || '').toUpperCase();
   if (st === 'NO_SHEET_ROW' || st === 'NO_ALLOCATION') return null;  // handled elsewhere
   if ((c.flight_status || '') === 'ended') return null;
+  if (c.is_paused_in_meta) return null;      // paused in Meta — nothing to pace
 
   const spend = Number(lp.actual_spend) || 0;
   const expected = Number(lp.expected_spend) || 0;
@@ -248,7 +249,7 @@ function groupPace(gt) {
 
 function statusTone(status, paceRatio) {
   const s = (status || '').toUpperCase();
-  if (s === 'NO_SHEET_ROW' || s === 'NO_ALLOCATION') return 'var(--bb-mute)';
+  if (s === 'NO_SHEET_ROW' || s === 'NO_ALLOCATION' || s === 'PAUSED' || s === 'SPEND_ONLY') return 'var(--bb-mute)';
   if (paceRatio == null) return 'var(--bb-mute)';
   const pct = Math.abs((paceRatio - 1) * 100);
   if (pct < 5) return 'var(--bb-ok)';
@@ -263,6 +264,8 @@ function statusTone(status, paceRatio) {
 // labelled "46% under".
 function statusLabel(status, paceRatio) {
   const s = (status || '').toUpperCase();
+  if (s === 'PAUSED') return 'Paused in Meta';
+  if (s === 'SPEND_ONLY') return 'Spend only';
   if (s === 'NO_SHEET_ROW') return 'No sheet row';
   if (s === 'NO_ALLOCATION') return 'Spend only';
   if (paceRatio == null) return '—';
@@ -1071,6 +1074,7 @@ function Home({ user, onLogout }) {
     // A campaign with no sheet row, or one that never paced this month, is unresolved
     // work too: it just needs a fix in the sheet rather than a click here.
     if ((c.flight_status || '') === 'ended') return false;   // over; nothing to decide
+    if (c.is_paused_in_meta) return false;                   // paused in Meta
 
     const handled = (key) => results[key]?.ok || skipped[key];
     if ((c.budget_mode || 'CBO') === 'ABO') {

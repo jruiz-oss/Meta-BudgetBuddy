@@ -168,6 +168,8 @@ def cron_run_all_accounts():
 # Deliberately NOT gated on SKIP_CREATE_ALL — the whole point is to patch a
 # database whose tables already exist. New TABLES still come from create_all.
 _SCHEMA_PATCHES = [
+    # session 21 — paused-in-Meta campaigns
+    "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS meta_status VARCHAR(32)",
     # session 21 — archived accounts
     "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
     # session 19.1 — Easy-Pace checkbox drives unattended apply
