@@ -554,7 +554,14 @@ def get_all_campaigns():
                 # used to disagree — an ended campaign that spent earlier this
                 # month, was re-imported in the last 7 days, or had only 1 MTD row
                 # would slip past the zero-spend filter and still show.
-                if campaign.flight_status == 'ended':
+                # No sheet row AND nothing spent this month: the sheet doesn't
+                # define it and it isn't running, so there is nothing to pace and
+                # nothing to report. Hidden rather than deleted — it reappears the
+                # moment it spends again or gets a row.
+                if campaign.sheet_budget_matched is False and is_zero_spend:
+                    camp_dict['hidden_reason'] = 'no_sheet_row_no_spend'
+                    hidden_list.append(camp_dict)
+                elif campaign.flight_status == 'ended':
                     camp_dict['hidden_reason'] = 'flight_ended'
                     hidden_list.append(camp_dict)
                 elif is_zero_spend:
@@ -787,7 +794,11 @@ def get_campaigns(account_id):
 
             # Flight gate — mirrors get_all_campaigns and pacing's flight logic.
             # An ended flight is hidden regardless of spend.
-            if campaign.flight_status == 'ended':
+            # Same rule as the Home endpoint: no sheet row and no spend → hide.
+            if campaign.sheet_budget_matched is False and is_zero_spend:
+                camp_dict['hidden_reason'] = 'no_sheet_row_no_spend'
+                hidden_data.append(camp_dict)
+            elif campaign.flight_status == 'ended':
                 camp_dict['hidden_reason'] = 'flight_ended'
                 hidden_data.append(camp_dict)
             elif is_zero_spend:

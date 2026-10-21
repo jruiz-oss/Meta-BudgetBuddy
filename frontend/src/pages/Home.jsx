@@ -1085,7 +1085,12 @@ function Home({ user, onLogout }) {
       return false;
     }
 
-    if (c.sheet_budget_matched === false) return true;       // needs a sheet row — a fix, not a click
+    const lp0 = c.latest_pacing;
+    const spent0 = lp0 ? Number(lp0.actual_spend) || 0 : 0;
+    // No sheet row AND no spend = a campaign that's simply off. Nothing to fix,
+    // nothing to pace. An unmatched campaign that IS spending still shows, because
+    // that's live money running against a row the sheet doesn't define.
+    if (c.sheet_budget_matched === false) return spent0 > 0;
     const lp = c.latest_pacing;
     // Nothing spent this month means the campaign isn't running, and a campaign
     // that's off doesn't need pacing. Delivery failures are still caught — the
