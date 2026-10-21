@@ -184,21 +184,31 @@ const timeAgo = (isoStr) => {
 };
 
 // Map status → tone color CSS variable
+// Colour follows the same axis as the label: ahead of expected spend is the warm
+// warning, behind is the cool one.
 function statusTone(status, paceRatio) {
   const s = (status || '').toUpperCase();
-  if (s === 'ON_PACE') return 'var(--bb-ok)';
-  if (s === 'INCREASE') return 'var(--bb-warn-cool)';
-  if (s === 'DECREASE') return 'var(--bb-warn)';
-  return 'var(--bb-mute)';
+  if (s === 'NO_SHEET_ROW' || s === 'NO_ALLOCATION') return 'var(--bb-mute)';
+  if (paceRatio == null) return 'var(--bb-mute)';
+  const pct = Math.abs((paceRatio - 1) * 100);
+  if (pct < 5) return 'var(--bb-ok)';
+  return paceRatio > 1 ? 'var(--bb-warn)' : 'var(--bb-warn-cool)';
 }
 
+// The pill describes SPEND vs expected-by-today — both the number and the word now
+// come from pace_ratio. It used to take the number from pace_ratio and the word from
+// `status`, which describes something else entirely: whether the recommended daily is
+// above or below the current one. Those disagree routinely — a campaign can be ahead
+// on spend and still need its daily raised — which is how 1.46x pace came to be
+// labelled "46% under".
 function statusLabel(status, paceRatio) {
   const s = (status || '').toUpperCase();
-  const pct = Math.round(Math.abs(((paceRatio || 0) - 1) * 100));
-  if (s === 'ON_PACE') return 'On pace';
-  if (s === 'INCREASE') return `${pct}% under`;
-  if (s === 'DECREASE') return `${pct}% over`;
-  return '—';
+  if (s === 'NO_SHEET_ROW') return 'No sheet row';
+  if (s === 'NO_ALLOCATION') return 'Spend only';
+  if (paceRatio == null) return '—';
+  const pct = Math.round(Math.abs((paceRatio - 1) * 100));
+  if (pct < 1) return 'On pace';
+  return paceRatio > 1 ? `${pct}% over` : `${pct}% under`;
 }
 
 function StatusPill({ status, paceRatio }) {
@@ -468,6 +478,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                 <th>Mode</th>
                 <th className="num">Budget</th>
                 <th className="num">MTD Spend</th>
+                <th className="num">Expected</th>
                 <th className="num">Pace</th>
                 <th className="num">Current Daily</th>
                 <th className="num">Rec. Daily</th>
@@ -500,6 +511,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                     <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
                     <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
                     <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
+                    <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
                     <td><span style={{ fontSize: 12, color: 'var(--bb-mute)' }}>combined</span></td>
                     <td />
                     <td />
@@ -523,6 +535,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                       <td><span className="bb-mode bb-mode-abo">ABO</span></td>
                       <td className="num">{unmatched ? <span style={{ color: 'var(--bb-mute)' }}>—</span> : fmtMo(campaign.monthly_budget)}</td>
                       <td className="num">{lp ? <SpendCell lp={lp} /> : '—'}</td>
+                      <td className="num" style={{ color: 'var(--bb-mute)' }}>{lp?.expected_spend != null ? fmt$(lp.expected_spend, 2) : '—'}</td>
                       <td className="num">{lp ? `${(lp.pace_ratio || 0).toFixed(2)}x` : '—'}</td>
                       <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
                       <td className="num" style={{ color: 'var(--bb-mute)' }}>—</td>
@@ -562,6 +575,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                         <td><span className="bb-mode bb-mode-adset">ad set</span></td>
                         <td className="num">{fmtMo(adsetMo)}</td>
                         <td className="num">{alp ? fmt$(alp.actual_spend, 2) : '—'}</td>
+                        <td className="num" style={{ color: 'var(--bb-mute)' }}>{alp?.expected_spend != null ? fmt$(alp.expected_spend, 2) : '—'}</td>
                         <td className="num">{alp ? <span style={{ color: statusTone(action, alp.pace_ratio), fontWeight: 600 }}>{(alp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
                         <td className="num">{alp?.current_daily_budget != null ? fmt$(alp.current_daily_budget, 2) : '—'}</td>
                         <td className="num">
@@ -606,6 +620,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                     <td><span className="bb-mode bb-mode-cbo">CBO</span></td>
                     <td className="num">{cboUnmatched ? <span style={{ color: 'var(--bb-mute)' }}>—</span> : fmtMo(campaign.monthly_budget)}</td>
                     <td className="num">{lp ? <SpendCell lp={lp} /> : '—'}</td>
+                    <td className="num" style={{ color: 'var(--bb-mute)' }}>{lp?.expected_spend != null ? fmt$(lp.expected_spend, 2) : '—'}</td>
                     <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
                     <td className="num">{lp?.current_daily_budget != null ? fmt$(lp.current_daily_budget, 2) : '—'}</td>
                     <td className="num">
