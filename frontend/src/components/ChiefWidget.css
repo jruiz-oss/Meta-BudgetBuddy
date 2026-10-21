@@ -118,7 +118,15 @@
   border: 1px solid var(--bb-line); background: var(--bb-surface); color: var(--bb-fg-2, var(--bb-fg));
   border-radius: 999px; padding: 7px 12px; font-size: 12.5px;
 }
-.chief-chip:hover { border-color: var(--bb-accent); color: var(--bb-accent-fg); }
+.chief-chip { --chip: var(--bb-accent); cursor: pointer; text-align: left;
+  color: var(--chip);
+  background: color-mix(in srgb, var(--chip) 11%, var(--bb-surface));
+  border-color: color-mix(in srgb, var(--chip) 38%, var(--bb-line)); }
+.chief-chip:hover { background: color-mix(in srgb, var(--chip) 20%, var(--bb-surface)); border-color: var(--chip); }
+.chief-chip-blue  { --chip: var(--bb-accent); }
+.chief-chip-green { --chip: var(--bb-ok); }
+.chief-chip-amber { --chip: var(--bb-warn-cool); }
+.chief-chip-red   { --chip: var(--bb-warn); }
 
 .chief-form {
   display: flex; gap: 8px; align-items: center;

@@ -32,7 +32,16 @@ const SHOW_ON = [
 
 const GREETING = "Woof, I'm Chief.";
 
-const SUGGESTIONS = ['Which flights end today?', 'Is anything close to max spend?'];
+const INTRO =
+  "Ask me quick facts, like when a flight ends, how much a campaign has spent, or how many clicks it got on a day. I only look things up. I can't change anything or give advice.";
+
+// tone picks the chip color (see .chief-chip-* in ChiefWidget.css)
+const SUGGESTIONS = [
+  { text: 'Which flights end today?', tone: 'amber' },
+  { text: 'Is anything close to max spend?', tone: 'red' },
+  { text: 'How much budget is left this month?', tone: 'blue' },
+  { text: 'How many clicks did we get yesterday?', tone: 'green' },
+];
 
 const STORE_KEY = 'bb.chief.chats.v1';
 const MAX_CHATS = 30;
@@ -305,7 +314,10 @@ export default function ChiefWidget() {
               <div className="chief-body" aria-live="polite">
                 <div className="chief-row chief-row-bot">
                   <Avatar size={26} />
-                  <div className="chief-bubble chief-bubble-bot">{GREETING}</div>
+                  <div className="chief-bubble chief-bubble-bot">
+                    {GREETING}
+                    {messages.length === 0 && enabled !== false && <> {INTRO}</>}
+                  </div>
                 </div>
 
                 {enabled === false && (
@@ -320,7 +332,9 @@ export default function ChiefWidget() {
                 {messages.length === 0 && enabled !== false && (
                   <div className="chief-chips">
                     {SUGGESTIONS.map((s) => (
-                      <button key={s} type="button" className="chief-chip" onClick={() => send(s)}>{s}</button>
+                      <button key={s.text} type="button" className={'chief-chip chief-chip-' + s.tone} onClick={() => send(s.text)}>
+                        {s.text}
+                      </button>
                     ))}
                   </div>
                 )}
