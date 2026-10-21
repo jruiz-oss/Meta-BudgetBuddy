@@ -1085,9 +1085,14 @@ function Home({ user, onLogout }) {
       return false;
     }
 
-    if (c.sheet_budget_matched === false) return true;       // needs a sheet row
+    if (c.sheet_budget_matched === false) return true;       // needs a sheet row — a fix, not a click
     const lp = c.latest_pacing;
-    if (!lp) return true;                                    // never paced this month
+    // Nothing spent this month means the campaign isn't running, and a campaign
+    // that's off doesn't need pacing. Delivery failures are still caught — the
+    // Urgent tab flags $0 spend against an open window, which is a different
+    // question from "is there work for me here".
+    if (!lp) return false;
+    if (!(Number(lp.actual_spend) > 0)) return false;
     const st = String(lp.status || '').toUpperCase();
     if (st === 'NO_SHEET_ROW') return true;
     if (st === 'ON_PACE' || st === 'NO_ALLOCATION') return false;  // nothing to change
