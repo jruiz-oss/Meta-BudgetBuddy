@@ -567,8 +567,7 @@ function AccountSection({ acct, applying, skipped, results, search, viewFilter,
                 const startsGroup = campaign.budget_group_id && campaign.budget_group_id !== prevGroup;
                 const gt = startsGroup ? groupTotals.get(campaign.budget_group_id) : null;
                 const groupHead = startsGroup ? [(
-                  <tr key={`g-${campaign.budget_group_id}`} className="bb-row-group-head"
-                    style={{ background: 'var(--bb-surface-2)' }}>
+                  <tr key={`g-${campaign.budget_group_id}`} className="bb-row-group-head">
                     <td style={{ fontWeight: 700 }}>
                       {gt?.name || 'Budget group'}
                       <span style={{ fontWeight: 400, color: 'var(--bb-mute)', marginLeft: 8, fontSize: 12 }}>
@@ -687,7 +686,10 @@ function AccountSection({ acct, applying, skipped, results, search, viewFilter,
                 const needsAction = lp && status.toUpperCase() !== 'ON_PACE';
                 const cboUnmatched = acct.has_sheet && campaign.sheet_budget_matched === false;
                 return [...groupHead, (
-                  <tr key={rowKey} className={cboUnmatched ? 'bb-row-sheet-unmatched' : ''}>
+                  <tr key={rowKey} className={[
+                    cboUnmatched ? 'bb-row-sheet-unmatched' : '',
+                    campaign.budget_group_id ? 'bb-row-group-member' : '',
+                  ].filter(Boolean).join(' ')}>
                     <td>
                       <div className="bb-row-name">
                         <Link to={`/account/${acct.id}/campaign/${campaign.id}`}
@@ -701,7 +703,14 @@ function AccountSection({ acct, applying, skipped, results, search, viewFilter,
                     <td className="num">{cboUnmatched ? <span style={{ color: 'var(--bb-mute)' }}>—</span> : fmtMo(campaign.monthly_budget)}</td>
                     <td className="num">{lp ? <SpendCell lp={lp} /> : '—'}</td>
                     <td className="num" style={{ color: 'var(--bb-mute)' }}>{lp?.expected_spend != null ? fmt$(lp.expected_spend, 2) : '—'}</td>
-                    <td className="num">{lp ? <span style={{ color: statusTone(status, lp.pace_ratio), fontWeight: 600 }}>{(lp.pace_ratio || 0).toFixed(2)}x</span> : '—'}</td>
+                    <td className="num">{lp ? (
+                      <span className="bb-pace" style={{
+                        // Pool members are deliberately neutral: the group header row
+                        // carries the pace that matters.
+                        color: campaign.budget_group_id ? 'var(--bb-mute)' : statusTone(status, lp.pace_ratio),
+                        fontWeight: 600,
+                      }}>{(lp.pace_ratio || 0).toFixed(2)}x</span>
+                    ) : '—'}</td>
                     <td className="num">{lp?.current_daily_budget != null ? fmt$(lp.current_daily_budget, 2) : '—'}</td>
                     <td className="num">
                       {lp?.recommended_daily_budget != null ? (

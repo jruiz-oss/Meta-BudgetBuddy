@@ -1307,6 +1307,23 @@ button.bb-row-weight:focus-visible {
 }
 
 /* ── tabs ── */
+/* Pooled budget-group header rows: dark so a pool reads as a different kind of
+   thing from the campaigns under it, rather than just a slightly greyer row. */
+.bb-row-group-head > td {
+  background: #343b45 !important;
+  color: #f2f4f6;
+  border-bottom: 1px solid #2a303a;
+}
+.bb-row-group-head > td .bb-mode { color: #c3c9d2 !important; }
+.bb-row-group-head > td span[style*="--bb-mute"],
+.bb-row-group-head > td .bb-status { color: #e7eaee; }
+
+/* Members of a pool: the pool's own status is what matters, so per-campaign pace
+   and status are muted rather than colour-coded for attention. */
+.bb-row-group-member .bb-status,
+.bb-row-group-member .bb-pace { color: #8b929b !important; }
+.bb-row-group-member .bb-status { --bb-tone: #a8aeb7 !important; }
+
 .bb-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--bb-line); margin-bottom: 20px; }
 .bb-tab-btn {
   padding: 9px 16px; font-size: 13px; color: var(--bb-mute);
