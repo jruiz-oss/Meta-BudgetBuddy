@@ -1425,17 +1425,28 @@ function Home({ user, onLogout }) {
   // Totals
   const totals = useMemo(() => {
     let monthly = 0, spent = 0, campaignCount = 0, adsetCount = 0;
+    let unbudgetedSpend = 0, unbudgetedCount = 0;
     accountBlocks.forEach(acct => {
       acct.campaigns.forEach(c => {
         campaignCount++;
-        monthly += Number(c.monthly_budget) || 0;
         const lp = c.latest_pacing;
-        if (lp && Number.isFinite(Number(lp.actual_spend))) spent += Number(lp.actual_spend);
+        const campaignSpend = (lp && Number.isFinite(Number(lp.actual_spend))) ? Number(lp.actual_spend) : 0;
+        // A campaign with no sheet row reports monthly_budget: null. Counting its
+        // SPEND while leaving its BUDGET out of the denominator inflated the "% of
+        // budget" figure — $113,577 of spend was being measured against $118,352 of
+        // budget that excluded 15 such campaigns. Both sides now use the same set.
+        if (c.monthly_budget == null) {
+          unbudgetedCount++;
+          unbudgetedSpend += campaignSpend;
+        } else {
+          monthly += Number(c.monthly_budget) || 0;
+          spent += campaignSpend;
+        }
         if ((c.budget_mode || 'CBO') === 'ABO') adsetCount += (c.adsets || []).length;
       });
     });
     const pct = monthly > 0 ? Math.min(100, (spent / monthly) * 100) : 0;
-    return { monthly, spent, pct, campaignCount, adsetCount };
+    return { monthly, spent, pct, campaignCount, adsetCount, unbudgetedSpend, unbudgetedCount };
   }, [accountBlocks]);
 
   // Attention count
