@@ -19,3 +19,6 @@ APScheduler==3.10.4
 # Fernet symmetric encryption for Meta tokens at rest (User.global_meta_token,
 # Account.meta_token). Pinned to a recent line — 42.x ships current OpenSSL bindings.
 cryptography==42.0.8
+# Chief (read-only chat agent): Anthropic SDK + tz database for account time zones.
+anthropic==1.17.0
+tzdata==2026.5

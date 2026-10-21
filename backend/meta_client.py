@@ -258,6 +258,59 @@ class MetaClient:
         return rows
 
     # ------------------------------------------------------------------
+    # Read-only helpers used by Chief (backend/chief.py)
+    # ------------------------------------------------------------------
+    def get_account_info(self) -> Dict[str, Any]:
+        """Ad account basics. timezone_name matters: Insights dates follow it."""
+        return self._request(
+            "GET", f"/{self.ad_account_id}",
+            params={"fields": "name,timezone_name,currency,account_status"},
+        )
+
+    def get_insights(
+        self,
+        since: date,
+        until: date,
+        level: str = "campaign",
+        daily: bool = True,
+        fields: Optional[List[str]] = None,
+        max_pages: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Account-level Insights for a date range, optionally one row per day.
+
+        Follows pagination (list_campaigns does not). Raises MetaAPIError on any
+        failure; callers must surface that as an error, never as zeros. An empty
+        list means Meta returned no rows (no delivery in the range).
+        """
+        if level not in ("campaign", "adset", "account"):
+            raise ValueError(f"Unsupported level: {level}")
+        fields = fields or [
+            "campaign_id", "campaign_name", "spend", "clicks", "impressions", "actions",
+        ]
+        params: Dict[str, Any] = {
+            "fields": ",".join(fields),
+            "level": level,
+            "time_range": '{"since":"%s","until":"%s"}' % (since.isoformat(), until.isoformat()),
+            "limit": 500,
+        }
+        if daily:
+            params["time_increment"] = 1
+
+        rows: List[Dict[str, Any]] = []
+        for _ in range(max_pages):
+            resp = self._request("GET", f"/{self.ad_account_id}/insights", params=params)
+            rows.extend(resp.get("data", []) or [])
+            after = ((resp.get("paging") or {}).get("cursors") or {}).get("after")
+            has_next = bool((resp.get("paging") or {}).get("next"))
+            if not (after and has_next):
+                return rows
+            params["after"] = after
+        raise MetaAPIError(
+            f"Insights returned more than {max_pages} pages; narrow the date range."
+        )
+
+    # ------------------------------------------------------------------
     # Writes
     # ------------------------------------------------------------------
     def update_campaign_budget(self, meta_campaign_id: str, new_daily_budget: float) -> bool:

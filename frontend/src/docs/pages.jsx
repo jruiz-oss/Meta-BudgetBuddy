@@ -49,7 +49,7 @@ export const PAGES = [
         body: (
           <Steps>
             <Step title="Pacing runs">
-              Automatically each night, once per browser session when you open the app, or manually with
+              Automatically each night, when you open the app (at most once every 4 hours), or manually with
               <strong> Run pacing</strong>. Nothing is changed in Meta at this point.
             </Step>
             <Step title="You review">
@@ -128,7 +128,7 @@ export const PAGES = [
           <ul>
             <li>The campaign names in the app roughly match the names in column A of the sheet.</li>
             <li>The service account email is an <strong>Editor</strong> on the sheet.</li>
-            <li>The current month has its own tab on the sheet, named like <code>September 2026</code>.</li>
+            <li>The current month has its own tab on the sheet, named like <code>October 2026</code>.</li>
             <li>ABO campaigns have ad sets tracked and allocations that add up to 100%.</li>
           </ul>
         ),
@@ -152,6 +152,11 @@ export const PAGES = [
             <p>
               Home groups campaigns by ad account. Each account is a collapsible section with its campaigns underneath.
               ABO campaigns show their ad sets indented below the campaign row.
+            </p>
+            <p>
+              Campaigns that share one budget (a split on a single sheet row) sit together under a header showing the sheet row
+              name, the combined budget, and the combined MTD spend. See the CBO vs ABO page. Only campaigns whose names start with
+              <code>Commit</code> are shown. The Account dashboard page lists everything else that gets hidden.
             </p>
             <DocTable
               head={['Column', 'Meaning']}
@@ -189,10 +194,11 @@ export const PAGES = [
               <li><strong>Apply</strong> on a row pushes that one campaign (or ad set) to Meta.</li>
               <li><strong>Apply all</strong> in an account header pushes every actionable row in that account after a confirm step.</li>
               <li><strong>Skip</strong> hides a row from the actionable count so you can mark it handled. Use the undo link to bring it back.</li>
+              <li><strong>Spend only</strong> shows instead of Apply on a 0% budget group member. Its spend counts toward the group and it never gets pushed to Meta.</li>
             </ul>
             <Callout tone="warn" title="Apply is blocked for unmatched rows">
               If a campaign has no matching row on the Google Sheet, Apply is disabled. The budget is not sheet-sourced, so
-              the recommendation can't be trusted. Fix the name match and re-sync. See Troubleshooting.
+              the recommendation can't be trusted. The row shows a <strong>No sheet match</strong> chip. On the account dashboard, click it to open Sheet match, which explains why. Fix the name match and re-sync. See Troubleshooting.
             </Callout>
           </>
         ),
@@ -205,6 +211,17 @@ export const PAGES = [
             A strip appears inside an account when nothing is running: every flight has ended, or there is no pacing data at
             all yet. Note it also shows when some flights are pending (not started), so read the flight badges before
             assuming something is broken.
+          </p>
+        ),
+      },
+      {
+        id: 'ads-manager',
+        title: 'Ads Manager link',
+        body: (
+          <p>
+            The <strong>Ads Manager</strong> link in each account header opens that ad account in Meta, set to month to date through
+            yesterday and filtered to campaigns with <code>Commit</code> in the name. That is the same window pacing uses, so the
+            totals line up. Ads Manager's own default includes today, which is why its numbers usually read higher.
           </p>
         ),
       },
@@ -277,7 +294,9 @@ export const PAGES = [
             rows={[
               ['Import from Meta', 'Lists campaigns in the ad account so you can choose which ones to track. Respects the campaign name filter in Settings.'],
               ['Diagnostic', 'Downloads a JSON health snapshot of the account. Read only, does not call Meta.'],
-              ['Run pacing', 'Recalculates this account. Also pulls budgets from the sheet first and writes spend back to it after.'],
+              ['Refresh from sheet', 'Re-reads budgets, allocations and notes from the sheet for this account only. No Meta calls and no pacing run.'],
+              ['Sheet match', 'Read only list of every row on the current sheet tab, what it matched, and why the rest did not.'],
+              ['Run pacing', 'Recalculates this account. First adds any new campaigns it finds in Meta and pulls budgets from the sheet, then writes spend back to the sheet after.'],
               ['History', 'Audit log for this account.'],
               ['Settings', 'Account settings, flights, and sheet config.'],
             ]}
@@ -293,9 +312,32 @@ export const PAGES = [
               Each row shows budget mode (CBO or ABO), flight status, spend, pace, and the recommendation with Apply and Skip.
               Use <strong>+ Add campaign</strong> to track another one, or <strong>Remove</strong> to stop pacing it.
             </p>
+            <p>Not every campaign in the ad account shows up. Home and the dashboard hide:</p>
+            <ul>
+              <li>Anything whose name doesn't start with <code>Commit</code> (any case). It is treated as someone else's campaign and isn't counted anywhere, not even as hidden.</li>
+              <li>Campaigns whose flight has ended, no matter what they spent.</li>
+              <li>Campaigns with no spend this month: two or more pacing runs this month all at $0, or never paced and imported over a week ago.</li>
+            </ul>
             <p>
-              Campaigns with no spend this month are hidden by default. There is a toggle next to the campaign count to
-              show them.
+              Hidden ones are counted next to the campaign count. Click <strong>Show anyway</strong> to see them and
+              <strong> Hide ended</strong> to put them away again.
+            </p>
+          </>
+        ),
+      },
+      {
+        id: 'sheet-tools',
+        title: 'Refresh from sheet and Sheet match',
+        body: (
+          <>
+            <p>
+              <strong>Refresh from sheet</strong> re-reads budgets, allocations and notes for this account only. It makes no Meta
+              calls and doesn't run pacing, so it can't hit rate limits or touch other accounts.
+            </p>
+            <p>
+              <strong>Sheet match</strong> lists every row on the current tab and what it resolved to. For rows that didn't match,
+              it gives a plain reason and the three closest campaign names with scores. The <strong>No sheet match</strong> chip in
+              the recommendations table opens the same view, and it has a Refresh from sheet button too.
             </p>
           </>
         ),
@@ -354,8 +396,56 @@ export const PAGES = [
             </p>
             <Callout tone="info" title="Allocations can come from the sheet">
               If the notes cell (column F) for a campaign reads like <code>Ad Set A - 40% / Ad Set B - 60%</code> and adds up to
-              100, the allocations are set from it automatically on sync. Notes about dates or flights are ignored on purpose.
+              100, the allocations are set from it automatically on sync. See the note formats below. Every name has to match an ad set or nothing is changed.
             </Callout>
+          </>
+        ),
+      },
+      {
+        id: 'groups',
+        title: 'Budget groups (one sheet row, several campaigns)',
+        body: (
+          <>
+            <p>
+              When one sheet row covers more than one CBO campaign and its notes split the budget, those campaigns form a
+              <strong> budget group</strong>. Pacing runs against the group, not each campaign alone:
+            </p>
+            <p className="dx-formula">Group recommended daily = (group budget &minus; combined spend) &divide; days remaining</p>
+            <p>
+              Each member gets that number times its allocation %. If one campaign overspends, the others' recommendations shrink to
+              make up for it.
+            </p>
+            <ul>
+              <li>Home lists members together under a header with the sheet row name, combined budget, and combined MTD spend. Biggest allocation first.</li>
+              <li>A member at <strong>0%</strong> is spend only. Its spend counts toward the group, it gets no share of what is left, and it can't be applied.</li>
+              <li>A member whose flight has ended still has its spend counted, so the live ones aren't over-funded.</li>
+            </ul>
+          </>
+        ),
+      },
+      {
+        id: 'note-formats',
+        title: 'Note formats the sheet sync understands',
+        body: (
+          <>
+            <p>Put the split in column F. Chunks are separated by <code>/</code> or a new line.</p>
+            <DocTable
+              head={['Format', 'Example']}
+              rows={[
+                ['Name - 40%', 'Pays to Play - 40% / Sports Bar - 60%'],
+                ['70% to Name', '70% to Weddings / 30% to Wedding Brochure'],
+                ['Name: 40%', 'TCM: 40%'],
+                ['Shared %, several names', 'FSP, BW, GG: 20%'],
+                ['Promo flight dates, one per line', 'Clock: 6/5 - 6/20 5pm'],
+              ]}
+            />
+            <ul>
+              <li>Percentages must add up to 100 (within 1.5).</li>
+              <li>Names are fuzzy matched to campaigns, or to ad sets for ABO. If any name doesn't match, or two hit the same one, the whole split is skipped and nothing changes.</li>
+              <li>Promo flight lines split the budget evenly across the promos that are live today. Promos that haven't started or have ended get nothing.</li>
+              <li>The key word in the sheet row name (like Core) narrows which campaigns the split can match.</li>
+              <li>Anything else in the cell, like flight reminders or parentheticals, is ignored.</li>
+            </ul>
           </>
         ),
       },
@@ -376,7 +466,7 @@ export const PAGES = [
         body: (
           <ul>
             <li><strong>Always on</strong> runs and paces all month.</li>
-            <li><strong>Limited</strong> only paces inside its start and end dates.</li>
+            <li><strong>Limited</strong> only paces inside its start and end dates. With no dates set it shows as pending and isn't paced.</li>
           </ul>
         ),
       },
@@ -398,7 +488,7 @@ export const PAGES = [
             <p>
               When a sheet note splits one budget across CBO campaigns (for example 50% to A and 50% to B) and one campaign's flight
               has ended, its share is redistributed to the campaigns still running. If every campaign in the split has ended, the
-              original percentages are kept so nothing is zeroed out.
+              original percentages are kept so nothing is zeroed out. The ended campaign is hidden from Home and the dashboard, but its spend still counts toward the group total.
             </p>
             <Callout tone="warn" title="Known limitation">
               Switching a campaign back to Always on doesn't clear its old start and end dates in the database. They are ignored
@@ -429,12 +519,13 @@ export const PAGES = [
                 ['A', 'Campaign name (used for matching)'],
                 ['B', 'Monthly budget. Read into the app.'],
                 ['C', 'Month to date spend. Written by the app.'],
-                ['F', 'Notes. Shown in the app and parsed for ABO allocations.'],
+                ['D', 'Optional account scope: an account name or Meta ad account ID. When filled, only that account uses the row. Blank, numbers and formula errors are ignored.'],
+                ['F', 'Notes. Shown in the app and parsed for budget splits and ABO allocations (see CBO vs ABO).'],
                 ['G', 'Last paced date. Written by the app.'],
               ]}
             />
             <ul>
-              <li>One tab per month, named like <code>September 2026</code>. The app reads the current month.</li>
+              <li>One tab per month, named like <code>October 2026</code>. The app reads the current month.</li>
               <li>Only the Meta section is read or written. It stops when it hits a LinkedIn or TikTok header.</li>
             </ul>
           </>
@@ -462,7 +553,8 @@ export const PAGES = [
             </p>
             <p>
               Use <strong>Settings &gt; Google Sheets &gt; Preview Matches</strong> to see exactly which sheet row each campaign
-              landed on. Anything marked No match needs a name fix on one side.
+              landed on. Anything marked No match needs a name fix on one side. The account dashboard's <strong>Sheet match</strong> button
+              shows the same thing plus a plain reason and the three closest campaign names.
             </p>
           </>
         ),
@@ -474,7 +566,9 @@ export const PAGES = [
           <ul>
             <li>Before every pacing run (manual or nightly), budgets and allocations are pulled from the sheet.</li>
             <li>After pacing, MTD spend and the paced date are written back.</li>
-            <li>Also on account creation and on the refresh icon on an account card.</li>
+            <li>Also on account creation, on the refresh icon on an account card, and on the account dashboard's <strong>Refresh from sheet</strong> button (budgets only, no Meta calls).</li>
+            <li>Spend written back is current month only. A campaign that hasn't paced this month leaves column C blank instead of showing an old month's total.</li>
+            <li>For a budget group, column C gets the combined spend of every campaign in the row.</li>
           </ul>
         ),
       },
@@ -495,9 +589,9 @@ export const PAGES = [
         body: (
           <>
             <p>
-              Every pacing run is logged (manual or automatic), and so is every budget adjustment pushed to Meta. Use the global
-              <strong> History</strong> page in the sidebar for all accounts, or the <strong>This account</strong> link under it
-              for one account.
+              The <strong>History</strong> page in the sidebar is the budget adjustment log for every account, with a filter per
+              account. The <strong>This account</strong> link under it opens that account's activity: every pacing run (manual or
+              automatic, with a filter) and every budget adjustment pushed to Meta.
             </p>
             <p>When a teammate asks why a budget changed, this is the first place to look.</p>
           </>
@@ -516,7 +610,7 @@ export const PAGES = [
     sections: [
       {
         id: 'pacing',
-        title: 'Pacing tab',
+        title: 'Pacing Parameters tab',
         body: (
           <ul>
             <li>
@@ -524,8 +618,8 @@ export const PAGES = [
               Handy when a client runs their own ads in the same ad account.
             </li>
             <li>
-              <strong>Daily digest</strong>: emails you after each automated run with campaigns that need adjusting. Needs SMTP set up
-              on the server.
+              <strong>Daily digest</strong>: after each automated run, emails a summary of campaigns that need adjusting to the
+              teammate who linked the account. Needs SMTP set up on the server.
             </li>
             <li>
               <strong>Meta token override</strong>: only for accounts that need a different token than the global one. Save with an
@@ -544,8 +638,9 @@ export const PAGES = [
         title: 'Google Sheets tab',
         body: (
           <p>
-            Set a sheet URL for this account only (overrides the global sheet), preview matches, and run the sync buttons manually
-            if you want to check a change without running pacing.
+            Set a sheet URL for this account only (leave it blank to use the global sheet), then use <strong>Save URL</strong> and
+            <strong> Preview Matches</strong>. <strong>Sync Budgets</strong> and <strong>Write Spend</strong> run each half of the
+            sync by hand if you want to check a change without running pacing.
           </p>
         ),
       },
@@ -571,7 +666,11 @@ export const PAGES = [
               minimum floor inside the app. The only floor is Meta's own minimum daily budget.
             </p>
             <p>
-              For ABO, the campaign level number is split across ad sets by allocation %.
+              For ABO, the campaign level number is split across ad sets by allocation %. For a budget group, the budget and spend
+              are the combined numbers for the whole group, then split by each campaign's %. See CBO vs ABO.
+            </p>
+            <p>
+              Spend counts through yesterday. Days remaining counts today through the end of the month.
             </p>
           </>
         ),
@@ -602,6 +701,7 @@ export const PAGES = [
               <li><strong>Increase</strong>: recommended is higher than the current daily budget.</li>
               <li><strong>Decrease</strong>: recommended is lower than the current daily budget.</li>
               <li><strong>On pace</strong>: within one cent of current.</li>
+              <li><strong>Spend only</strong>: a 0% budget group member. No recommendation and nothing to apply.</li>
             </ul>
             <Callout tone="info" title="Why almost everything says Increase or Decrease">
               The recommendation is recalculated fresh every run, so tiny cent level differences show up as actionable. That is on
@@ -630,8 +730,8 @@ export const PAGES = [
         title: 'Nightly run',
         body: (
           <p>
-            Every day at 06:00 UTC (11 PM Arizona time) the server paces every account, pulls budgets from the sheet, writes spend
-            back, and logs an automatic run. It never applies budget changes.
+            Every day at 06:00 UTC (11 PM Arizona time) the server adds any new campaigns it finds in Meta, pulls budgets from the
+            sheet, paces every account, writes spend back, and logs an automatic run. It never applies budget changes.
           </p>
         ),
       },
@@ -650,8 +750,108 @@ export const PAGES = [
         title: 'Daily digest email',
         body: (
           <p>
-            Turn it on per account in Settings. After each automated run you get a summary of what needs adjusting. No email will
-            send until SMTP is configured on the backend.
+            Turn it on per account in Settings. After each automated run, the teammate who linked the account gets a summary of what
+            needs adjusting. No email will send until SMTP is configured on the backend.
+          </p>
+        ),
+      },
+    ],
+  },
+
+  /* ------------------------------------------------------------------ */
+  {
+    slug: 'chief',
+    group: 'Using the app',
+    title: 'Chief (quick questions)',
+    lead: 'A small read-only chat for quick fact checks. It looks things up and never changes anything.',
+    keywords: 'chief chat assistant ask question clicks flight spend today read only dog',
+    sections: [
+      {
+        id: 'what-it-does',
+        title: 'What it does',
+        body: (
+          <>
+            <p>
+              Tap the dog button at the bottom right of Home, an account page or a campaign page. Ask things like when a
+              flight ends, how much of the budget is used, how many clicks a campaign got on a date, or what it has spent so far today.
+            </p>
+            <p>
+              Chief does not give advice or recommendations, and it can't change budgets, flights or anything else.
+              Answers are one to four sentences.
+            </p>
+          </>
+        ),
+      },
+      {
+        id: 'where-numbers-come-from',
+        title: 'Where the numbers come from',
+        body: (
+          <>
+            <DocTable
+              head={['Question', 'Source']}
+              rows={[
+                ['Budget, flight dates, % used', 'BudgetBuddy data, spend through the last pacing run'],
+                ['Clicks, conversions, a specific day', 'Live from Meta for that account'],
+                ['Spend right now', 'Live from Meta, with an "as of" time in the account time zone'],
+              ]}
+            />
+            <p>
+              All math is done in code. Chief only phrases the result. If it can't find a campaign it says so and lists the
+              closest names instead of guessing. If Meta fails to answer, it tells you that rather than showing zeros.
+            </p>
+          </>
+        ),
+      },
+      {
+        id: 'caveats',
+        title: 'Good to know',
+        body: (
+          <>
+            <Callout tone="warn" title="Meta data runs behind">
+              Today's numbers can lag by a few hours, and conversions can shift for days after the fact. Chief says so when it matters.
+            </Callout>
+            <p>
+              <strong>Conversions</strong> add up Meta's standard events: lead, purchase, complete registration, schedule,
+              submit application, contact, subscribe and start trial. Custom pixel events aren't counted.
+            </p>
+            <p>Live lookups cover one account at a time and up to 31 days.</p>
+          </>
+        ),
+      },
+    ],
+  },
+
+  /* ------------------------------------------------------------------ */
+  {
+    slug: 'phone',
+    group: 'Using the app',
+    title: 'Using it on your phone',
+    lead: 'Same pages, same columns, laid out for a small screen.',
+    keywords: 'mobile phone iphone ios android tab bar bottom scroll responsive',
+    sections: [
+      {
+        id: 'layout',
+        title: 'What changes',
+        body: (
+          <>
+            <p>
+              On a phone the left menu becomes a tab bar at the bottom (Home, Accounts, History, Docs). Page headers stack with the
+              title first and the buttons wrapping underneath. Search and filters stack, and filter pills scroll sideways.
+            </p>
+            <p>
+              Nothing is hidden. Tables keep every column and scroll sideways inside the table, with the name column pinned on the left.
+              The page itself never scrolls sideways.
+            </p>
+          </>
+        ),
+      },
+      {
+        id: 'login',
+        title: 'Login on iPhone',
+        body: (
+          <p>
+            The app talks to the backend through the same site address, so Safari treats the login as first party. If Safari ever shows
+            an accounts error, log out and back in once, then tell Jorge.
           </p>
         ),
       },
@@ -676,8 +876,10 @@ export const PAGES = [
               campaign, check that it has active ad sets tracked. See the orphan ABO issue below.</p>
             </Issue>
             <Issue symptom="Apply is greyed out on a row">
-              <p>There is no matching row on the Google Sheet. Open <strong>Settings &gt; Google Sheets &gt; Preview Matches</strong> and
-              find the campaign. Rename it on the sheet or in Meta so the names line up, then run pacing again.</p>
+              <p>Either there is no matching row on the Google Sheet (the row shows No sheet match), or it is a 0% group member marked
+              Spend only, which is never applied. For a match problem, click the No sheet match chip on the account dashboard or use
+              <strong> Sheet match</strong> to see why. Rename the campaign on the sheet or in Meta so the names line up, then run
+              pacing again.</p>
             </Issue>
             <Issue symptom="My manual budget or allocation edit got overwritten">
               <p>Expected. The sheet wins on every run for any campaign with a matching row. Change the number on the sheet.</p>
@@ -686,14 +888,25 @@ export const PAGES = [
               <p>Imports start with a rough placeholder (daily budget times 30). The next sheet sync replaces it with the real
               monthly budget from column B. If there is no matching sheet row, it stays as the placeholder.</p>
             </Issue>
+            <Issue symptom="A campaign is missing from Home or the dashboard">
+              <p>Its name has to start with <code>Commit</code>, its flight can't be ended, and it can't have sat at $0 all month.
+              On the dashboard, click <strong>Show anyway</strong> to see the hidden ones.</p>
+            </Issue>
+            <Issue symptom="Sheet column C is blank for a campaign">
+              <p>It hasn't paced this month. Only current month spend is written back, so retired campaigns leave C empty instead of
+              showing an old total. If it is live, run pacing.</p>
+            </Issue>
+            <Issue symptom="My numbers don't match Ads Manager">
+              <p>Pacing counts spend through yesterday and Ads Manager includes today by default. The Ads Manager link on Home opens it
+              with the same window.</p>
+            </Issue>
             <Issue symptom="Nearly every row says Increase or Decrease">
               <p>Normal. There is no tolerance band. See How pacing is calculated.</p>
             </Issue>
             <Issue symptom="An ABO campaign shows as $100/mo with no ad sets and never gets data">
               <p>This is an orphan. The import defaulted it to $100 and its ad sets were later archived, so nothing is tracked. Click
               <strong> Diagnostic</strong> on the account dashboard. The toast tells you how many orphans were found and the JSON lists
-              each one. To clean up, Remove them from the dashboard or ask for the cleanup migration. Orphans with no spend also get hidden
-              once they are over a week old.</p>
+              each one. To clean up, Remove them from the dashboard. Orphans with no spend also get hidden once they are over a week old.</p>
             </Issue>
           </>
         ),
@@ -725,15 +938,15 @@ export const PAGES = [
           <>
             <Issue symptom="Sheet sync fails or 'Sheet not updated'">
               <p>Check, in order: the sheet URL is saved, the service account email is an <strong>Editor</strong>, and the current
-              month has a tab named like <code>September 2026</code>. A missing tab is the most common cause at the start of a month.</p>
+              month has a tab named like <code>October 2026</code>. A missing tab is the most common cause at the start of a month.</p>
             </Issue>
             <Issue symptom="Wrong allocations on an ABO campaign">
-              <p>Allocations only auto-set when the notes cell follows <code>Name - 40% / Name - 60%</code> and sums to 100. Every name
-              must match an ad set, and no two can hit the same one. Otherwise the parser skips it and leaves allocations alone. Edit
-              them by clicking the allocation % in the app.</p>
+              <p>Allocations only auto-set when the notes cell uses one of the formats on the CBO vs ABO page and sums to 100. Every name
+              must match an ad set, and no two can hit the same one. Otherwise the parser skips it and leaves allocations alone. Use
+              Sheet match on the account dashboard to see why a row was skipped, or edit them by clicking the allocation % in the app.</p>
             </Issue>
             <Issue symptom="Two campaigns share one sheet row">
-              <p>Use a split note on that row (<code>50% to A / 50% to B</code>). If one campaign's flight ends, the other picks up its share.</p>
+              <p>Use a split note on that row (<code>50% to A / 50% to B</code>). They become a budget group. If one campaign's flight ends, the other picks up its share.</p>
             </Issue>
           </>
         ),
@@ -744,7 +957,7 @@ export const PAGES = [
         body: (
           <>
             <Issue symptom="First load is slow, or a spinner hangs">
-              <p>The backend sleeps when idle and takes up to about 15 seconds to wake. Requests time out after 60 seconds. Wait a
+              <p>The backend sleeps when idle and takes a moment to wake. Requests time out after 60 seconds. Wait a
               moment and refresh once. A heavy account can take a minute during the open-app auto run, which is why you can send it to
               the background.</p>
             </Issue>
@@ -759,8 +972,8 @@ export const PAGES = [
               dates.</p>
             </Issue>
             <Issue symptom="Daily digest never arrives">
-              <p>SMTP isn't configured on the backend, or the toggle is off for that account. Check Settings first, then the server's
-              SMTP variables.</p>
+              <p>SMTP isn't configured on the backend, or the toggle is off for that account. The email goes to the teammate who linked
+              the account, so check their inbox. Check Settings first, then the server's SMTP variables.</p>
             </Issue>
           </>
         ),

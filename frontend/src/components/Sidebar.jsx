@@ -70,6 +70,7 @@ function Sidebar({ user, accounts = [], accountActionable, onAddAccount }) {
   }, [accounts, acctSearch]);
 
   return (
+    <>
     <aside className="bb-sidebar">
       {/* Brand */}
       <NavLink to="/" className="bb-brand" style={{ textDecoration: 'none', padding: '8px 10px', justifyContent: 'center' }}>
@@ -179,6 +180,34 @@ function Sidebar({ user, accounts = [], accountActionable, onAddAccount }) {
         </div>
       </div>
     </aside>
+
+    {/* Phone bottom tab bar. Hidden on larger screens (see mobile.css); the same
+        destinations as the left nav, so nothing is lost on a small screen. */}
+    <nav className="bb-tabbar" aria-label="Main navigation">
+      <NavLink to="/" end className={({ isActive }) => 'bb-tab' + (isActive ? ' is-active' : '')}>
+        <IHome /><span>Home</span>
+      </NavLink>
+      <NavLink to="/accounts" className={({ isActive }) => 'bb-tab' + (isActive ? ' is-active' : '')}>
+        <IBuilding /><span>Accounts</span>
+      </NavLink>
+      {accountId && (
+        <NavLink to={`/account/${accountId}`} end className={({ isActive }) => 'bb-tab' + (isActive ? ' is-active' : '')}>
+          <IGrid /><span>Dashboard</span>
+        </NavLink>
+      )}
+      <NavLink to="/history" end className={({ isActive }) => 'bb-tab' + (isActive ? ' is-active' : '')}>
+        <IHistory /><span>History</span>
+      </NavLink>
+      {accountId && (
+        <NavLink to={`/account/${accountId}/settings`} className={({ isActive }) => 'bb-tab' + (isActive ? ' is-active' : '')}>
+          <ISettings /><span>Settings</span>
+        </NavLink>
+      )}
+      <NavLink to="/docs" className={({ isActive }) => 'bb-tab' + (isActive ? ' is-active' : '')}>
+        <BookOpen aria-hidden="true" /><span>Docs</span>
+      </NavLink>
+    </nav>
+    </>
   );
 }
 

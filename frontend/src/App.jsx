@@ -9,6 +9,8 @@ import axios from 'axios';
 import { ToastProvider } from './components/Toast';
 // Auto-pace orchestrator — fires once per browser session after auth.
 import AutoPaceRunner from './components/AutoPaceRunner';
+// Chief: read-only fact-check chat. Hides itself on pages where it doesn't apply.
+import ChiefWidget from './components/ChiefWidget';
 
 // Pages
 import Login from './pages/Login';
@@ -86,6 +88,7 @@ function App() {
             </>
           )}
         </Routes>
+        {user && <ChiefWidget />}
       </Router>
     </ToastProvider>
   );

@@ -6,7 +6,7 @@ from sqlalchemy import text
 from flask_cors import CORS
 from dotenv import load_dotenv
 from database import db
-from routes import auth_bp, accounts_bp, campaigns_bp, pacing_bp, settings_bp, history_bp, sheets_bp
+from routes import auth_bp, accounts_bp, campaigns_bp, pacing_bp, settings_bp, history_bp, sheets_bp, chief_bp
 
 load_dotenv()
 
@@ -97,6 +97,7 @@ app.register_blueprint(pacing_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(history_bp)
 app.register_blueprint(sheets_bp)
+app.register_blueprint(chief_bp)
 
 # Error handlers
 @app.errorhandler(404)

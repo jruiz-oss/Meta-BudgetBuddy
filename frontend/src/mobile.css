@@ -1,0 +1,177 @@
+/* ============================================================
+   PHONE LAYOUT
+   Loaded AFTER index.css (see index.jsx) so it wins on equal specificity.
+   Everything that changes the layout lives inside the media query below, so
+   desktop and tablet are untouched. The only rule outside it hides the new
+   bottom tab bar by default.
+
+   Rules this file follows:
+   - Nothing is hidden or removed on phones. Tables keep every column and
+     scroll sideways inside .bb-table-scroll with the first (name) column pinned.
+   - Sizes scale with clamp() and vw, not per-device tweaks.
+   - The page itself never scrolls sideways.
+   - Inputs are 16px so iOS Safari does not zoom the page on focus.
+   ============================================================ */
+
+/* Bottom tab bar: only exists on phones. */
+.bb-tabbar { display: none; }
+
+@media (max-width: 720px) {
+  :root {
+    --bb-tabbar-h: 56px; /* the Chief button and page padding read this */
+  }
+
+  /* ---------- page never shifts sideways ---------- */
+  html, body { overflow-x: clip; max-width: 100%; }
+  .bb-app, .bb-main { max-width: 100%; overflow-x: clip; }
+
+  /* ---------- shell: one column, tab bar replaces the left nav ---------- */
+  .bb-app {
+    display: block;
+    grid-template-columns: none;
+    grid-template-rows: none;
+  }
+  .bb-sidebar { display: none; }
+  .bb-main {
+    padding:
+      clamp(12px, 3.6vw, 18px)
+      clamp(10px, 3.6vw, 18px)
+      calc(var(--bb-tabbar-h) + env(safe-area-inset-bottom, 0px) + 28px);
+    margin: 0;
+  }
+
+  .bb-tabbar {
+    display: flex;
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 50;
+    height: calc(var(--bb-tabbar-h) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: var(--bb-surface);
+    border-top: 1px solid var(--bb-line);
+    box-shadow: 0 -2px 12px rgba(15, 18, 22, 0.06);
+  }
+  .bb-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px;
+    color: var(--bb-mute);
+    font-size: clamp(9.5px, 2.7vw, 11px);
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .bb-tab svg { width: clamp(18px, 5.4vw, 22px); height: clamp(18px, 5.4vw, 22px); flex-shrink: 0; }
+  .bb-tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bb-tab.is-active { color: var(--bb-accent); }
+
+  /* ---------- type scale ---------- */
+  .bb-h1, .bb-h1-sm, .bb-page-title { font-size: clamp(20px, 6.2vw, 26px); }
+  .bb-sub { font-size: clamp(12.5px, 3.5vw, 14px); max-width: none; }
+
+  /* ---------- page headers: title first, buttons wrap underneath ---------- */
+  .bb-header {
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .bb-header > :first-child { flex: none; width: 100%; }
+  .bb-header-actions {
+    width: 100%;
+    flex-shrink: 1;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-left: 0 !important; /* some pages push actions right with an inline margin */
+  }
+  .bb-actions-divider { display: none; } /* thin rule between button groups; pointless once they wrap */
+
+  /* ---------- touch-size controls ---------- */
+  .bb-btn { height: clamp(36px, 10.4vw, 42px); padding: 0 clamp(10px, 3.2vw, 14px); }
+  .bb-btn-sm { height: clamp(32px, 9vw, 36px); }
+  input, select, textarea { font-size: 16px; }
+  .bb-search input { height: clamp(40px, 11vw, 46px); }
+  .bb-kbd { display: none; } /* the only thing hidden: a desktop keyboard-shortcut hint */
+
+  /* ---------- search and filters stack; pills scroll sideways ---------- */
+  .bb-search { margin-bottom: 12px; }
+  .bb-filter-row, .bb-filter-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+    margin-left: calc(-1 * clamp(10px, 3.6vw, 18px));
+    margin-right: calc(-1 * clamp(10px, 3.6vw, 18px));
+    padding-left: clamp(10px, 3.6vw, 18px);
+    padding-right: clamp(10px, 3.6vw, 18px);
+  }
+  .bb-filter-row::-webkit-scrollbar, .bb-filter-bar::-webkit-scrollbar { display: none; }
+  .bb-filter-pill, .bb-filter-btn, .bb-sort { flex: 0 0 auto; }
+  .bb-sort { margin-left: 0; }
+
+  /* ---------- account cards / section headers ---------- */
+  .bb-acct-head { flex-wrap: wrap; gap: 10px 14px; padding: 12px clamp(12px, 3.6vw, 20px); }
+  .bb-acct-stats { gap: clamp(12px, 4vw, 20px); flex-wrap: wrap; }
+  .bb-acct-spacer { flex-basis: 100%; height: 0; }
+
+  /* ---------- tables: every column stays, they scroll inside the wrapper ---------- */
+  .bb-table-scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Real widths: the table is as wide as its content (min: the card), so numbers
+     never wrap or overlap. Docs tables are prose and keep wrapping (see below). */
+  .bb-table-scroll:not(.dx-table) > .bb-table { width: max-content; min-width: 100%; }
+  .bb-table { font-size: clamp(12px, 3.3vw, 13.5px); }
+  .bb-table thead th { padding: 8px clamp(8px, 2.6vw, 12px); }
+  .bb-table tbody td { padding: 8px clamp(8px, 2.6vw, 12px); }
+
+  /* Pinned name column. :where() keeps this at zero specificity so row tints
+     (.bb-table-row-tint-*, .bb-row-sheet-unmatched) still colour the pinned cell. */
+  :where(.bb-table) th:first-child,
+  :where(.bb-table) td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--bb-surface);
+    box-shadow: 1px 0 0 var(--bb-line-row, var(--bb-line));
+  }
+  :where(.bb-table) thead th:first-child { z-index: 3; background: var(--bb-surface-2); }
+  .bb-table tbody tr:hover td:first-child { background: var(--bb-surface-2); }
+  .bb-row-group-head td:first-child { background: var(--bb-surface-2); }
+  /* Long names ellipsize inside the pinned column instead of eating the screen. */
+  .bb-table td:first-child .bb-row-name { max-width: clamp(120px, 38vw, 200px); }
+  .bb-table td:first-child, .bb-table th:first-child {
+    padding-left: clamp(10px, 3.2vw, 20px);
+  }
+
+  /* Docs tables are prose: keep wrapping, but scroll rather than crush. */
+  .dx-table .bb-table { min-width: 520px; }
+
+  /* ---------- modals fit the screen ---------- */
+  .bb-modal-backdrop { padding: clamp(8px, 3vw, 20px); align-items: flex-end; }
+  .bb-modal { max-height: 92dvh; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .bb-modal-head, .bb-modal-body, .bb-modal-foot { padding-left: clamp(12px, 4vw, 20px); padding-right: clamp(12px, 4vw, 20px); }
+  .bb-modal-body { overflow-x: auto; }
+  .bb-modal-foot { flex-wrap: wrap; }
+
+  /* ---------- floating bits stay inside the screen ---------- */
+  .bb-toast-panel { top: 10px; right: 10px; left: 10px; width: auto; }
+  .bb-autopace-float { top: 10px; right: 10px; max-width: calc(100vw - 20px); }
+
+  /* ---------- Chief: full-width sheet above the tab bar ---------- */
+  .chief-fab { right: 14px; }
+  .chief-panel { right: 8px; left: 8px; width: auto; border-radius: 18px; }
+
+  /* ---------- Docs (own shell, no tab bar) ---------- */
+  .dx-topbar { padding: 0 clamp(10px, 3.6vw, 16px); }
+  .dx-shell { padding: 0 clamp(12px, 4vw, 18px); }
+  .dx-h1 { font-size: clamp(22px, 7vw, 28px); }
+  .dx-article { overflow-wrap: anywhere; }
+}

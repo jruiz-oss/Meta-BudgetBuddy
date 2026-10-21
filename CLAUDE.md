@@ -46,7 +46,9 @@ Meta BudgetBuddy/
 ├── backend/
 │   ├── app.py              # Flask app entry point, DB init, blueprint registration
 │   ├── database.py         # SQLAlchemy models
-│   ├── meta_client.py      # Meta API calls (spend data, budget updates)
+│   ├── meta_client.py      # Meta API calls (spend data, budget updates, insights)
+│   ├── chief.py            # Chief chat agent: facts snapshot, read-only tools, Claude loop
+│   ├── tests/              # pytest (fake Meta + Anthropic clients, SQLite in memory)
 │   └── routes/
 │       ├── auth.py         # Register, login, logout, /me
 │       ├── accounts.py     # CRUD for ad accounts
@@ -54,13 +56,16 @@ Meta BudgetBuddy/
 │       ├── pacing.py       # /run (dry run) and /apply (live budget changes)
 │       ├── settings.py     # Pacing params, flight config (ALWAYS_ON vs LIMITED)
 │       ├── history.py      # Audit log: pacing runs + budget adjustments
+│       ├── chief.py        # /api/chief/status and /api/chief/chat
 │       └── sheets.py       # Google Sheets integration (config, preview, sync, write)
 ├── frontend/
 │   ├── src/
 │   │   ├── index.css       # Global design system (all bb-* classes live here)
+│   │   ├── mobile.css      # Phone styles (<=768px). Imported LAST in index.jsx
 │   │   ├── App.jsx
 │   │   ├── components/
-│   │   │   └── Sidebar.jsx
+│   │   │   ├── Sidebar.jsx      # Left nav + bottom tab bar on phones
+│   │   │   └── ChiefWidget.jsx  # Floating chat (+ ChiefWidget.css)
 │   │   └── pages/
 │   │       ├── Home.jsx
 │   │       ├── AccountDashboard.jsx
@@ -110,6 +115,10 @@ Meta BudgetBuddy/
 ### History
 - `GET /api/history/:id/pacing-runs`
 - `GET /api/history/:id/adjustments`
+
+### Chief (read-only chat)
+- `GET /api/chief/status` — whether `ANTHROPIC_API_KEY` is set
+- `POST /api/chief/chat` — body `{messages, tz, page}`; returns `{reply}`. Rate limited (20 per 5 min per user)
 
 ---
 
@@ -219,6 +228,10 @@ SMTP_USER=resend                    # Resend uses literal "resend"; SendGrid use
 SMTP_PASS=re_xxxxxxxxxxxxxxxxxx     # API key / password
 SMTP_FROM=BudgetBuddy <noreply@yourdomain.com>
 
+# Chief chat (session 19). Without ANTHROPIC_API_KEY the Chief button shows as unavailable.
+ANTHROPIC_API_KEY=sk-ant-...
+CHIEF_MODEL=claude-haiku-4-5        # optional override
+
 # Optional — manual cron trigger (session 8). Required if you want to fire pacing
 # from an external scheduler instead of relying on APScheduler.
 CRON_SECRET=<long random string>
@@ -256,6 +269,9 @@ each user whose accounts have `daily_digest_enabled=TRUE` (when SMTP is configur
 ## Running Locally
 
 ```bash
+# Backend tests (terminal 0)
+cd backend && source .venv/bin/activate && pip install pytest && python -m pytest tests -q
+
 # Backend (terminal 1)
 cd backend && source .venv/bin/activate && python app.py
 # → http://localhost:5000
@@ -284,6 +300,22 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 ## Recent Changes Log
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
+
+- [x] **2026-10-20 (session 19)** - Phone layout + Chief, a read-only chat agent (ported from Google BudgetBuddy, adapted).
+  - **Phone layout.** New `frontend/src/mobile.css`, imported last in `index.jsx` so it wins over component CSS. Nothing hidden except the `.bb-kbd` hint. Tables scroll sideways with the name column pinned left, left nav becomes a bottom tab bar (`Sidebar.jsx`), headers stack, filters stack, filter pills scroll, page clips horizontal overflow, inputs are 16px so iOS doesn't zoom. `public/index.html` viewport now has `viewport-fit=cover` for the safe area. The left nav's account list is replaced on phones by the tab bar plus the Accounts page.
+  - **iPhone login.** No change needed: the Vercel `/api/*` rewrite to Railway already exists and the frontend uses relative URLs, so cookies are first party. Not tested on a real iPhone yet, check after deploy.
+  - **Chief.** `backend/chief.py` builds a facts snapshot from the DB (campaigns, groups, flights, budget, spend through the last pacing run). All math is in code. Claude only phrases the answer and runs a capped tool loop (5 rounds). Live read-only tools hit Meta: `find_campaigns`, `get_daily_metrics` (clicks, conversions, spend per day, one account, max 31 days), `get_spend_now`. Tool failures return an error to the model, never zeros. Replies are sanitized (no en or em dashes) and capped. Route in `routes/chief.py`, UI in `ChiefWidget.jsx`, shown on `/`, account and campaign pages only. Needs `frontend/public/chief.jpg` (supplied by Jorge).
+  - **Definitions.** Budget is `monthly_budget` or the group budget (flights have no separate budget). Conversions are the sum of standard events: lead, purchase, complete_registration, schedule, submit_application, contact, subscribe, start_trial (custom pixel events not counted). "Today" for flight math is the browser time zone; live tools use the Meta account's time zone. Pacing code still uses UTC (unchanged).
+  - **`meta_client.py`**: added `get_account_info()` and `get_insights()` (paginated, raises `MetaAPIError`). Graph API v18.0 is still pinned, flagged only.
+  - **Tests.** First tests in the repo: `backend/tests/` (69, all pass), fake Meta and Anthropic clients, no network.
+  - **New deps** in `requirements.txt`: `anthropic==1.17.0`, `tzdata`. Check Railway's Python version builds them.
+  - ⚠️ **Set `ANTHROPIC_API_KEY` on Railway** (optional `CHIEF_MODEL`). No DB migration.
+  - Docs: added "Chief" and "Using it on your phone" pages in `frontend/src/docs/pages.jsx`.
+  - Not verified: real phone look (only headless Chromium emulation at 320 to 430 px), live Meta and Anthropic calls.
+
+- [x] **2026-10-19 (docs refresh)** - Rewrote stale parts of `frontend/src/docs/pages.jsx` to match current behavior. No code or DB changes.
+  - Added: budget groups + 0% "Spend only" members, sheet note formats (incl. promo flight lines), column D scope, Commit-name rule and hidden-campaign rules, Ads Manager link, Refresh from sheet + Sheet match, current-month-only spend write-back.
+  - Fixed: History page scopes, digest recipient (teammate who linked the account), auto-run wording (4 hour cooldown), Settings tab names, Limited flight with no dates, removed the Goodwill cleanup migration reference and the unverified wake-up time.
 
 - [x] **2026-09-30 (docs site)** - Standalone in-app docs at `/docs` (usage + troubleshooting).
   - **`frontend/src/pages/Docs.jsx` + `Docs.css`** - own shell (top bar with Home button, left nav with search, article, "On this page"). Does not use `Sidebar` or `.bb-app`. Routes `/docs` and `/docs/:slug` added in `App.jsx` (login required).
