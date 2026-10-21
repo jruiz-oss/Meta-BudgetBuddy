@@ -40,6 +40,9 @@ function Accounts({ user, onLogout }) {
   const navigate = useNavigate();
 
   const [accounts, setAccounts] = useState([]);
+  // Archived accounts (clients who've left) are hidden unless you ask for them.
+  const [showArchived, setShowArchived] = useState(false);
+  const [archiving, setArchiving] = useState({});
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [addSaving, setAddSaving] = useState(false);
@@ -67,11 +70,29 @@ function Accounts({ user, onLogout }) {
   const [refreshing, setRefreshing] = useState({});
 
   useEffect(() => { fetchAccounts(); fetchGlobalToken(); fetchGlobalSheet(); }, []);
+  // Re-fetch when the archived toggle flips — the server does the filtering.
+  useEffect(() => { fetchAccounts(); /* eslint-disable-next-line */ }, [showArchived]);
+
+  // Archive is a reversible flag, never a delete: a deleted account would cascade
+  // away every campaign, pacing row and budget adjustment it ever had.
+  const handleArchiveToggle = async (account) => {
+    const archivedNow = account.is_active === false;
+    setArchiving(p => ({ ...p, [account.id]: true }));
+    try {
+      // Archiving sets is_active false; restoring sets it true.
+      await axios.put(`/api/accounts/${account.id}`, { is_active: archivedNow });
+      await fetchAccounts();
+    } catch {
+      setError(archivedNow ? 'Failed to restore account' : 'Failed to archive account');
+    } finally {
+      setArchiving(p => ({ ...p, [account.id]: false }));
+    }
+  };
 
   const fetchAccounts = async () => {
     try {
       setLoading(true);
-      const res = await axios.get('/api/accounts');
+      const res = await axios.get('/api/accounts', { params: showArchived ? { include_archived: 1 } : {} });
       setAccounts(res.data.accounts || res.data || []);
     } catch { setError('Failed to load accounts'); }
     finally { setLoading(false); }
@@ -338,16 +359,29 @@ function Accounts({ user, onLogout }) {
             {accounts.length === 0 ? 'No accounts yet. Click + Add Account to get started.' : 'No accounts match this filter.'}
           </div>
         ) : (
+          <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12,
+                          fontSize: 'var(--bb-text-sm)', color: 'var(--bb-fg-3)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={showArchived}
+              onChange={e => setShowArchived(e.target.checked)} />
+            Show archived accounts
+          </label>
           <div className="bb-acct-grid">
             {filtered.map(account => {
               const tone = toneForCategory(account.status_category);
               const label = labelForCategory(account.status_category);
               return (
                 <div key={account.id} className="bb-acct-card"
+                  style={account.is_active === false ? { opacity: 0.6 } : undefined}
                   onClick={() => navigate(`/account/${account.id}`)}>
                   <div className="bb-acct-card-head">
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div className="bb-acct-card-name">{account.account_name}</div>
+                      <div className="bb-acct-card-name">
+                        {account.account_name}
+                        {account.is_active === false && (
+                          <span className="bb-mode" style={{ marginLeft: 8, fontWeight: 400 }}>archived</span>
+                        )}
+                      </div>
                       <div className="bb-acct-card-id">Meta ID: {account.meta_account_id || '—'}</div>
                     </div>
                     {tone && <span className={`bb-state-pill is-${tone}`}>{label}</span>}
@@ -380,11 +414,20 @@ function Accounts({ user, onLogout }) {
                       disabled={!!refreshing[account.id]}>
                       {refreshing[account.id] ? <Loader2 size={13} className="bb-spin" /> : <RefreshCw size={13} />}
                     </button>
+                    <button className="bb-btn bb-btn-sm"
+                      title={account.is_active === false
+                        ? 'Restore this account to Home and pacing runs'
+                        : 'Stop pacing this account and hide it. Keeps all history; reversible.'}
+                      disabled={!!archiving[account.id]}
+                      onClick={e => { e.stopPropagation(); handleArchiveToggle(account); }}>
+                      {archiving[account.id] ? '…' : (account.is_active === false ? 'Restore' : 'Archive')}
+                    </button>
                   </div>
                 </div>
               );
             })}
           </div>
+          </>
         )}
 
         {/* Add Account modal */}

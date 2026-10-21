@@ -267,14 +267,15 @@ def _auto_import_campaigns(account):
 def get_accounts():
     # Shared workspace (session 13): every logged-in user sees every account
     # in the DB. Account.user_id is preserved for audit + token fallback only.
-    accounts = (
-        Account.query
-        .options(
-            selectinload(Account.campaigns).selectinload(Campaign.pacing_data),
-        )
-        .order_by(Account.account_name.asc())
-        .all()
+    # Archived accounts are hidden by default; the Accounts page asks for them
+    # explicitly when you flip "show archived".
+    include_archived = str(request.args.get('include_archived', '')).lower() in ('1', 'true', 'yes')
+    q = Account.query.options(
+        selectinload(Account.campaigns).selectinload(Campaign.pacing_data),
     )
+    if not include_archived:
+        q = q.filter(Account.is_active.is_(True))
+    accounts = q.order_by(Account.account_name.asc()).all()
     return jsonify({'accounts': [acc.to_dict() for acc in accounts]}), 200
 
 
@@ -358,6 +359,10 @@ def update_account(account_id):
     # Allow updating the per-account token override (empty string = revert to global)
     if 'meta_token' in data:
         account.meta_token = (data['meta_token'] or '').strip()
+    # Archive / restore. Kept on the normal update endpoint so it's one round trip
+    # from the UI, and reversible by design.
+    if 'is_active' in data:
+        account.is_active = bool(data['is_active'])
 
     db.session.commit()
     return jsonify({'account': account.to_dict()}), 200

@@ -70,6 +70,10 @@ class Account(db.Model):
     # Per-account token override. Leave blank to fall back to the user's global_meta_token.
     # Encrypted at rest via EncryptedString — see User.global_meta_token for the rationale.
     meta_token = db.Column(EncryptedString(2000), nullable=False, default='')
+    # Archived accounts (client gone) stay in the database with all their history but
+    # drop out of Home, the account list and every pacing run. Reversible — this is
+    # deliberately NOT a delete, which would cascade away campaigns and pacing rows.
+    is_active = db.Column(db.Boolean, nullable=False, default=True, server_default='true')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property
@@ -115,6 +119,7 @@ class Account(db.Model):
                 'user_id': self.user_id,
                 'account_name': self.account_name,
                 'meta_account_id': self.meta_account_id,
+                'is_active': bool(self.is_active),
                 'created_at': self.created_at.isoformat() if self.created_at else None,
             }
 
@@ -161,6 +166,7 @@ class Account(db.Model):
             'account_name': self.account_name,
             'meta_account_id': self.meta_account_id,
             'created_at': self.created_at.isoformat(),
+            'is_active': bool(self.is_active),
             'campaign_count': len(active_campaigns),
             'total_monthly_budget': round(total_monthly_budget, 2),
             'status_category': status_category,

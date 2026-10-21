@@ -454,6 +454,8 @@ def get_all_campaigns():
         result = []
 
         for account in accounts:
+            if not account.is_active:
+                continue      # archived — no pacing, no dashboard presence
             # Most recent pacing run for this account (already loaded above).
             last_run = None
             if account.pacing_runs:

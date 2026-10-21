@@ -168,6 +168,8 @@ def cron_run_all_accounts():
 # Deliberately NOT gated on SKIP_CREATE_ALL — the whole point is to patch a
 # database whose tables already exist. New TABLES still come from create_all.
 _SCHEMA_PATCHES = [
+    # session 21 — archived accounts
+    "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
     # session 19.1 — Easy-Pace checkbox drives unattended apply
     "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS easy_pace BOOLEAN NOT NULL DEFAULT FALSE",
     # session 17 — sheet match flag
@@ -280,7 +282,7 @@ def _scheduled_pacing_job():
             # Per-user digest accumulator: { user_id: [account_summary, ...] }
             digest_buckets = {}
 
-            accounts = Account.query.all()
+            accounts = Account.query.filter(Account.is_active.is_(True)).all()
             for account in accounts:
                 settings = AccountSettings.query.filter_by(account_id=account.id).first()
                 if not settings:
