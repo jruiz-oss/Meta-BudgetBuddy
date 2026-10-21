@@ -186,6 +186,58 @@ const timeAgo = (isoStr) => {
 // Map status → tone color CSS variable
 // Colour follows the same axis as the label: ahead of expected spend is the warm
 // warning, behind is the cool one.
+// ── Urgent issues ───────────────────────────────────────────────────────────
+// Thresholds live here so they're easy to argue with. All of them are measured
+// against the campaign's OWN window (expected_spend is window-aware), so a campaign
+// that launched mid-month isn't flagged purely for having started late.
+const URGENT_PACE_OVER = 1.25;     // 25%+ ahead of expected spend
+const URGENT_PACE_UNDER = 0.75;    // 25%+ behind
+const URGENT_PACE_SEVERE_OVER = 1.5;
+const URGENT_PACE_SEVERE_UNDER = 0.5;
+const URGENT_CHANGE_PCT = 50;      // daily needs a 50%+ move
+const URGENT_CHANGE_SEVERE_PCT = 100;
+
+// Returns null when nothing is wrong, otherwise { severity, reason }.
+// severity 3 = look now, 2 = today, 1 = worth a glance.
+function urgency(c) {
+  const lp = c.latest_pacing;
+  if (!lp) return null;
+  const st = String(lp.status || '').toUpperCase();
+  if (st === 'NO_SHEET_ROW' || st === 'NO_ALLOCATION') return null;  // handled elsewhere
+  if ((c.flight_status || '') === 'ended') return null;
+
+  const spend = Number(lp.actual_spend) || 0;
+  const expected = Number(lp.expected_spend) || 0;
+  const ratio = lp.pace_ratio == null ? null : Number(lp.pace_ratio);
+  const cur = Number(lp.current_daily_budget) || 0;
+  const rec = lp.recommended_daily_budget == null ? null : Number(lp.recommended_daily_budget);
+  const changePct = (cur > 0 && rec != null) ? Math.abs((rec - cur) / cur) * 100 : null;
+
+  // Delivery failure: money budgeted, a window that has opened, nothing spent.
+  if (spend === 0 && expected > 0) {
+    return { severity: 3, reason: 'No delivery — $0 spent against $' + expected.toFixed(0) + ' expected' };
+  }
+  if (ratio != null && (ratio >= URGENT_PACE_SEVERE_OVER || ratio <= URGENT_PACE_SEVERE_UNDER)) {
+    return {
+      severity: 3,
+      reason: `${Math.round(Math.abs(ratio - 1) * 100)}% ${ratio > 1 ? 'over' : 'under'} pace`,
+    };
+  }
+  if (changePct != null && changePct >= URGENT_CHANGE_SEVERE_PCT) {
+    return { severity: 2, reason: `Daily needs a ${Math.round(changePct)}% change` };
+  }
+  if (ratio != null && (ratio >= URGENT_PACE_OVER || ratio <= URGENT_PACE_UNDER)) {
+    return {
+      severity: 2,
+      reason: `${Math.round(Math.abs(ratio - 1) * 100)}% ${ratio > 1 ? 'over' : 'under'} pace`,
+    };
+  }
+  if (changePct != null && changePct >= URGENT_CHANGE_PCT) {
+    return { severity: 1, reason: `Daily needs a ${Math.round(changePct)}% change` };
+  }
+  return null;
+}
+
 function statusTone(status, paceRatio) {
   const s = (status || '').toUpperCase();
   if (s === 'NO_SHEET_ROW' || s === 'NO_ALLOCATION') return 'var(--bb-mute)';
@@ -247,7 +299,7 @@ function accountTone(acct, actionableCount) {
 }
 
 // ── Account section with collapse ────────────────────────────
-function AccountSection({ acct, applying, skipped, results, search,
+function AccountSection({ acct, applying, skipped, results, search, viewFilter,
   onApplyCbo, onApplyAdset, onSkip, onUnskip, onApplyAll, onEditAlloc }) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -542,7 +594,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                       <td>
                         {lp ? <StatusPill status={lp.status} paceRatio={lp.pace_ratio} /> : null}
                       </td>
-                      <td><NotesCell notes={campaign.sheet_notes || ''} /></td>
+                      <td><NotesCell notes={(viewFilter === 'urgent' && urgency(campaign)?.reason) || campaign.sheet_notes || ''} /></td>
                       <td><span style={{ fontSize: 'var(--bb-text-sm)', color: 'var(--bb-mute)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>per ad set <IArrowRight /></span></td>
                     </tr>
                   );
@@ -632,7 +684,7 @@ function AccountSection({ acct, applying, skipped, results, search,
                       ) : '—'}
                     </td>
                     <td>{lp ? <StatusPill status={status} paceRatio={lp.pace_ratio} /> : <span style={{ color: 'var(--bb-mute)' }}>No data</span>}</td>
-                    <td><NotesCell notes={campaign.sheet_notes || ''} /></td>
+                    <td><NotesCell notes={(viewFilter === 'urgent' && urgency(campaign)?.reason) || campaign.sheet_notes || ''} /></td>
                     <td><ActionCell rowKey={rowKey} res={res} isApplying={isApplying} isSkipped={isSkipped}
                       needsAction={needsAction} unmatched={cboUnmatched}
                       spendOnly={campaign.group_allocation_pct === 0}
@@ -1009,6 +1061,20 @@ function Home({ user, onLogout }) {
     [needsAttention],
   );
 
+  const urgentCampaignsFor = useCallback(
+    (acct) => (acct.campaigns || []).concat(acct.hidden_campaigns || [])
+      .map(c => ({ c, u: urgency(c) }))
+      .filter(x => x.u)
+      .sort((a, b) => b.u.severity - a.u.severity)
+      .map(x => x.c),
+    [],
+  );
+
+  const urgentCount = useMemo(
+    () => accountBlocks.reduce((n, acct) => n + urgentCampaignsFor(acct).length, 0),
+    [accountBlocks, urgentCampaignsFor],
+  );
+
   const todoCount = useMemo(
     () => accountBlocks.reduce((n, acct) => n + todoCampaignsFor(acct).length, 0),
     [accountBlocks, todoCampaignsFor],
@@ -1024,6 +1090,11 @@ function Home({ user, onLogout }) {
   // the page doesn't fill up with empty client headers.
   const visibleBlocks = useMemo(() => {
     if (viewFilter === 'all') return accountBlocks;
+    if (viewFilter === 'urgent') {
+      return accountBlocks
+        .map(acct => ({ ...acct, campaigns: urgentCampaignsFor(acct), hidden_campaigns: [] }))
+        .filter(acct => acct.campaigns.length > 0);
+    }
     if (viewFilter === 'todo') {
       return accountBlocks
         .map(acct => ({ ...acct, campaigns: todoCampaignsFor(acct), hidden_campaigns: [] }))
@@ -1032,7 +1103,7 @@ function Home({ user, onLogout }) {
     return accountBlocks
       .map(acct => ({ ...acct, campaigns: (acct.campaigns || []).filter(c => c.easy_pace) }))
       .filter(acct => acct.campaigns.length > 0);
-  }, [accountBlocks, viewFilter, todoCampaignsFor]);
+  }, [accountBlocks, viewFilter, todoCampaignsFor, urgentCampaignsFor]);
 
   const handleRunAll = async () => {
     if (runningAll || allAccounts.length === 0) return;
@@ -1521,6 +1592,11 @@ function Home({ user, onLogout }) {
               onClick={() => setViewFilter('all')}>
               All campaigns
             </button>
+            <button className={`bb-tab-btn ${viewFilter === 'urgent' ? 'is-active' : ''}`}
+              onClick={() => setViewFilter('urgent')}
+              title="Campaigns badly off pace, needing a big daily change, or not delivering at all">
+              Urgent{urgentCount ? ` · ${urgentCount}` : ''}
+            </button>
             <button className={`bb-tab-btn ${viewFilter === 'todo' ? 'is-active' : ''}`}
               onClick={() => setViewFilter('todo')}
               title="Everything still unresolved: recommendations you haven't applied or skipped, campaigns with no sheet row, and campaigns that haven't paced this month">
@@ -1570,9 +1646,12 @@ function Home({ user, onLogout }) {
               icon={null}
               title={viewFilter === 'easy' ? 'No Easy-Pace campaigns'
                 : viewFilter === 'todo' ? 'Nothing left to pace'
+                : viewFilter === 'urgent' ? 'Nothing urgent'
                 : 'No campaigns tracked yet'}
               body={viewFilter === 'easy'
                 ? 'Tick the Easy-Pace box on the sheet for the campaigns you want applied without review, then refresh from the sheet.'
+                : viewFilter === 'urgent'
+                  ? 'No campaign is badly off pace, needs a large daily change, or has stopped delivering.'
                 : viewFilter === 'todo'
                   ? 'Nothing unresolved: every campaign is either applied, skipped, on pace, or deliberately excluded.'
                   : 'Connect a Meta ad account and import campaigns to start pacing recommendations.'}
@@ -1590,6 +1669,7 @@ function Home({ user, onLogout }) {
               skipped={skipped}
               results={results}
               search={search}
+              viewFilter={viewFilter}
               onApplyCbo={handleApplyCbo}
               onApplyAdset={handleApplyAdset}
               onSkip={rk => setSkipped(p => ({ ...p, [rk]: true }))}
