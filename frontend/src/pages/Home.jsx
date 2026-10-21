@@ -1742,6 +1742,20 @@ function Home({ user, onLogout }) {
             />
           ))
         )}
+
+        {viewFilter === 'all' && emptyAccountCount > 0 && (
+          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--bb-mute)',
+                        display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>
+              {emptyAccountCount} account{emptyAccountCount === 1 ? '' : 's'} with nothing running
+              {showEmptyAccounts ? ' shown' : ' hidden'}
+            </span>
+            <button className="bb-btn bb-btn-ghost bb-btn-sm"
+              onClick={() => setShowEmptyAccounts(v => !v)}>
+              {showEmptyAccounts ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        )}
       </main>
 
       {/* Allocation editor modal (inline ABO % edit from Home) */}
