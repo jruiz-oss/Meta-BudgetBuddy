@@ -301,6 +301,13 @@ All UI components use `bb-*` CSS classes defined in `frontend/src/index.css`. Ke
 
 > **Instructions for Jorge:** After each work session where you make significant changes, add a bullet here describing what changed. This is the most important section for giving Claude context across sessions.
 
+- [x] **2026-10-21 (session 19.5)** - Chief opens with "Woof, I'm Chief." and chats are saved separately.
+  - **`ChiefWidget.jsx`.** `GREETING` is now just "Woof, I'm Chief." (the header already says "Quick fact checks. Read only."). Chats persist in `localStorage` under `bb.chief.chats.v1`: closing the panel or refreshing keeps the current chat, the **+** in the header starts a fresh one, and the clock icon opens a list of saved chats (open, or delete with a two-tap confirm). A new chat is only saved on its first message, so no empty chats pile up. Latest 30 chats kept, 100 messages each, newest by last activity. Error bubbles are not saved.
+  - A reply that lands after you switch chats goes to the chat that asked, not the one on screen (replies are patched by chat id, and a deleted chat just drops the reply).
+  - **Browser-only, on purpose.** Nothing on the server, no DB migration. Chats don't follow you across browsers or devices, and anyone on the same browser profile can see them.
+  - `ChiefWidget.css`: `.chief-close` renamed `.chief-iconbtn`, plus list styles. Docs: new "Saved chats" section on the Chief page in `pages.jsx`.
+  - Verified: `@babel/parser` clean on `ChiefWidget.jsx` and `pages.jsx`. Not run in a browser (full build can't run over the device bridge).
+
 - [x] **2026-10-20 (session 19)** - Phone layout + Chief, a read-only chat agent (ported from Google BudgetBuddy, adapted).
   - **Phone layout.** New `frontend/src/mobile.css`, imported last in `index.jsx` so it wins over component CSS. Nothing hidden except the `.bb-kbd` hint. Tables scroll sideways with the name column pinned left, left nav becomes a bottom tab bar (`Sidebar.jsx`), headers stack, filters stack, filter pills scroll, page clips horizontal overflow, inputs are 16px so iOS doesn't zoom. `public/index.html` viewport now has `viewport-fit=cover` for the safe area. The left nav's account list is replaced on phones by the tab bar plus the Accounts page.
   - **iPhone login.** No change needed: the Vercel `/api/*` rewrite to Railway already exists and the frontend uses relative URLs, so cookies are first party. Not tested on a real iPhone yet, check after deploy.

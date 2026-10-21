@@ -49,7 +49,7 @@ export const PAGES = [
         body: (
           <Steps>
             <Step title="Pacing runs">
-              Automatically each night, when you open the app (at most once every 4 hours), or manually with
+              Automatically each night, when you open the app (only if nothing has paced since 8:00 AM your local time), or manually with
               <strong> Run pacing</strong>. Nothing is changed in Meta at this point.
             </Step>
             <Step title="You review">
@@ -740,8 +740,8 @@ export const PAGES = [
         title: 'Run when you open the app',
         body: (
           <p>
-            After you log in, the app paces every account once, showing a progress panel. There is a 4 hour cooldown so refreshing
-            the page doesn't start it again. Use <strong>Run in background</strong> on the panel to keep working while it finishes.
+            After you log in, the app paces every account once, showing a progress panel. If it already ran since 8:00 AM your local time,
+            it skips, so refreshing the page doesn't start it again. Use <strong>Run in background</strong> on the panel to keep working while it finishes.
           </p>
         ),
       },
@@ -764,7 +764,7 @@ export const PAGES = [
     group: 'Using the app',
     title: 'Chief (quick questions)',
     lead: 'A small read-only chat for quick fact checks. It looks things up and never changes anything.',
-    keywords: 'chief chat assistant ask question clicks flight spend today read only dog',
+    keywords: 'chief chat assistant ask question clicks flight spend today read only dog history saved chats new chat',
     sections: [
       {
         id: 'what-it-does',
@@ -779,6 +779,26 @@ export const PAGES = [
               Chief does not give advice or recommendations, and it can't change budgets, flights or anything else.
               Answers are one to four sentences.
             </p>
+          </>
+        ),
+      },
+      {
+        id: 'saved-chats',
+        title: 'Saved chats',
+        body: (
+          <>
+            <p>
+              Closing Chief doesn't clear anything. Open it again and you're back in the same chat, even after a refresh.
+              Tap the <strong>+</strong> in the header to start a fresh chat. The old one stays saved.
+            </p>
+            <p>
+              Tap the clock icon to see every saved chat, open one to keep going, or delete it (tap the trash icon twice).
+              A new chat is only saved once you send your first message.
+            </p>
+            <Callout tone="info" title="Saved in this browser only">
+              Chats live in your browser, not on the server. They don't follow you to another browser or device, and clearing
+              site data removes them. Chief keeps the latest 30 chats.
+            </Callout>
           </>
         ),
       },
