@@ -584,6 +584,13 @@ def run_pacing(account_id):
     # belongs in the sheet, so it is fetched for spend only, exactly like a
     # flight-expired group member.
     # ------------------------------------------------------------------
+    # Parsed up here because the paused-campaign filter below needs to know whether
+    # this run is scoped to one campaign. The original parse sits further down; it
+    # reassigns the same values harmlessly. Reading it only there is what made every
+    # pacing run raise UnboundLocalError.
+    body = request.get_json(silent=True) or {}
+    single_campaign_id = body.get("campaign_id")
+
     paused_campaigns = []
     try:
         live_rows = meta.list_campaigns(only_active=False)
