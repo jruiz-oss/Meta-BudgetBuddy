@@ -1002,6 +1002,8 @@ function Home({ user, onLogout }) {
   // is sent to Meta.
   const [easyRunning, setEasyRunning] = useState(false);
   const [syncingSheets, setSyncingSheets] = useState(false);
+  // Accounts whose campaigns are all hidden fold away behind a count.
+  const [showEmptyAccounts, setShowEmptyAccounts] = useState(false);
   const [easyPacePlan, setEasyPacePlan] = useState(null);
   const searchRef = useRef(null);
   const navigate = useNavigate();
@@ -1085,12 +1087,10 @@ function Home({ user, onLogout }) {
       return false;
     }
 
-    const lp0 = c.latest_pacing;
-    const spent0 = lp0 ? Number(lp0.actual_spend) || 0 : 0;
-    // No sheet row AND no spend = a campaign that's simply off. Nothing to fix,
-    // nothing to pace. An unmatched campaign that IS spending still shows, because
-    // that's live money running against a row the sheet doesn't define.
-    if (c.sheet_budget_matched === false) return spent0 > 0;
+
+    // Unmatched campaigns are a SHEET fix, not a pacing decision — they have their
+    // own tab, so this list stays things you can actually apply.
+    if (c.sheet_budget_matched === false) return false;
     const lp = c.latest_pacing;
     // Nothing spent this month means the campaign isn't running, and a campaign
     // that's off doesn't need pacing. Delivery failures are still caught — the
@@ -1110,6 +1110,26 @@ function Home({ user, onLogout }) {
   const todoCampaignsFor = useCallback(
     (acct) => (acct.campaigns || []).concat(acct.hidden_campaigns || []).filter(needsAttention),
     [needsAttention],
+  );
+
+  // Campaigns the sheet doesn't define: rows to add or rename, worst first by spend,
+  // because unbudgeted money is the real cost.
+  const noSheetMatchFor = useCallback(
+    (acct) => (acct.campaigns || []).concat(acct.hidden_campaigns || [])
+      .filter(c => c.sheet_budget_matched === false && (c.flight_status || '') !== 'ended')
+      .sort((a, b) => (Number((b.latest_pacing||{}).actual_spend)||0)
+                    - (Number((a.latest_pacing||{}).actual_spend)||0)),
+    [],
+  );
+
+  const noSheetMatchCount = useMemo(
+    () => accountBlocks.reduce((n, acct) => n + noSheetMatchFor(acct).length, 0),
+    [accountBlocks, noSheetMatchFor],
+  );
+
+  const emptyAccountCount = useMemo(
+    () => accountBlocks.filter(a => (a.campaigns || []).length === 0).length,
+    [accountBlocks],
   );
 
   const urgentCampaignsFor = useCallback(
@@ -1140,7 +1160,16 @@ function Home({ user, onLogout }) {
   // Easy-Pace tab: keep only ticked campaigns, and drop accounts left with none so
   // the page doesn't fill up with empty client headers.
   const visibleBlocks = useMemo(() => {
-    if (viewFilter === 'all') return accountBlocks;
+    if (viewFilter === 'all') {
+      return showEmptyAccounts
+        ? accountBlocks
+        : accountBlocks.filter(a => (a.campaigns || []).length > 0);
+    }
+    if (viewFilter === 'nosheet') {
+      return accountBlocks
+        .map(acct => ({ ...acct, campaigns: noSheetMatchFor(acct), hidden_campaigns: [] }))
+        .filter(acct => acct.campaigns.length > 0);
+    }
     if (viewFilter === 'urgent') {
       return accountBlocks
         .map(acct => ({ ...acct, campaigns: urgentCampaignsFor(acct), hidden_campaigns: [] }))
@@ -1154,7 +1183,7 @@ function Home({ user, onLogout }) {
     return accountBlocks
       .map(acct => ({ ...acct, campaigns: (acct.campaigns || []).filter(c => c.easy_pace) }))
       .filter(acct => acct.campaigns.length > 0);
-  }, [accountBlocks, viewFilter, todoCampaignsFor, urgentCampaignsFor]);
+  }, [accountBlocks, viewFilter, todoCampaignsFor, urgentCampaignsFor, noSheetMatchFor, showEmptyAccounts]);
 
   const handleRunAll = async () => {
     if (runningAll || allAccounts.length === 0) return;
@@ -1664,6 +1693,11 @@ function Home({ user, onLogout }) {
               title="Everything still unresolved: recommendations you haven't applied or skipped, campaigns with no sheet row, and campaigns that haven't paced this month">
               Still to pace{todoCount ? ` · ${todoCount}` : ''}
             </button>
+            <button className={`bb-tab-btn ${viewFilter === 'nosheet' ? 'is-active' : ''}`}
+              onClick={() => setViewFilter('nosheet')}
+              title="Campaigns with no matching row on the sheet — no budget behind them, skipped by pacing">
+              No sheet match{noSheetMatchCount ? ` · ${noSheetMatchCount}` : ''}
+            </button>
             <button className={`bb-tab-btn ${viewFilter === 'easy' ? 'is-active' : ''}`}
               onClick={() => setViewFilter('easy')}
               title="Campaigns ticked Easy-Pace on the sheet — the ones 'Pace all Easy-Pace' will apply">
@@ -1706,11 +1740,14 @@ function Home({ user, onLogout }) {
           <div className="bb-acct">
             <EmptyState
               icon={null}
-              title={viewFilter === 'easy' ? 'No Easy-Pace campaigns'
+              title={viewFilter === 'nosheet' ? 'Every campaign has a sheet row'
+                : viewFilter === 'easy' ? 'No Easy-Pace campaigns'
                 : viewFilter === 'todo' ? 'Nothing left to pace'
                 : viewFilter === 'urgent' ? 'Nothing urgent'
                 : 'No campaigns tracked yet'}
-              body={viewFilter === 'easy'
+              body={viewFilter === 'nosheet'
+                ? 'Nothing is running without a budget behind it.'
+                : viewFilter === 'easy'
                 ? 'Tick the Easy-Pace box on the sheet for the campaigns you want applied without review, then refresh from the sheet.'
                 : viewFilter === 'urgent'
                   ? 'No campaign is badly off pace, needs a large daily change, or has stopped delivering.'
