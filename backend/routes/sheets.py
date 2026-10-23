@@ -1446,6 +1446,13 @@ def sync_budgets_for_account(account_id):
     # this set is unlinked at the end of the sync.
     groups_seen = set()
 
+    # Every row the sheet says belongs to this account, whether or not it ends up
+    # matching a campaign. This is what the client is actually budgeted for, so it
+    # stays visible even when the matching is broken — otherwise a sheet typo makes
+    # an account look like it has no budget at all.
+    sheet_rows_for_account = 0
+    sheet_budget_total = 0.0
+
     updated = []          # campaign budget changes
     allocations_updated = []  # adset allocation changes
     skipped = []
@@ -1482,6 +1489,10 @@ def sync_budgets_for_account(account_id):
                     "reason": "Row name prefix matches a different account — row skipped",
                 })
                 continue
+        sheet_rows_for_account += 1
+        if row.get("monthly_budget") is not None:
+            sheet_budget_total += float(row["monthly_budget"] or 0.0)
+
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
         campaign, score = _match_campaign_with_score(match_name, db_campaigns)
         if not campaign:
@@ -1872,6 +1883,9 @@ def sync_budgets_for_account(account_id):
         settings.sheet_sync_stats = json.dumps({
             "matched": matched_count,
             "total": total_count,
+            # The sheet's own numbers for this account, independent of matching.
+            "sheet_rows": sheet_rows_for_account,
+            "sheet_budget_total": round(sheet_budget_total, 2),
             "synced_at": _dt.utcnow().isoformat(),
         })
         # ------------------------------------------------------------------

@@ -462,11 +462,29 @@ function AccountSection({ acct, applying, skipped, results, search, viewFilter,
   }, [orderedCampaigns]);
   if (q && !acct.account_name.toLowerCase().includes(q) && filteredCampaigns.length === 0) return null;
 
-  const totalBudget = acct.campaigns.reduce((s, c) => s + (c.monthly_budget || 0), 0);
-  const totalSpend  = acct.campaigns.reduce((s, c) => {
-    const lp = c.latest_pacing;
-    return s + (lp ? Number(lp.actual_spend) || 0 : 0);
-  }, 0);
+  // Budget: prefer the SHEET's total for this account over the sum of matched
+  // campaigns. When matching breaks, the campaign sum collapses toward zero and the
+  // account looks unbudgeted — but the client is still budgeted for whatever the
+  // sheet says, and that's the number you need to spot an overspend.
+  const matchedBudget = acct.campaigns.reduce((s, c) => s + (c.monthly_budget || 0), 0);
+  const sheetStats = (() => {
+    try {
+      return typeof acct.sheet_sync_stats === 'string'
+        ? JSON.parse(acct.sheet_sync_stats) : (acct.sheet_sync_stats || null);
+    } catch { return null; }
+  })();
+  const sheetBudget = Number(sheetStats?.sheet_budget_total) || 0;
+  const totalBudget = sheetBudget > 0 ? sheetBudget : matchedBudget;
+  const budgetFromSheet = sheetBudget > 0 && sheetBudget !== matchedBudget;
+
+  // Spend: EVERY tracked campaign, visible or hidden, matched or not. Unmatched
+  // campaigns are still spending the client's money.
+  const totalSpend = (acct.campaigns || []).concat(acct.hidden_campaigns || [])
+    .reduce((s, c) => {
+      const lp = c.latest_pacing;
+      return s + (lp ? Number(lp.actual_spend) || 0 : 0);
+    }, 0);
+  const spendPctOfBudget = totalBudget > 0 ? (totalSpend / totalBudget) * 100 : null;
 
   return (
     <section className={'bb-acct' + (collapsed ? ' bb-acct-collapsed' : '')}>
@@ -487,12 +505,17 @@ function AccountSection({ acct, applying, skipped, results, search, viewFilter,
 
         <div className="bb-acct-stats">
           <div>
-            <div className="bb-stat-label">Budget</div>
+            <div className="bb-stat-label">Budget{budgetFromSheet ? ' (sheet)' : ''}</div>
             <div className="bb-stat-val">{totalBudget >= 1000 ? `$${(totalBudget/1000).toFixed(totalBudget >= 10000 ? 0 : 1)}k` : fmt$(totalBudget)}</div>
           </div>
           <div>
             <div className="bb-stat-label">MTD</div>
             <div className="bb-stat-val">{totalSpend >= 1000 ? `$${(totalSpend/1000).toFixed(1)}k` : fmt$(totalSpend, 2)}</div>
+            {spendPctOfBudget != null && (
+              <div style={{ fontSize: 10, color: spendPctOfBudget > 100 ? 'var(--bb-warn)' : 'var(--bb-mute)' }}>
+                {spendPctOfBudget.toFixed(0)}% of budget
+              </div>
+            )}
           </div>
           <div>
             <div className="bb-stat-label">Actionable</div>
