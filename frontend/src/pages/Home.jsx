@@ -1139,7 +1139,12 @@ function Home({ user, onLogout }) {
   // because unbudgeted money is the real cost.
   const noSheetMatchFor = useCallback(
     (acct) => (acct.campaigns || []).concat(acct.hidden_campaigns || [])
-      .filter(c => c.sheet_budget_matched === false && (c.flight_status || '') !== 'ended')
+      // Spending, unmatched campaigns only. A campaign that's off AND has no sheet
+      // row isn't a task — it's just gone. The backend already hides those as
+      // no_sheet_row_no_spend; pulling hidden campaigns back in here was undoing it.
+      .filter(c => c.sheet_budget_matched === false
+                && (c.flight_status || '') !== 'ended'
+                && (Number((c.latest_pacing || {}).actual_spend) || 0) > 0)
       .sort((a, b) => (Number((b.latest_pacing||{}).actual_spend)||0)
                     - (Number((a.latest_pacing||{}).actual_spend)||0)),
     [],
