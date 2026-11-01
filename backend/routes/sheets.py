@@ -2176,6 +2176,100 @@ def write_spend_for_account(account_id, month=None):
     }
 
 
+def create_month_tab(sheet_id, source_month=None, target_month=None):
+    """Duplicate a month's tab into the next month and clear the per-month data.
+
+    Keeps the things that describe HOW an account is paced — row names, the Split
+    column, Easy-Pace ticks, column D/E formulas — and clears the things that belong
+    to the month that just ended.
+
+    Cleared: Total Monthly Budget, Current Spend, Last Paced, Notes, Flight Start,
+    Flight End. Budget and notes are cleared because carrying last month's numbers
+    forward is how a stale figure gets paced against for three weeks before anyone
+    notices. Flight dates go too: an October flight on a November tab reads as an
+    already-ended flight and silently suppresses pacing.
+    """
+    from calendar import monthrange
+    from datetime import date as _d
+
+    src_first, _src_last, src_name = _month_window(source_month)
+    if target_month:
+        tgt_name = _month_window(target_month)[2]
+    else:
+        nxt = _d(src_first.year + (1 if src_first.month == 12 else 0),
+                 1 if src_first.month == 12 else src_first.month + 1, 1)
+        tgt_name = nxt.strftime("%B %Y")
+
+    gc = _get_gspread_client()
+    spreadsheet = _sheets_retry(gc.open_by_key, sheet_id)
+
+    titles = [w.title for w in spreadsheet.worksheets()]
+    if any(t.lower() == tgt_name.lower() for t in titles):
+        return {"created": False, "tab": tgt_name, "reason": "Tab already exists — left untouched."}
+
+    source = None
+    for w in spreadsheet.worksheets():
+        if w.title.lower() == src_name.lower():
+            source = w
+            break
+    if source is None:
+        raise ValueError(f"No tab found for '{src_name}'. Available: {', '.join(titles)}")
+
+    new_ws = _sheets_retry(
+        spreadsheet.duplicate_sheet,
+        source_sheet_id=source.id,
+        new_sheet_name=tgt_name,
+        insert_sheet_index=len(titles),
+    )
+
+    # Work out which columns to clear from the header, so this follows the layout
+    # rather than assuming letters.
+    all_values = _sheets_retry(new_ws.get_all_values)
+    meta_idx = None
+    for i, row in enumerate(all_values):
+        if (row[0] if row else "").strip().lower() == "meta":
+            meta_idx = i
+            break
+    if meta_idx is None:
+        return {"created": True, "tab": tgt_name, "cleared": 0,
+                "reason": "Created, but no 'Meta' row found — nothing cleared."}
+
+    colmap, _ = _build_colmap(all_values, meta_idx)
+    first_row = meta_idx + 2
+    last_row = len(all_values)
+    targets = [colmap.get(k) for k in ('budget', 'mtd', 'last_paced', 'notes',
+                                       'flight_start', 'flight_end')]
+    ranges = [f"{_col_letter(idx)}{first_row}:{_col_letter(idx)}{last_row}"
+              for idx in targets if idx is not None]
+    if ranges:
+        _sheets_retry(new_ws.batch_clear, ranges)
+
+    return {"created": True, "tab": tgt_name, "copied_from": source.title,
+            "cleared_ranges": ranges, "rows": max(0, last_row - first_row + 1)}
+
+
+@sheets_bp.route("/new-month", methods=["POST"])
+@login_required
+def new_month_tab():
+    """Create next month's tab from a finished month. Workspace-level: one sheet."""
+    payload = request.get_json(silent=True) or {}
+    settings = AccountSettings.query.filter(
+        AccountSettings.google_sheet_id.isnot(None)).first()
+    sheet_id = (payload.get("sheet_id")
+                or (settings.effective_sheet_id if settings else None))
+    if not sheet_id:
+        return jsonify({"error": "No Google Sheet configured."}), 400
+    try:
+        result = create_month_tab(sheet_id, payload.get("from_month"), payload.get("to_month"))
+    except (ValueError, RuntimeError) as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("create_month_tab failed")
+        return jsonify({"error": "Could not create the new tab.",
+                        "detail": f"{type(e).__name__}: {e}"[:300]}), 500
+    return jsonify(result), 200
+
+
 @sheets_bp.route("/<int:account_id>/write-spend", methods=["POST"])
 @login_required
 def write_spend(account_id):

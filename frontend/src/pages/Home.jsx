@@ -1407,6 +1407,28 @@ function Home({ user, onLogout }) {
         `${written} row(s) written to ${label}` + (failed ? ` · ${failed} account(s) failed` : ''),
         { title: 'Month close-out' },
       );
+
+      // Offer the next step rather than doing it silently: creating a tab is the kind
+      // of thing you want to have said yes to.
+      const nextLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      if (window.confirm(
+        `Create the "${nextLabel}" tab from "${label}"?\n\n` +
+        'Campaign names, splits and Easy-Pace ticks carry over. ' +
+        'Budget, spend, last-paced, notes and flight dates are cleared.')) {
+        try {
+          const { data } = await axios.post('/api/sheets/new-month', { from_month: month });
+          if (data?.created) {
+            toast.success(`"${data.tab}" created from "${data.copied_from}" — ${data.rows} row(s) cleared.`,
+              { title: 'New month' });
+          } else {
+            toast.info(data?.reason || `"${data?.tab}" already exists.`, { title: 'New month' });
+          }
+        } catch (err) {
+          const d = err.response?.data || {};
+          toast.error([d.error || 'Could not create the tab.', d.detail].filter(Boolean).join(' — '),
+            { title: 'New month' });
+        }
+      }
     } finally { setClosingMonth(false); }
   };
 
