@@ -1025,6 +1025,7 @@ function Home({ user, onLogout }) {
   // is sent to Meta.
   const [easyRunning, setEasyRunning] = useState(false);
   const [syncingSheets, setSyncingSheets] = useState(false);
+  const [closingMonth, setClosingMonth] = useState(false);
   // Accounts whose campaigns are all hidden fold away behind a count.
   const [showEmptyAccounts, setShowEmptyAccounts] = useState(false);
   const [easyPacePlan, setEasyPacePlan] = useState(null);
@@ -1380,6 +1381,35 @@ function Home({ user, onLogout }) {
     } finally { setSyncingSheets(false); }
   };
 
+  // Month-end close-out: write each campaign's FINAL spend for a finished month into
+  // that month's tab. Without this, the first pacing run of a new month overwrites
+  // column C with the new month's figures and the old tab silently loses its totals.
+  const handleCloseOutMonth = async () => {
+    if (closingMonth || allAccounts.length === 0) return;
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const month = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+    const label = prev.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    if (!window.confirm(`Write final ${label} spend into the "${label}" tab for all accounts?`)) return;
+    setClosingMonth(true);
+    try {
+      const settled = await runConcurrent(
+        allAccounts.filter(a => a.has_sheet !== false),
+        a => axios.post(`/api/sheets/${a.id}/write-spend`, { month }),
+        2,
+      );
+      let written = 0, failed = 0;
+      settled.forEach(r => {
+        if (r.status === 'fulfilled') written += r.value?.data?.written_count ?? 0;
+        else failed++;
+      });
+      (failed ? toast.warn : toast.success)(
+        `${written} row(s) written to ${label}` + (failed ? ` · ${failed} account(s) failed` : ''),
+        { title: 'Month close-out' },
+      );
+    } finally { setClosingMonth(false); }
+  };
+
   const handleLogout = async () => {
     try { await axios.post('/api/auth/logout'); } catch {}
     onLogout(); navigate('/login');
@@ -1585,6 +1615,11 @@ function Home({ user, onLogout }) {
               disabled={runningAll || loading || allAccounts.length === 0}>
               {runningAll ? <Loader2 size={13} className="bb-spin" /> : <IPlay />}
               {runningAll ? `Running ${runProgress.done}/${runProgress.total}…` : `Run pacing · ${allAccounts.length}`}
+            </button>
+            <button className="bb-btn" onClick={handleCloseOutMonth}
+              disabled={closingMonth || loading || allAccounts.length === 0}
+              title="Write last month's final spend into last month's tab, before this month's runs overwrite it">
+              {closingMonth ? 'Closing…' : 'Close out last month'}
             </button>
             <button className="bb-btn" onClick={handleRefreshAllSheets}
               disabled={syncingSheets || runningAll || loading || allAccounts.length === 0}

@@ -995,9 +995,27 @@ def _user_owns_account(account_id: int) -> bool:
     return Account.query.get(account_id) is not None
 
 
-def _open_month_worksheet(spreadsheet):
-    """Open the current month's tab (e.g. 'May 2026'), case-insensitive."""
-    month_name = datetime.utcnow().strftime("%B %Y")
+def _month_window(month=None):
+    """(first_day, last_day, tab_name) for 'YYYY-MM', or the current month if None."""
+    from calendar import monthrange
+    from datetime import date as _d
+    if month:
+        year, mon = int(str(month)[:4]), int(str(month)[5:7])
+    else:
+        today = datetime.utcnow().date()
+        year, mon = today.year, today.month
+    first = _d(year, mon, 1)
+    last = _d(year, mon, monthrange(year, mon)[1])
+    return first, last, first.strftime("%B %Y")
+
+
+def _open_month_worksheet(spreadsheet, month=None):
+    """Open a month's tab (e.g. 'May 2026'), case-insensitive.
+
+    `month` is 'YYYY-MM'; omitted means the current month. Closing out a finished
+    month needs the PREVIOUS tab, which is why this is no longer pinned to today.
+    """
+    month_name = _month_window(month)[2]
     try:
         return spreadsheet.worksheet(month_name), month_name
     except Exception:
@@ -1963,7 +1981,7 @@ def _current_month_start():
     return today.replace(day=1)
 
 
-def _campaign_mtd_spend(campaign):
+def _campaign_mtd_spend(campaign, month=None):
     """Return the MTD spend for a campaign using direct DB queries.
 
     Uses explicit PacingData queries (not the ORM relationship) so that values
@@ -1987,7 +2005,8 @@ def _campaign_mtd_spend(campaign):
                 # Current month only. Without this, a campaign that last paced in a
                 # previous month reported THAT month's total as today's MTD spend and
                 # the sheet write-back pushed stale numbers into the current tab.
-                PacingData.date >= _current_month_start(),
+                PacingData.date >= _month_window(month)[0],
+                PacingData.date <= _month_window(month)[1],
             )
             .order_by(PacingData.date.desc(), PacingData.id.desc())
             .all()
@@ -2009,15 +2028,16 @@ def _campaign_mtd_spend(campaign):
     row = (
         PacingData.query
         .filter_by(campaign_id=campaign.id, adset_id=None)
-        # Current month only — see the ABO branch above.
-        .filter(PacingData.date >= _current_month_start())
+        # Scoped to the requested month — see the ABO branch above.
+        .filter(PacingData.date >= _month_window(month)[0])
+        .filter(PacingData.date <= _month_window(month)[1])
         .order_by(PacingData.date.desc(), PacingData.id.desc())
         .first()
     )
     return row.actual_spend if row else None
 
 
-def write_spend_for_account(account_id):
+def write_spend_for_account(account_id, month=None):
     """Push MTD spend + today's date into the configured sheet for one account.
 
     Single source of truth used by:
@@ -2039,7 +2059,7 @@ def write_spend_for_account(account_id):
 
     gc = _get_gspread_client()
     spreadsheet = _sheets_retry(gc.open_by_key, settings.effective_sheet_id)
-    ws, tab_name = _open_month_worksheet(spreadsheet)
+    ws, tab_name = _open_month_worksheet(spreadsheet, month)
 
     sheet_rows, colmap = _get_meta_section(ws)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
@@ -2084,7 +2104,7 @@ def write_spend_for_account(account_id):
         spends_found = 0
         campaign_names = []
         for campaign in matched_campaigns:
-            spend_value = _campaign_mtd_spend(campaign)
+            spend_value = _campaign_mtd_spend(campaign, month)
             if spend_value is not None:
                 total_spend += spend_value
                 spends_found += 1
@@ -2163,8 +2183,11 @@ def write_spend(account_id):
     if not _user_owns_account(account_id):
         return jsonify({"error": "Not found"}), 404
 
+    # Optional {"month": "2026-10"} closes out a finished month: it opens THAT tab
+    # and writes each campaign's final spend for that month, rather than today's.
+    month = (request.get_json(silent=True) or {}).get("month")
     try:
-        result = write_spend_for_account(account_id)
+        result = write_spend_for_account(account_id, month)
     except (ValueError, RuntimeError) as e:
         return jsonify({"error": str(e)}), 400
     except Exception:
