@@ -2057,6 +2057,28 @@ def write_spend_for_account(account_id, month=None):
     if not account:
         raise ValueError("Account not found.")
 
+    # ------------------------------------------------------------------
+    # Closing a finished month: ask META for the month's real total rather than
+    # reading our own PacingData.
+    #
+    # Pacing records spend THROUGH YESTERDAY, so the last October row holds Oct 1-30
+    # and the 31st is never captured — by Nov 1 the window has moved on. Amara read
+    # $281.84 in the sheet against $294.06 in Ads Manager: exactly one missing day.
+    # A month being closed is finished, so a direct query is both safe and exact.
+    # ------------------------------------------------------------------
+    month_client = None
+    month_first = month_last = None
+    if month:
+        month_first, month_last, _ = _month_window(month)
+        try:
+            from meta_client import MetaClient
+            token = account.effective_meta_token
+            if token and account.meta_account_id:
+                month_client = MetaClient(access_token=token, ad_account_id=account.meta_account_id)
+        except Exception as e:
+            logger.warning("Close-out: no Meta client for account %s (%s); "
+                           "falling back to stored pacing data", account_id, e)
+
     gc = _get_gspread_client()
     spreadsheet = _sheets_retry(gc.open_by_key, settings.effective_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet, month)
@@ -2104,7 +2126,17 @@ def write_spend_for_account(account_id, month=None):
         spends_found = 0
         campaign_names = []
         for campaign in matched_campaigns:
-            spend_value = _campaign_mtd_spend(campaign, month)
+            spend_value = None
+            if month_client is not None and campaign.meta_campaign_id:
+                try:
+                    spend_value = float(month_client.get_campaign_spend(
+                        campaign.meta_campaign_id, month_first, month_last) or 0.0)
+                except Exception as e:
+                    logger.warning("Close-out: Meta spend fetch failed for %s (%s); "
+                                   "using stored value", campaign.campaign_name, e)
+                    spend_value = None
+            if spend_value is None:
+                spend_value = _campaign_mtd_spend(campaign, month)
             if spend_value is not None:
                 total_spend += spend_value
                 spends_found += 1
@@ -2169,6 +2201,7 @@ def write_spend_for_account(account_id, month=None):
 
     return {
         "sheet_tab": tab_name,
+        "source": "meta" if month_client is not None else "pacing_data",
         "written_count": len(written),
         "skipped_count": len(skipped),
         "written": written,
