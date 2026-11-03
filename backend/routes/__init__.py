@@ -6,5 +6,6 @@ from .settings import settings_bp
 from .history import history_bp
 from .sheets import sheets_bp
 from .chief import chief_bp
+from .tiktok import tiktok_bp
 
-__all__ = ['auth_bp', 'accounts_bp', 'campaigns_bp', 'pacing_bp', 'settings_bp', 'history_bp', 'sheets_bp', 'chief_bp']
+__all__ = ['auth_bp', 'accounts_bp', 'campaigns_bp', 'pacing_bp', 'settings_bp', 'history_bp', 'sheets_bp', 'chief_bp', 'tiktok_bp']

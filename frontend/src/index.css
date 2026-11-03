@@ -1692,3 +1692,20 @@ td.num, th.num { text-align: right; }
   .bb-row-between { flex-wrap: wrap; gap: 8px; }
   .bb-page-title { font-size: 20px; }
 }
+
+/* TikTok rows. Deliberately distinct from the CBO/ABO chips next to them:
+   those describe where the budget lives, this describes which API the row is
+   written through, and confusing the two is expensive. */
+.bb-platform-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #0b4f52;
+  background: #d3f3f1;
+  border: 1px solid #a9e3df;
+  vertical-align: middle;
+}

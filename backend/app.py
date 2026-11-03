@@ -6,7 +6,7 @@ from sqlalchemy import text
 from flask_cors import CORS
 from dotenv import load_dotenv
 from database import db
-from routes import auth_bp, accounts_bp, campaigns_bp, pacing_bp, settings_bp, history_bp, sheets_bp, chief_bp
+from routes import auth_bp, accounts_bp, campaigns_bp, pacing_bp, settings_bp, history_bp, sheets_bp, chief_bp, tiktok_bp
 
 load_dotenv()
 
@@ -98,6 +98,7 @@ app.register_blueprint(settings_bp)
 app.register_blueprint(history_bp)
 app.register_blueprint(sheets_bp)
 app.register_blueprint(chief_bp)
+app.register_blueprint(tiktok_bp)
 
 # Error handlers
 @app.errorhandler(404)
@@ -186,6 +187,14 @@ _SCHEMA_PATCHES = [
     "ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS daily_digest_enabled BOOLEAN NOT NULL DEFAULT FALSE",
     # sheets integration — per-account sheet id
     "ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS google_sheet_id VARCHAR(500)",
+    # session 22 — TikTok. An account is a client, not a platform: the same
+    # client can run both, so TikTok hangs off the existing accounts row.
+    "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tiktok_advertiser_id VARCHAR(255)",
+    "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tiktok_token VARCHAR(2000) NOT NULL DEFAULT ''",
+    # Every pre-existing campaign row is Meta, which the DEFAULT backfills.
+    "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS platform VARCHAR(16) NOT NULL DEFAULT 'META'",
+    "CREATE INDEX IF NOT EXISTS ix_campaigns_platform ON campaigns (platform)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS global_tiktok_token VARCHAR(2000)",
 ]
 
 

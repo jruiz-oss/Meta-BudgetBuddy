@@ -54,6 +54,14 @@ from database import (
     db,
 )
 from meta_client import MetaAPIError, MetaClient
+from ad_platform import (
+    AD_ERRORS,
+    PLATFORM_META,
+    PLATFORM_TIKTOK,
+    PlatformNotConfigured,
+    client_for_account,
+    normalise_platform,
+)
 from routes.auth import login_required
 
 
@@ -519,12 +527,28 @@ def run_pacing(account_id):
             logger.warning("Pre-pacing sheet sync failed for account %s: %s", account_id, e)
             sheet_sync_result = {"error": str(e)}
 
+    # Platform clients, built lazily and cached for the run.
+    #
+    # An account is a client, not a platform: the same account can hold Meta and
+    # TikTok campaigns, and each campaign must be read and written through its
+    # own API. Building both eagerly would make a Meta-only account fail on a
+    # missing TikTok token, so this resolves on first use and caches.
+    _clients = {}
+
+    def _client_for_platform(platform):
+        key = normalise_platform(platform)
+        if key not in _clients:
+            _clients[key] = client_for_account(account, key)
+        return _clients[key]
+
+    def _client_for_campaign(campaign):
+        return _client_for_platform(getattr(campaign, "platform", PLATFORM_META))
+
     try:
-        meta = MetaClient(
-            access_token=account.effective_meta_token,
-            ad_account_id=account.meta_account_id,
-        )
-    except ValueError as e:
+        # Meta stays eager: every existing account has Meta campaigns, and a bad
+        # Meta token should still fail fast and loudly the way it always has.
+        meta = _client_for_platform(PLATFORM_META)
+    except (ValueError, PlatformNotConfigured) as e:
         return jsonify({"error": f"Bad Meta credentials: {e}"}), 400
 
     today = datetime.utcnow().date()
@@ -592,17 +616,28 @@ def run_pacing(account_id):
     single_campaign_id = body.get("campaign_id")
 
     paused_campaigns = []
-    try:
-        live_rows = meta.list_campaigns(only_active=False)
-        status_by_id = {str(r.get('id')): (r.get('effective_status') or r.get('status') or '')
-                        for r in live_rows}
-        for c in campaigns:
-            status = status_by_id.get(str(c.meta_campaign_id))
-            if status and c.meta_status != status:
-                c.meta_status = status
-        db.session.commit()
-    except Exception as e:
-        logger.warning("Could not refresh campaign statuses for account %s: %s", account_id, e)
+    # One status sweep per platform present on this account. Campaign ids are only
+    # unique within a platform, so the id→status maps must stay separate — merging
+    # them could mark a Meta campaign paused because an unrelated TikTok campaign
+    # shares its id.
+    platforms_present = {normalise_platform(getattr(c, "platform", PLATFORM_META))
+                         for c in campaigns}
+    for _platform in sorted(platforms_present):
+        try:
+            _client = _client_for_platform(_platform)
+            live_rows = _client.list_campaigns(only_active=False)
+            status_by_id = {str(r.get('id')): (r.get('effective_status') or r.get('status') or '')
+                            for r in live_rows}
+            for c in campaigns:
+                if normalise_platform(getattr(c, "platform", PLATFORM_META)) != _platform:
+                    continue
+                status = status_by_id.get(str(c.meta_campaign_id))
+                if status and c.meta_status != status:
+                    c.meta_status = status
+            db.session.commit()
+        except Exception as e:
+            logger.warning("Could not refresh %s campaign statuses for account %s: %s",
+                           _platform, account_id, e)
 
     if not single_campaign_id:
         live_included = []
@@ -700,9 +735,11 @@ def run_pacing(account_id):
             fut_map = {}
             for campaign in fetch_targets:
                 if campaign.budget_mode == 'ABO':
-                    f = pool.submit(_fetch_abo_data, flask_app, meta, campaign, month_start, spend_until)
+                    f = pool.submit(_fetch_abo_data, flask_app, _client_for_campaign(campaign),
+                                    campaign, month_start, spend_until)
                 else:
-                    f = pool.submit(_fetch_cbo_data, flask_app, meta, campaign, month_start, spend_until)
+                    f = pool.submit(_fetch_cbo_data, flask_app, _client_for_campaign(campaign),
+                                    campaign, month_start, spend_until)
                 fut_map[f] = campaign
 
             for fut, campaign in fut_map.items():
@@ -1148,12 +1185,22 @@ def apply_recommendations(account_id):
     #     correction. Normal month-to-month moves are nowhere near 3x.
     auto_mode = bool(payload.get("auto"))
 
+    # Same lazy per-platform resolution as run_pacing: an apply batch can mix
+    # Meta and TikTok rows, and each must go out through its own API.
+    _clients = {}
+
+    def _client_for_platform(platform):
+        key = normalise_platform(platform)
+        if key not in _clients:
+            _clients[key] = client_for_account(account, key)
+        return _clients[key]
+
+    def _client_for_campaign(campaign):
+        return _client_for_platform(getattr(campaign, "platform", PLATFORM_META))
+
     try:
-        meta = MetaClient(
-            access_token=account.effective_meta_token,
-            ad_account_id=account.meta_account_id,
-        )
-    except ValueError as e:
+        meta = _client_for_platform(PLATFORM_META)
+    except (ValueError, PlatformNotConfigured) as e:
         return jsonify({"error": f"Bad Meta credentials: {e}"}), 400
 
     results = []
@@ -1302,8 +1349,9 @@ def apply_recommendations(account_id):
                 continue
 
             try:
-                ok = meta.update_adset_budget(adset.meta_adset_id, new_daily)
-            except MetaAPIError as e:
+                _c = _client_for_campaign(owning_campaign)
+                ok = _c.update_adset_budget(adset.meta_adset_id, new_daily)
+            except AD_ERRORS as e:
                 results.append({"adset_id": adset_local_id, "error": str(e)})
                 continue
 
@@ -1347,13 +1395,14 @@ def apply_recommendations(account_id):
             continue
 
         try:
-            # min_daily defaults to Meta's platform hard floor ($1) inside meta_client.
-            # We no longer pass our own settings.min_daily_budget — sheet-parity means
-            # the only floor is Meta's own platform minimum.
-            meta_result = meta.apply_campaign_daily_budget(
+            # min_daily defaults to the platform's own hard floor inside the client
+            # ($1 on Meta, $20/ad group on TikTok). We no longer pass our own
+            # settings.min_daily_budget — sheet-parity means the only floor is the
+            # platform minimum.
+            meta_result = _client_for_campaign(campaign).apply_campaign_daily_budget(
                 campaign.meta_campaign_id, new_daily,
             )
-        except MetaAPIError as e:
+        except AD_ERRORS as e:
             results.append({"campaign_id": campaign.id, "error": str(e)})
             continue
 

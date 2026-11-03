@@ -302,31 +302,53 @@ def _build_colmap(all_values, meta_idx):
     return colmap, header_row
 
 
-def _get_meta_section(worksheet):
-    """
-    Return (rows, colmap) for the Meta section of the worksheet.
+# Section headers we have an API client for. Everything else in STOP_KEYWORDS
+# still terminates a section but has no platform behind it, so those rows stay
+# untracked — which is exactly the existing behaviour for Reddit, Snapchat and
+# the rest, and is what Blake asked for: don't touch the rows below them.
+SECTION_HEADERS = {
+    "meta": "META",
+    "tiktok": "TIKTOK",
+    "tik tok": "TIKTOK",
+}
 
-    Scans for a row where column A is exactly "Meta" (case-insensitive), then reads
-    data rows until another platform header (LinkedIn, TikTok, Reddit, SnapChat, …)
-    or EOF. Columns are resolved by HEADER NAME via _build_colmap, falling back to the
-    historical fixed positions, so a new column can be inserted without shifting the
-    fields the app reads.
+
+def _get_platform_section(worksheet, section="meta", all_values=None):
+    """
+    Return (rows, colmap) for ONE platform section of the worksheet.
+
+    Scans for a row where column A is exactly the section name (case-insensitive),
+    then reads data rows until the next platform header (LinkedIn, TikTok, Reddit,
+    SnapChat, …) or EOF. Columns are resolved by HEADER NAME via _build_colmap,
+    falling back to the historical fixed positions, so a new column can be inserted
+    without shifting the fields the app reads.
+
+    The header row is found by scanning ABOVE the section marker, so a section
+    further down the tab (TikTok) picks up the same header row as Meta — which is
+    correct: it is one table with platform subheadings, not several tables.
 
     Each row dict carries:
       { row_index (1-based), name, account_scope, monthly_budget, mtd_spend,
-        split, notes, flight_start, flight_end, last_paced }
+        split, notes, flight_start, flight_end, last_paced, platform }
     """
-    all_values = _sheets_retry(worksheet.get_all_values)
+    section = (section or "meta").strip().lower()
+    platform = SECTION_HEADERS.get(section, "META")
+    if all_values is None:
+        all_values = _sheets_retry(worksheet.get_all_values)
 
     meta_idx = None
     stop_idx = len(all_values)
     for i, row in enumerate(all_values):
         col_a = (row[0] if row else "").strip().lower()
         if meta_idx is None:
-            if col_a == "meta":
+            if col_a == section:
                 meta_idx = i
             continue
-        if col_a in STOP_KEYWORDS:
+        # "meta" is not in STOP_KEYWORDS (it's where the old parser started), so
+        # add it explicitly — otherwise a section below Meta would run straight
+        # through a Meta heading. Guard against the section terminating on its
+        # own header.
+        if col_a != section and (col_a in STOP_KEYWORDS or col_a == "meta"):
             stop_idx = i
             break
 
@@ -362,6 +384,7 @@ def _get_meta_section(worksheet):
             continue
         rows.append({
             "row_index": first_sr + off,
+            "platform": platform,
             "name": name,
             "account_scope": account_scope,
             "monthly_budget": _parse_float(cell(r, 'budget')),
@@ -374,6 +397,64 @@ def _get_meta_section(worksheet):
             "last_paced": cell(r, 'last_paced'),
         })
     return rows, colmap
+
+
+def _get_meta_section(worksheet):
+    """Back-compat wrapper — the Meta section only.
+
+    Kept because several callers (and the tests) ask for Meta specifically and
+    shouldn't have to know that sections are now a concept.
+    """
+    return _get_platform_section(worksheet, "meta")
+
+
+def _get_sections_for_account(worksheet, account):
+    """Every platform section this account is actually configured for.
+
+    A Meta-only client (almost all of them) reads exactly as before: one call,
+    one section, no behaviour change. A client with a TikTok advertiser linked
+    additionally gets the rows under the TikTok header, tagged platform=TIKTOK
+    so matching only ever considers TikTok campaigns for them.
+
+    Reads the grid ONCE and slices it twice — a second get_all_values here would
+    double the Sheets API calls on every pacing run of every account, which is
+    the quota that bites first.
+    """
+    all_values = _sheets_retry(worksheet.get_all_values)
+    rows, colmap = _get_platform_section(worksheet, "meta", all_values=all_values)
+
+    try:
+        from ad_platform import PLATFORM_TIKTOK, account_supports
+        wants_tiktok = account is not None and account_supports(account, PLATFORM_TIKTOK)
+    except Exception as e:
+        # A TikTok misconfiguration must never take the Meta path down with it.
+        logger.warning("TikTok section check failed for account %s: %s",
+                       getattr(account, "id", "?"), e)
+        wants_tiktok = False
+
+    if wants_tiktok:
+        tt_rows, tt_colmap = _get_platform_section(worksheet, "tiktok", all_values=all_values)
+        if tt_rows:
+            rows = rows + tt_rows
+            # Only adopt the TikTok colmap if the Meta section found no header at
+            # all; otherwise they're the same header row anyway.
+            if colmap == _DEFAULT_COLMAP and tt_colmap != _DEFAULT_COLMAP:
+                colmap = tt_colmap
+
+    return rows, colmap
+
+
+def _campaigns_for_row(row, db_campaigns):
+    """Narrow the candidate pool to the platform this sheet row came from.
+
+    Without this, a TikTok row would happily match a Meta campaign with a
+    similar name and then pace it — writing a TikTok budget to a Meta campaign.
+    Platform is a hard filter, never a tiebreak.
+    """
+    from ad_platform import normalise_platform
+    want = normalise_platform(row.get("platform"))
+    return [c for c in db_campaigns
+            if normalise_platform(getattr(c, "platform", None)) == want]
 
 # Common words we ignore when scoring overlap — they appear everywhere and would
 # inflate the score without indicating a real match.
@@ -1192,9 +1273,9 @@ def preview_matches(account_id):
 
 
 def _build_preview(account_id, ws, tab_name):
-    sheet_rows, colmap = _get_meta_section(ws)
-    db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     account = Account.query.get(account_id)
+    sheet_rows, colmap = _get_sections_for_account(ws, account)
+    db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     # Session 13 — shared workspace: prefix scoping considers every account
     # in the DB, not just the originally-linked user's accounts.
     all_user_accounts = Account.query.all()
@@ -1237,7 +1318,7 @@ def _build_preview(account_id, ws, tab_name):
             })
             continue
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
-        campaign = _match_campaign(match_name, db_campaigns)
+        campaign = _match_campaign(match_name, _campaigns_for_row(row, db_campaigns))
         if campaign:
             matches.append({
                 "sheet_name": row["name"],
@@ -1264,7 +1345,7 @@ def _build_preview(account_id, ws, tab_name):
             split_entry = None
             split_fail = None
             if alloc is not None and row.get("monthly_budget") is not None:
-                scoped = _scope_campaigns_by_pivot(match_name, db_campaigns)
+                scoped = _scope_campaigns_by_pivot(match_name, _campaigns_for_row(row, db_campaigns))
                 split_proposals = []
                 all_ok = True
                 for alloc_name, alloc_pct in (alloc or []):
@@ -1294,7 +1375,7 @@ def _build_preview(account_id, ws, tab_name):
                 matches.append(split_entry)
             else:
                 try:
-                    diag = _match_diagnostics(match_name, db_campaigns, notes)
+                    diag = _match_diagnostics(match_name, _campaigns_for_row(row, db_campaigns), notes)
                 except Exception as diag_err:
                     # A diagnosis failing must never take down the preview it explains.
                     logger.exception("match diagnostics failed for row %s", row.get("row_index"))
@@ -1443,7 +1524,7 @@ def sync_budgets_for_account(account_id):
     spreadsheet = _sheets_retry(gc.open_by_key, settings.effective_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet)
 
-    sheet_rows, colmap = _get_meta_section(ws)
+    sheet_rows, colmap = _get_sections_for_account(ws, account)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     # Used by prefix scoping — so rows like "Commit - Campaign" are only processed
     # for the Commit Agency account, not for Amara or other accounts whose campaigns
@@ -1586,7 +1667,7 @@ def sync_budgets_for_account(account_id):
                     # sheet row name (e.g. "Core" in "Core (FB/IG Ads)"). This prevents
                     # short allocation labels like "Pays to Play" from matching the wrong
                     # campaign when many campaigns share a common keyword.
-                    scoped_for_split = _scope_campaigns_by_pivot(match_name, db_campaigns)
+                    scoped_for_split = _scope_campaigns_by_pivot(match_name, _campaigns_for_row(row, db_campaigns))
                     split_proposed = []
                     split_ok = True
                     for alloc_name, alloc_pct in split_allocs:
@@ -1758,7 +1839,7 @@ def sync_budgets_for_account(account_id):
             matched_promos = []
             unmatched_pct = 0.0
             for alloc_name, alloc_pct in alloc_check:
-                matched_c = _match_campaign(alloc_name, db_campaigns)
+                matched_c = _match_campaign(alloc_name, _campaigns_for_row(row, db_campaigns))
                 if matched_c:
                     matched_promos.append((matched_c, alloc_pct, alloc_name))
                 else:
@@ -1791,7 +1872,7 @@ def sync_budgets_for_account(account_id):
             # Scope the candidate pool to campaigns sharing the pivot word from the
             # sheet row name (e.g. "Core" scopes to only Core-named campaigns so that
             # "Pays to Play" doesn't slip through to an unrelated campaign).
-            scoped_for_alloc = _scope_campaigns_by_pivot(match_name, db_campaigns)
+            scoped_for_alloc = _scope_campaigns_by_pivot(match_name, _campaigns_for_row(row, db_campaigns))
             split_ok = True
             for alloc_name, alloc_pct in alloc_check:
                 matched_c = _match_campaign(alloc_name, scoped_for_alloc)
@@ -2083,7 +2164,7 @@ def write_spend_for_account(account_id, month=None):
     spreadsheet = _sheets_retry(gc.open_by_key, settings.effective_sheet_id)
     ws, tab_name = _open_month_worksheet(spreadsheet, month)
 
-    sheet_rows, colmap = _get_meta_section(ws)
+    sheet_rows, colmap = _get_sections_for_account(ws, account)
     db_campaigns = Campaign.query.filter_by(account_id=account_id, is_active=True).all()
     # Session 13 — shared workspace: prefix scoping considers every account
     # in the DB, not just the originally-linked user's accounts.

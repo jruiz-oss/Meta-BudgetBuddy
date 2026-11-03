@@ -45,6 +45,10 @@ class User(db.Model):
     # leak working tokens. Bumped to 2000 chars to fit the encrypted form
     # (Fernet + base64 ~ 1.4× plaintext, plus the "enc_v1:" prefix).
     global_meta_token = db.Column(EncryptedString(2000), nullable=True)
+    # Workspace-wide TikTok advertiser token, obtained once via OAuth. TikTok
+    # Marketing API tokens do not expire and have no refresh token, so this is
+    # written at authorisation time and then left alone.
+    global_tiktok_token = db.Column(EncryptedString(2000), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     accounts = db.relationship('Account', backref='user', lazy=True, cascade='all, delete-orphan')
@@ -99,6 +103,19 @@ class Account(db.Model):
     # drop out of Home, the account list and every pacing run. Reversible — this is
     # deliberately NOT a delete, which would cascade away campaigns and pacing rows.
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default='true')
+    # --- TikTok ---------------------------------------------------------
+    # An account is one CLIENT, not one platform: the same client can run Meta
+    # and TikTok side by side, and the sheet addresses both with the same row
+    # prefix. So TikTok hangs off the existing account rather than duplicating
+    # it, which would have given us two rows both named e.g. "Coast Central"
+    # and broken sheet prefix matching outright.
+    # NULL/blank = this client doesn't run TikTok, which is most of them.
+    tiktok_advertiser_id = db.Column(db.String(255), nullable=True)
+    # Per-account TikTok token override. Blank falls back to the workspace
+    # token in the environment — same precedence as meta_token, see
+    # ad_platform.effective_tiktok_token. Encrypted at rest like the Meta one.
+    tiktok_token = db.Column(EncryptedString(2000), nullable=False, default='',
+                             server_default='')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property
@@ -149,6 +166,7 @@ class Account(db.Model):
                 'user_id': self.user_id,
                 'account_name': self.account_name,
                 'meta_account_id': self.meta_account_id,
+                'tiktok_advertiser_id': self.tiktok_advertiser_id or None,
                 'token_id': self.token_id,
                 'is_active': bool(self.is_active),
                 'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -249,7 +267,17 @@ class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False, index=True)
     campaign_name = db.Column(db.String(255), nullable=False)
+    # Despite the name this is the campaign's id on WHICHEVER platform it lives
+    # on — a TikTok campaign_id for TIKTOK rows. Renaming the column would mean
+    # touching every query, every serializer and the sheet write-back for no
+    # behavioural gain, so the name stays historical and `platform` below says
+    # how to read it.
     meta_campaign_id = db.Column(db.String(255), nullable=False, index=True)
+    # 'META' (default, and every row that existed before TikTok support) or
+    # 'TIKTOK'. Drives which API client reads spend and applies budgets, and
+    # which sheet section this campaign is matched against.
+    platform = db.Column(db.String(16), nullable=False, default='META',
+                         server_default='META', index=True)
     monthly_budget = db.Column(db.Float, nullable=False)
     flight_type = db.Column(db.String(50), default='ALWAYS_ON')  # ALWAYS_ON or LIMITED
     flight_start_date = db.Column(db.Date)
@@ -430,6 +458,7 @@ class Campaign(db.Model):
             'account_id': self.account_id,
             'campaign_name': self.campaign_name,
             'meta_campaign_id': self.meta_campaign_id,
+            'platform': self.platform or 'META',
             # A campaign with no sheet row has no budget the app can stand behind:
             # whatever is stored is a leftover from an earlier row or the daily x 30
             # import seed. Report it as unknown rather than as money.

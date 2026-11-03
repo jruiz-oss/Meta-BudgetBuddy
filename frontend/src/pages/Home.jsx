@@ -635,6 +635,7 @@ function AccountSection({ acct, applying, skipped, results, search, viewFilter,
                             style={{ fontWeight: 600, color: 'var(--bb-fg)' }}>
                             {campaign.campaign_name}
                           </Link>
+                          <PlatformBadge platform={campaign.platform} />
                         </div>
                       </td>
                       <td><span className="bb-mode bb-mode-abo">ABO</span></td>
@@ -723,6 +724,7 @@ function AccountSection({ acct, applying, skipped, results, search, viewFilter,
                           style={{ fontWeight: 600, color: 'var(--bb-fg)', textDecoration: 'none' }}>
                           {campaign.campaign_name}
                         </Link>
+                        <PlatformBadge platform={campaign.platform} />
                       </div>
                     </td>
                     <td><span className="bb-mode bb-mode-cbo">CBO</span></td>
@@ -792,6 +794,20 @@ function adsManagerUrl(metaAccountId) {
     + `?act=${encodeURIComponent(act)}`
     + `&date=${range}&insights_date=${range}`
     + `&filter_set=${encodeURIComponent(filterSet)}`;
+}
+
+// Platform marker. Rendered only for non-Meta rows: every row was Meta until
+// now, and tagging all of them would add noise to a table people scan quickly.
+function PlatformBadge({ platform }) {
+  if (!platform || platform === 'META') return null;
+  return (
+    <span
+      className="bb-platform-badge"
+      title="TikTok campaign. Ad-group budget changes take effect at midnight in the ad account's timezone, not immediately."
+    >
+      TikTok
+    </span>
+  );
 }
 
 // Spend, plus the date it was actually measured. Pacing reads spend through
