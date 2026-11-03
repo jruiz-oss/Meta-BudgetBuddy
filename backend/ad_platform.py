@@ -83,15 +83,46 @@ def normalise_platform(value: Optional[str]) -> str:
 # ----------------------------------------------------------------------
 # TikTok app-level credentials (environment, set on Railway)
 # ----------------------------------------------------------------------
+# TikTok's own docs, portal and SDKs use several names for the same three
+# values, so whoever sets them up has a decent chance of picking a different one
+# than we expected. Accepting the common aliases is cheaper than a support
+# conversation that ends in "rename the variable" — and the failure it prevents
+# ("TIKTOK_SECRET must be set" when the secret is plainly sitting right there)
+# is maximally confusing. First name present wins.
+_TIKTOK_ENV_ALIASES = {
+    "app_id": ("TIKTOK_APP_ID", "TIKTOK_CLIENT_ID", "TIKTOK_CLIENT_KEY"),
+    "secret": ("TIKTOK_SECRET", "TIKTOK_APP_SECRET", "TIKTOK_CLIENT_SECRET"),
+    "access_token": ("TIKTOK_ACCESS_TOKEN", "TIKTOK_TOKEN"),
+}
+
+
+def _first_env(names) -> tuple:
+    """Return (value, name_it_came_from) for the first of `names` that is set."""
+    for name in names:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value, name
+    return "", None
+
+
 def tiktok_app_credentials() -> Dict[str, str]:
-    return {
-        "app_id": (os.environ.get("TIKTOK_APP_ID") or "").strip(),
-        "secret": (os.environ.get("TIKTOK_SECRET") or "").strip(),
-        # Optional: a token obtained once via OAuth and pasted into the
-        # environment, for workspaces that would rather not store it per account.
-        # Account-level tokens take precedence over this.
-        "access_token": (os.environ.get("TIKTOK_ACCESS_TOKEN") or "").strip(),
-    }
+    """The three values TikTok needs, read from whichever alias is present.
+
+    `access_token` is optional here: an account-level token takes precedence,
+    and the OAuth callback stores a workspace token in the database. The
+    environment is the third fallback, for workspaces that would rather paste a
+    token than run the flow.
+    """
+    return {key: _first_env(names)[0] for key, names in _TIKTOK_ENV_ALIASES.items()}
+
+
+def tiktok_env_sources() -> Dict[str, Any]:
+    """Which environment variable each credential was read from.
+
+    Names only, never values — this is for the status endpoint, so that
+    "configured" can be verified without anyone pasting a secret into chat.
+    """
+    return {key: _first_env(names)[1] for key, names in _TIKTOK_ENV_ALIASES.items()}
 
 
 def tiktok_status() -> Dict[str, Any]:
@@ -106,9 +137,9 @@ def tiktok_status() -> Dict[str, Any]:
 
     missing = []
     if not creds["app_id"]:
-        missing.append("TIKTOK_APP_ID")
+        missing.append(" or ".join(_TIKTOK_ENV_ALIASES["app_id"]))
     if not creds["secret"]:
-        missing.append("TIKTOK_SECRET")
+        missing.append(" or ".join(_TIKTOK_ENV_ALIASES["secret"]))
 
     if not has_app:
         ready, detail = False, "The developer app credentials are missing from the environment."
@@ -127,6 +158,8 @@ def tiktok_status() -> Dict[str, Any]:
         "has_access_token": has_token,
         "ready": ready,
         "missing_env": missing,
+        # Which variable each credential actually came from. Names only.
+        "env_sources": tiktok_env_sources(),
         "detail": detail,
     }
 

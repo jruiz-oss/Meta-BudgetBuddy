@@ -210,3 +210,72 @@ def test_constructor_requires_both_pieces():
         TikTokClient(access_token="", advertiser_id="1")
     with pytest.raises(ValueError):
         TikTokClient(access_token="t", advertiser_id="")
+
+
+# ----------------------------------------------------------------------
+# Environment variable aliases
+# ----------------------------------------------------------------------
+import os as _os
+
+import ad_platform
+
+
+@pytest.fixture
+def clean_env(monkeypatch):
+    for names in ad_platform._TIKTOK_ENV_ALIASES.values():
+        for n in names:
+            monkeypatch.delenv(n, raising=False)
+    return monkeypatch
+
+
+def test_canonical_names_are_read(clean_env):
+    clean_env.setenv("TIKTOK_APP_ID", "a")
+    clean_env.setenv("TIKTOK_SECRET", "s")
+    creds = ad_platform.tiktok_app_credentials()
+    assert creds["app_id"] == "a" and creds["secret"] == "s"
+
+
+def test_app_secret_alias_is_accepted(clean_env):
+    """The spelling Blake's Railway environment actually uses."""
+    clean_env.setenv("TIKTOK_APP_ID", "a")
+    clean_env.setenv("TIKTOK_APP_SECRET", "s")
+    assert ad_platform.tiktok_app_credentials()["secret"] == "s"
+    assert ad_platform.tiktok_env_sources()["secret"] == "TIKTOK_APP_SECRET"
+
+
+def test_client_secret_alias_is_accepted(clean_env):
+    clean_env.setenv("TIKTOK_CLIENT_SECRET", "s")
+    assert ad_platform.tiktok_app_credentials()["secret"] == "s"
+
+
+def test_canonical_name_wins_over_alias(clean_env):
+    clean_env.setenv("TIKTOK_SECRET", "canonical")
+    clean_env.setenv("TIKTOK_APP_SECRET", "alias")
+    assert ad_platform.tiktok_app_credentials()["secret"] == "canonical"
+
+
+def test_status_lists_every_accepted_spelling_when_missing(clean_env):
+    clean_env.setenv("TIKTOK_APP_ID", "a")
+    status = ad_platform.tiktok_status()
+    assert status["configured"] is False
+    missing = " ".join(status["missing_env"])
+    assert "TIKTOK_SECRET" in missing and "TIKTOK_APP_SECRET" in missing
+
+
+def test_status_is_ready_with_alias_plus_token(clean_env):
+    clean_env.setenv("TIKTOK_APP_ID", "a")
+    clean_env.setenv("TIKTOK_APP_SECRET", "s")
+    clean_env.setenv("TIKTOK_ACCESS_TOKEN", "t")
+    status = ad_platform.tiktok_status()
+    assert status["ready"] is True
+    assert status["env_sources"]["secret"] == "TIKTOK_APP_SECRET"
+
+
+def test_status_never_returns_credential_values(clean_env):
+    clean_env.setenv("TIKTOK_APP_ID", "appid-value")
+    clean_env.setenv("TIKTOK_APP_SECRET", "secret-value")
+    clean_env.setenv("TIKTOK_ACCESS_TOKEN", "token-value")
+    blob = repr(ad_platform.tiktok_status())
+    assert "secret-value" not in blob
+    assert "token-value" not in blob
+    assert "appid-value" not in blob
