@@ -168,6 +168,8 @@ def cron_run_all_accounts():
 # Deliberately NOT gated on SKIP_CREATE_ALL — the whole point is to patch a
 # database whose tables already exist. New TABLES still come from create_all.
 _SCHEMA_PATCHES = [
+    # second Meta portfolio: which extra token an account reads with (table comes from create_all)
+    "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS token_id INTEGER",
     # session 21 — paused-in-Meta campaigns
     "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS meta_status VARCHAR(32)",
     # session 21 — archived accounts

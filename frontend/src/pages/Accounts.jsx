@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { Loader2, Save, X, RefreshCw } from 'lucide-react';
+import { Loader2, Save, X, RefreshCw, Search, Trash2 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { useToast } from '../components/Toast';
 
@@ -69,7 +69,25 @@ function Accounts({ user, onLogout }) {
 
   const [refreshing, setRefreshing] = useState({});
 
-  useEffect(() => { fetchAccounts(); fetchGlobalToken(); fetchGlobalSheet(); }, []);
+  // Additional Meta tokens (a second business portfolio)
+  const [extraTokens, setExtraTokens] = useState([]);
+  const [showExtraForm, setShowExtraForm] = useState(false);
+  const [extraLabel, setExtraLabel] = useState('');
+  const [extraTokenVal, setExtraTokenVal] = useState('');
+  const [extraSaving, setExtraSaving] = useState(false);
+  const [newTokenId, setNewTokenId] = useState('');
+
+  // Find accounts: ad accounts every token can see, picked and added in bulk
+  const [showFind, setShowFind] = useState(false);
+  const [findLoading, setFindLoading] = useState(false);
+  const [findData, setFindData] = useState({ accounts: [], sources: [] });
+  const [findPicked, setFindPicked] = useState({});
+  const [findQuery, setFindQuery] = useState('');
+  const [findShowInactive, setFindShowInactive] = useState(false);
+  const [findAdding, setFindAdding] = useState(false);
+  const [findProgress, setFindProgress] = useState('');
+
+  useEffect(() => { fetchAccounts(); fetchGlobalToken(); fetchGlobalSheet(); fetchExtraTokens(); }, []);
   // Re-fetch when the archived toggle flips — the server does the filtering.
   useEffect(() => { fetchAccounts(); /* eslint-disable-next-line */ }, [showArchived]);
 
@@ -118,6 +136,64 @@ function Accounts({ user, onLogout }) {
     finally { setTokenSaving(false); }
   };
 
+  const fetchExtraTokens = async () => {
+    try {
+      const res = await axios.get('/api/accounts/meta-tokens');
+      setExtraTokens(res.data.tokens || []);
+    } catch {}
+  };
+
+  const handleAddExtraToken = async () => {
+    setExtraSaving(true);
+    try {
+      const res = await axios.post('/api/accounts/meta-tokens', { label: extraLabel, token: extraTokenVal });
+      toast.success(`${extraLabel.trim()} saved. It can see ${res.data.visible_accounts} ad account(s).`);
+      setExtraLabel(''); setExtraTokenVal(''); setShowExtraForm(false);
+      fetchExtraTokens();
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to save token'); }
+    finally { setExtraSaving(false); }
+  };
+
+  const handleDeleteExtraToken = async (t) => {
+    try {
+      await axios.delete(`/api/accounts/meta-tokens/${t.id}`);
+      toast.success(`${t.label} removed.`);
+      fetchExtraTokens();
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to remove token'); }
+  };
+
+  const loadAvailable = async () => {
+    setFindLoading(true);
+    try {
+      const res = await axios.get('/api/accounts/available');
+      setFindData(res.data);
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to load accounts from Meta'); }
+    finally { setFindLoading(false); }
+  };
+
+  const openFind = () => { setShowFind(true); setFindPicked({}); setFindProgress(''); loadAvailable(); };
+
+  const handleAddPicked = async () => {
+    const picks = findData.accounts.filter(a => findPicked[a.meta_account_id] && !a.tracked);
+    if (!picks.length) return;
+    setFindAdding(true);
+    let added = 0; const failed = [];
+    // One at a time: each add also imports that account's campaigns from Meta.
+    for (let i = 0; i < picks.length; i++) {
+      const a = picks[i];
+      setFindProgress(`Adding ${i + 1} of ${picks.length}: ${a.name}`);
+      try {
+        await axios.post('/api/accounts', { account_name: a.name, meta_account_id: a.meta_account_id, token_id: a.source_id });
+        added++;
+      } catch { failed.push(a.name); }
+    }
+    setFindProgress(''); setFindAdding(false); setFindPicked({});
+    if (added) toast.success(`${added} account(s) added.`);
+    if (failed.length) toast.error(`Failed: ${failed.join(', ')}`);
+    fetchAccounts();
+    loadAvailable();
+  };
+
   const fetchGlobalSheet = async () => {
     try {
       const res = await axios.get('/api/sheets/global-config');
@@ -144,13 +220,13 @@ function Accounts({ user, onLogout }) {
     if (!newMetaToken && !hasGlobalToken) { setError('Either paste a token here or set a Global Token above first.'); return; }
     setAddSaving(true);
     try {
-      const res = await axios.post('/api/accounts', { account_name: newAccountName, meta_account_id: newMetaAccountId, meta_token: newMetaToken });
+      const res = await axios.post('/api/accounts', { account_name: newAccountName, meta_account_id: newMetaAccountId, meta_token: newMetaToken, token_id: newTokenId ? Number(newTokenId) : null });
       const ai = res.data.auto_import;
       const importMsg = ai
         ? ai.imported > 0 ? ` Auto-imported ${ai.imported} campaign(s).` : ai.errors?.length ? ` Campaigns not imported: ${ai.errors[0]}` : ' No active campaigns found.'
         : '';
       toast.success(`Account created.${importMsg}`, { title: 'Done' });
-      setNewAccountName(''); setNewMetaAccountId(''); setNewMetaToken(''); setShowAdd(false);
+      setNewAccountName(''); setNewMetaAccountId(''); setNewMetaToken(''); setNewTokenId(''); setShowAdd(false);
       fetchAccounts();
     } catch (err) { setError(err.response?.data?.error || 'Failed to create account'); }
     finally { setAddSaving(false); }
@@ -198,6 +274,23 @@ function Accounts({ user, onLogout }) {
     return list;
   }, [accounts, filter, sort]);
 
+  const tokenLabelById = useMemo(() => {
+    const m = {};
+    extraTokens.forEach(t => { m[t.id] = t.label; });
+    return m;
+  }, [extraTokens]);
+
+  const findVisible = useMemo(() => {
+    const q = findQuery.trim().toLowerCase();
+    return (findData.accounts || []).filter(a => {
+      if (!findShowInactive && a.status !== 'active') return false;
+      if (!q) return true;
+      return `${a.name} ${a.meta_account_id} ${a.business}`.toLowerCase().includes(q);
+    });
+  }, [findData, findQuery, findShowInactive]);
+  const findSelectable = findVisible.filter(a => !a.tracked);
+  const findPickedCount = Object.keys(findPicked).filter(k => findPicked[k]).length;
+
   const toneForCategory = (cat) => {
     if (cat === 'on_track')     return 'ok';
     if (cat === 'under_pacing') return 'cool';
@@ -225,6 +318,9 @@ function Accounts({ user, onLogout }) {
           <div className="bb-header-actions">
             <button className="bb-btn bb-btn-primary" onClick={() => setShowAdd(true)}>
               <IPlus /> Add Account
+            </button>
+            <button className="bb-btn" onClick={openFind}>
+              <Search size={13} /> Find accounts
             </button>
             <button className="bb-btn bb-btn-ghost" onClick={handleLogout}>
               <ILogout /> Log out
@@ -269,6 +365,42 @@ function Accounts({ user, onLogout }) {
             <button className="bb-btn" onClick={() => setShowTokenInput(true)}>
               {hasGlobalToken ? 'Update token' : 'Set token'}
             </button>
+          )}
+        </div>
+
+        {/* Additional tokens bar */}
+        <div className="bb-token-bar">
+          <div className="bb-key-icon"><IKey /></div>
+          <div style={{ flex: 1 }}>
+            <div className="bb-token-title">Additional Meta Tokens</div>
+            <div className="bb-token-sub">For ad accounts the global token can't see (another business portfolio). Each account reads with the token it was added from. Use Find accounts to pull in what every token can reach.</div>
+            {extraTokens.map(t => (
+              <div key={t.id} className="bb-token-current" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {t.label}: <span className="bb-token-val">{t.preview}</span>
+                <span style={{ color: 'var(--bb-mute)' }}>{t.account_count} account(s)</span>
+                <button className="bb-icon-btn" title="Remove this token" onClick={() => handleDeleteExtraToken(t)}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+            {showExtraForm && (
+              <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input type="text" className="bb-input" placeholder="Label, e.g. Portfolio 2"
+                  value={extraLabel} onChange={e => setExtraLabel(e.target.value)} autoFocus style={{ maxWidth: 180 }} />
+                <input type="password" className="bb-input" placeholder="EAAb… paste the token"
+                  value={extraTokenVal} onChange={e => setExtraTokenVal(e.target.value)} style={{ maxWidth: 300 }} />
+                <button className="bb-btn bb-btn-primary" onClick={handleAddExtraToken}
+                  disabled={extraSaving || !extraLabel.trim() || !extraTokenVal.trim()}>
+                  {extraSaving ? <Loader2 size={13} className="bb-spin" /> : <Save size={13} />} Save
+                </button>
+                <button className="bb-btn" onClick={() => { setShowExtraForm(false); setExtraLabel(''); setExtraTokenVal(''); }}>
+                  <X size={13} /> Cancel
+                </button>
+              </div>
+            )}
+          </div>
+          {!showExtraForm && (
+            <button className="bb-btn" onClick={() => setShowExtraForm(true)}>Add token</button>
           )}
         </div>
 
@@ -381,6 +513,9 @@ function Accounts({ user, onLogout }) {
                         {account.is_active === false && (
                           <span className="bb-mode" style={{ marginLeft: 8, fontWeight: 400 }}>archived</span>
                         )}
+                        {account.token_id && tokenLabelById[account.token_id] && (
+                          <span className="bb-mode" style={{ marginLeft: 8, fontWeight: 400 }}>{tokenLabelById[account.token_id]}</span>
+                        )}
                       </div>
                       <div className="bb-acct-card-id">Meta ID: {account.meta_account_id || '—'}</div>
                     </div>
@@ -430,6 +565,87 @@ function Accounts({ user, onLogout }) {
           </>
         )}
 
+        {/* Find accounts modal */}
+        {showFind && (
+          <div className="bb-modal-backdrop" onClick={() => !findAdding && setShowFind(false)}>
+            <div className="bb-modal" style={{ maxWidth: 720 }} onClick={e => e.stopPropagation()}>
+              <div className="bb-modal-head">
+                <div className="bb-modal-title">Find accounts</div>
+                <button className="bb-icon-btn" onClick={() => setShowFind(false)} disabled={findAdding} aria-label="Close"><X size={18} /></button>
+              </div>
+              <div className="bb-modal-body">
+                {findLoading ? (
+                  <div style={{ color: 'var(--bb-mute)', padding: '20px 0' }}>
+                    <Loader2 size={14} className="bb-spin" /> Asking Meta what each token can see…
+                  </div>
+                ) : (
+                  <>
+                    {(findData.sources || []).filter(s => !s.ok).map(s => (
+                      <div key={s.label} className="bb-alert bb-alert-warn" style={{ marginBottom: 8, fontSize: 12 }}>
+                        {s.label}: {s.error}
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+                      <input type="text" className="bb-input" placeholder="Search name, ID or business"
+                        value={findQuery} onChange={e => setFindQuery(e.target.value)} style={{ maxWidth: 260 }} />
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--bb-text-sm)', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={findShowInactive} onChange={e => setFindShowInactive(e.target.checked)} />
+                        Show disabled and closed
+                      </label>
+                      <button className="bb-btn bb-btn-sm" disabled={!findSelectable.length}
+                        onClick={() => setFindPicked(p => {
+                          const next = { ...p };
+                          findSelectable.forEach(a => { next[a.meta_account_id] = true; });
+                          return next;
+                        })}>
+                        Select all new ({findSelectable.length})
+                      </button>
+                    </div>
+                    {findVisible.length === 0 ? (
+                      <div style={{ color: 'var(--bb-mute)', padding: '20px 0', textAlign: 'center' }}>
+                        No ad accounts to show.
+                      </div>
+                    ) : (
+                      <div style={{ overflowX: 'auto' }}>
+                        <table className="bb-table">
+                          <thead>
+                            <tr><th></th><th>Account</th><th>Meta ID</th><th>Business</th><th>Token</th><th>Status</th></tr>
+                          </thead>
+                          <tbody>
+                            {findVisible.map(a => (
+                              <tr key={a.meta_account_id} style={a.tracked ? { opacity: 0.55 } : undefined}>
+                                <td>
+                                  <input type="checkbox" disabled={a.tracked || findAdding}
+                                    checked={!!findPicked[a.meta_account_id]}
+                                    onChange={e => setFindPicked(p => ({ ...p, [a.meta_account_id]: e.target.checked }))} />
+                                </td>
+                                <td>{a.name}</td>
+                                <td>{a.meta_account_id}</td>
+                                <td>{a.business || '—'}</td>
+                                <td>{a.source_label}{a.also_in.length ? ` (+${a.also_in.length})` : ''}</td>
+                                <td>{a.tracked ? (a.archived ? 'Archived here' : 'Already added') : a.status}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="bb-modal-foot">
+                <span style={{ color: 'var(--bb-mute)', fontSize: 'var(--bb-text-sm)' }}>{findProgress}</span>
+                <span className="bb-spacer" />
+                <button className="bb-btn" onClick={() => setShowFind(false)} disabled={findAdding}>Close</button>
+                <button className="bb-btn bb-btn-primary" onClick={handleAddPicked} disabled={findAdding || findPickedCount === 0}>
+                  {findAdding ? <Loader2 size={13} className="bb-spin" /> : null}
+                  {findAdding ? 'Adding…' : `Add ${findPickedCount || ''} selected`.replace('  ', ' ')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Add Account modal */}
         {showAdd && (
           <div className="bb-modal-backdrop" onClick={() => setShowAdd(false)}>
@@ -452,6 +668,16 @@ function Accounts({ user, onLogout }) {
                       value={newMetaAccountId} onChange={e => setNewMetaAccountId(e.target.value)} />
                     <span className="bb-form-help">The number from Ads Manager. Just the digits — no "act_" needed.</span>
                   </div>
+                  {extraTokens.length > 0 && (
+                    <div className="bb-form-group">
+                      <label className="bb-form-label">Token</label>
+                      <select className="bb-select" value={newTokenId} onChange={e => setNewTokenId(e.target.value)}>
+                        <option value="">Primary token</option>
+                        {extraTokens.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                      </select>
+                      <span className="bb-form-help">Pick the token whose portfolio owns this ad account.</span>
+                    </div>
+                  )}
                   <div className="bb-form-group">
                     <label className="bb-form-label">Token Override <span style={{ fontWeight: 400, color: 'var(--bb-mute)' }}>(optional)</span></label>
                     <input type="password" className="bb-input"

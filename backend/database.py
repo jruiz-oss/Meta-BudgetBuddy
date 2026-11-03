@@ -60,6 +60,27 @@ class User(db.Model):
         }
 
 
+class MetaToken(db.Model):
+    """An extra workspace-shared Meta token (a second business portfolio, say).
+
+    The primary token still lives in User.global_meta_token. An account is tied
+    to one of these through Account.token_id; blank means the primary token.
+    """
+    __tablename__ = 'meta_tokens'
+
+    id = db.Column(db.Integer, primary_key=True)
+    label = db.Column(db.String(100), nullable=False)
+    token = db.Column(EncryptedString(2000), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def preview(self):
+        tok = self.token or ''
+        return (tok[:6] + '\u2026' + tok[-4:]) if len(tok) > 10 else ('set' if tok else '')
+
+    def to_dict(self):
+        return {'id': self.id, 'label': self.label, 'preview': self.preview()}
+
+
 class Account(db.Model):
     __tablename__ = 'accounts'
 
@@ -70,6 +91,10 @@ class Account(db.Model):
     # Per-account token override. Leave blank to fall back to the user's global_meta_token.
     # Encrypted at rest via EncryptedString — see User.global_meta_token for the rationale.
     meta_token = db.Column(EncryptedString(2000), nullable=False, default='')
+    # Which extra workspace token (meta_tokens.id) this account reads with. NULL = the
+    # primary global token. No FK on purpose: the boot-time schema patch is a plain
+    # ADD COLUMN, and the delete route refuses to remove a token that is in use.
+    token_id = db.Column(db.Integer, nullable=True)
     # Archived accounts (client gone) stay in the database with all their history but
     # drop out of Home, the account list and every pacing run. Reversible — this is
     # deliberately NOT a delete, which would cascade away campaigns and pacing rows.
@@ -91,6 +116,11 @@ class Account(db.Model):
         """
         if self.meta_token and self.meta_token.strip():
             return self.meta_token.strip()
+        if self.token_id:
+            extra = MetaToken.query.get(self.token_id)
+            tok = ((extra.token if extra else '') or '').strip()
+            if tok:
+                return tok
         if self.user:
             tok = (self.user.global_meta_token or '').strip()
             if tok:
@@ -119,6 +149,7 @@ class Account(db.Model):
                 'user_id': self.user_id,
                 'account_name': self.account_name,
                 'meta_account_id': self.meta_account_id,
+                'token_id': self.token_id,
                 'is_active': bool(self.is_active),
                 'created_at': self.created_at.isoformat() if self.created_at else None,
             }
@@ -165,6 +196,7 @@ class Account(db.Model):
             'user_id': self.user_id,
             'account_name': self.account_name,
             'meta_account_id': self.meta_account_id,
+            'token_id': self.token_id,
             'created_at': self.created_at.isoformat(),
             'is_active': bool(self.is_active),
             'campaign_count': len(active_campaigns),

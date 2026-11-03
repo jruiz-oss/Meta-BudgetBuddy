@@ -3,7 +3,8 @@ from datetime import datetime
 
 from flask import Blueprint, request, jsonify, session
 from sqlalchemy.orm import selectinload
-from database import db, Account, AccountSettings, AdSet, Campaign, PacingData, PacingRun, User
+from database import db, Account, AccountSettings, AdSet, Campaign, MetaToken, PacingData, PacingRun, User
+from meta_client import MetaClient, MetaAPIError
 from .auth import login_required
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,133 @@ def global_token():
         'has_token': bool(new_tok),
         'preview': (new_tok[:6] + '…' + new_tok[-4:]) if len(new_tok) > 10 else ('set' if new_tok else ''),
     }), 200
+
+
+# ---------------------------------------------------------------------------
+# Extra Meta tokens (a second business portfolio) + ad account discovery
+# ---------------------------------------------------------------------------
+#
+# The primary token is still the workspace global token above. Extra tokens live
+# in meta_tokens and are shared by the whole workspace. An account is tied to one
+# through Account.token_id (NULL = primary). Discovery asks every token which ad
+# accounts it can see, so accounts can be added without typing IDs.
+
+def _digits(meta_account_id):
+    return (meta_account_id or '').strip().replace('act_', '')
+
+
+# Meta account_status -> short label for the UI
+_STATUS_LABELS = {1: 'active', 2: 'disabled', 3: 'unsettled', 7: 'in review',
+                  8: 'settling', 9: 'grace period', 100: 'closing', 101: 'closed',
+                  201: 'active', 202: 'closed'}
+
+
+@accounts_bp.route('/meta-tokens', methods=['GET'])
+@login_required
+def list_meta_tokens():
+    counts = {}
+    for a in Account.query.filter(Account.token_id.isnot(None)).all():
+        counts[a.token_id] = counts.get(a.token_id, 0) + 1
+    tokens = MetaToken.query.order_by(MetaToken.id.asc()).all()
+    return jsonify({'tokens': [{**t.to_dict(), 'account_count': counts.get(t.id, 0)} for t in tokens]}), 200
+
+
+@accounts_bp.route('/meta-tokens', methods=['POST'])
+@login_required
+def add_meta_token():
+    data = request.get_json() or {}
+    label = (data.get('label') or '').strip()
+    tok = (data.get('token') or '').strip()
+    if not label or not tok:
+        return jsonify({'error': 'label and token are required'}), 400
+    # Prove the token works before saving it, and tell the user what it can see.
+    try:
+        found = MetaClient.for_token(tok).list_ad_accounts()
+    except MetaAPIError as e:
+        return jsonify({'error': f'Meta rejected this token: {e}'}), 400
+    except Exception as e:
+        logger.warning('Meta token check failed: %s', e)
+        return jsonify({'error': 'Could not reach Meta to check this token'}), 502
+    row = MetaToken(label=label, token=tok)
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({'token': {**row.to_dict(), 'account_count': 0}, 'visible_accounts': len(found)}), 201
+
+
+@accounts_bp.route('/meta-tokens/<int:token_id>', methods=['DELETE'])
+@login_required
+def delete_meta_token(token_id):
+    row = MetaToken.query.get(token_id)
+    if not row:
+        return jsonify({'error': 'Not found'}), 404
+    in_use = Account.query.filter_by(token_id=token_id).count()
+    if in_use:
+        return jsonify({'error': f'{in_use} account(s) still use this token. Move or archive them first.'}), 409
+    db.session.delete(row)
+    db.session.commit()
+    return jsonify({'message': 'Token removed'}), 200
+
+
+@accounts_bp.route('/available', methods=['GET'])
+@login_required
+def available_accounts():
+    """Ad accounts visible to the primary token and every extra token.
+
+    One failing token never hides the others: each source reports its own error.
+    An account several tokens can see is listed once, under the first source
+    (primary first), with the other sources in also_in.
+    """
+    tracked = {_digits(a.meta_account_id): a for a in Account.query.all()}
+
+    sources = []
+    primary = _workspace_token()
+    sources.append({'id': None, 'label': 'Primary token', 'token': primary})
+    for t in MetaToken.query.order_by(MetaToken.id.asc()).all():
+        sources.append({'id': t.id, 'label': t.label, 'token': (t.token or '').strip()})
+
+    merged = {}
+    report = []
+    for src in sources:
+        info = {'id': src['id'], 'label': src['label'], 'ok': False, 'error': None, 'count': 0}
+        report.append(info)
+        if not src['token']:
+            info['error'] = 'No token set'
+            continue
+        try:
+            rows = MetaClient.for_token(src['token']).list_ad_accounts()
+        except MetaAPIError as e:
+            info['error'] = str(e)[:300]
+            continue
+        except Exception as e:
+            logger.warning('Ad account listing failed for %s: %s', src['label'], e)
+            info['error'] = 'Could not reach Meta'
+            continue
+        info['ok'] = True
+        info['count'] = len(rows)
+        for r in rows:
+            aid = _digits(r.get('account_id') or r.get('id'))
+            if not aid:
+                continue
+            if aid in merged:
+                merged[aid]['also_in'].append(src['label'])
+                continue
+            code = r.get('account_status')
+            have = tracked.get(aid)
+            merged[aid] = {
+                'meta_account_id': aid,
+                'name': r.get('name') or aid,
+                'business': (r.get('business') or {}).get('name') or '',
+                'status': _STATUS_LABELS.get(code, 'unknown'),
+                'source_id': src['id'],
+                'source_label': src['label'],
+                'also_in': [],
+                'tracked': bool(have),
+                'tracked_account_id': have.id if have else None,
+                'archived': bool(have) and have.is_active is False,
+            }
+
+    accounts = sorted(merged.values(), key=lambda a: (a['status'] != 'active', a['name'].lower()))
+    return jsonify({'accounts': accounts, 'sources': report}), 200
 
 
 # ---------------------------------------------------------------------------
@@ -299,15 +427,19 @@ def create_account():
     account_name = (data.get('account_name') or '').strip()
     meta_account_id = (data.get('meta_account_id') or '').strip()
     meta_token = (data.get('meta_token') or '').strip()  # optional — falls back to global
+    token_id = data.get('token_id') or None  # optional — which extra workspace token
 
     if not account_name or not meta_account_id:
         return jsonify({'error': 'account_name and meta_account_id are required'}), 400
+    if token_id is not None and not MetaToken.query.get(token_id):
+        return jsonify({'error': 'Unknown token_id'}), 400
 
     account = Account(
         user_id=user_id,
         account_name=account_name,
         meta_account_id=meta_account_id,
         meta_token=meta_token,  # '' = use global token
+        token_id=token_id,
     )
     db.session.add(account)
     db.session.commit()
@@ -359,6 +491,12 @@ def update_account(account_id):
     # Allow updating the per-account token override (empty string = revert to global)
     if 'meta_token' in data:
         account.meta_token = (data['meta_token'] or '').strip()
+    # Switch which extra workspace token this account reads with (null = primary)
+    if 'token_id' in data:
+        new_tid = data['token_id'] or None
+        if new_tid is not None and not MetaToken.query.get(new_tid):
+            return jsonify({'error': 'Unknown token_id'}), 400
+        account.token_id = new_tid
     # Archive / restore. Kept on the normal update endpoint so it's one round trip
     # from the UI, and reversible by design.
     if 'is_active' in data:

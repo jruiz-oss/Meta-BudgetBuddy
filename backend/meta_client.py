@@ -58,6 +58,35 @@ class MetaClient:
         self.timeout = timeout
         self.retries = retries
 
+    @classmethod
+    def for_token(cls, access_token: str, timeout: int = DEFAULT_TIMEOUT, retries: int = DEFAULT_RETRIES):
+        """A client with no ad account bound, for token-level calls like list_ad_accounts()."""
+        if not access_token:
+            raise ValueError("access_token is required")
+        client = cls.__new__(cls)
+        client.access_token = access_token
+        client.ad_account_id = ""
+        client.timeout = timeout
+        client.retries = retries
+        return client
+
+    def list_ad_accounts(self) -> List[Dict[str, Any]]:
+        """Every ad account this token can see (paginated). Needs no bound ad account."""
+        out: List[Dict[str, Any]] = []
+        params: Dict[str, Any] = {
+            "fields": "account_id,name,account_status,business{name}",
+            "limit": 100,
+        }
+        for _ in range(50):  # hard page cap so a bad cursor can never loop forever
+            resp = self._request("GET", "/me/adaccounts", params=params)
+            out.extend(resp.get("data") or [])
+            paging = resp.get("paging") or {}
+            after = (paging.get("cursors") or {}).get("after")
+            if not paging.get("next") or not after:
+                break
+            params = {**params, "after": after}
+        return out
+
     # ------------------------------------------------------------------
     # HTTP plumbing
     # ------------------------------------------------------------------
