@@ -385,7 +385,15 @@ class TikTokClient:
             # operation_status is the on/off toggle; secondary_status is why it
             # may not be delivering. Meta's "status" is the toggle, so map that.
             "status": "ACTIVE" if c.get("operation_status") == "ENABLE" else "PAUSED",
-            "effective_status": c.get("secondary_status"),
+            # Must ALSO be Meta's vocabulary. The pacing run stores
+            # `effective_status or status` into Campaign.meta_status, and
+            # is_paused_in_meta compares that to the literal string 'PAUSED'.
+            # Returning TikTok's CAMPAIGN_STATUS_DISABLE here meant a paused
+            # TikTok campaign never registered as paused — so it kept getting
+            # recommendations and never dropped off the pacing list.
+            "effective_status": "ACTIVE" if c.get("operation_status") == "ENABLE" else "PAUSED",
+            # TikTok's own delivery detail, kept under its own key for the UI.
+            "tiktok_secondary_status": c.get("secondary_status"),
             "objective": c.get("objective_type"),
             "daily_budget": daily_cents,
             "lifetime_budget": lifetime_cents,

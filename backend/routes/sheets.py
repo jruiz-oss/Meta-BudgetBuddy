@@ -1593,7 +1593,8 @@ def sync_budgets_for_account(account_id):
             sheet_budget_total += float(row["monthly_budget"] or 0.0)
 
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
-        campaign, score = _match_campaign_with_score(match_name, db_campaigns)
+        campaign, score = _match_campaign_with_score(
+            match_name, _campaigns_for_row(row, db_campaigns))
         if not campaign:
             # Allocation-first: row name like "Harrah's OKLAHOMA - Promos" has no single
             # primary match, but the notes define who gets what ("TCM: 40% / FSP, BW, GG: 20%").
@@ -2195,7 +2196,8 @@ def write_spend_for_account(account_id, month=None):
                 })
                 continue
         match_name = _strip_account_prefix(row["name"], account, all_user_accounts)
-        matched_campaigns = _match_all_campaigns(match_name, db_campaigns)
+        matched_campaigns = _match_all_campaigns(
+            match_name, _campaigns_for_row(row, db_campaigns))
         if not matched_campaigns:
             skipped.append({"sheet_name": row["name"], "reason": "No matching DB campaign"})
             continue

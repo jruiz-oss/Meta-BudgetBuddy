@@ -158,3 +158,57 @@ def test_a_row_with_no_platform_key_is_treated_as_meta():
     campaigns = [FakeCampaign("A", "META"), FakeCampaign("B", "TIKTOK")]
     pool = _campaigns_for_row(legacy_row, campaigns)
     assert [c.campaign_name for c in pool] == ["A"]
+
+
+# ----------------------------------------------------------------------
+# Structural: every matcher call in sheets.py must be platform-scoped
+# ----------------------------------------------------------------------
+def test_no_matcher_is_called_with_an_unscoped_campaign_pool():
+    """Regression guard for a real bug.
+
+    The platform filter was applied at six call sites and missed two — the
+    sync's primary match and the spend write-back. The symptom was horrible to
+    diagnose: preview matched a TikTok row correctly while sync reported "no
+    matching DB campaign" for the same row, because preview was filtered and
+    sync wasn't. Worse, the unfiltered pool meant a TikTok row could have
+    matched a Meta campaign and written a budget to it.
+
+    Catching this by behaviour would need a fixture per call site. Catching it
+    structurally costs one test: no matcher may receive the bare
+    `db_campaigns` list. They must all go through _campaigns_for_row.
+    """
+    import pathlib
+    import re
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "routes" / "sheets.py"
+    text = src.read_text(encoding="utf-8")
+
+    matchers = (
+        "_match_campaign",
+        "_match_campaign_with_score",
+        "_match_all_campaigns",
+        "_match_diagnostics",
+        "_scope_campaigns_by_pivot",
+    )
+    # A call that passes `db_campaigns` directly as an argument, allowing for
+    # the line break the formatter introduces on longer calls.
+    pattern = re.compile(
+        r"(?:%s)\(\s*[^()]*?\bdb_campaigns\b" % "|".join(matchers),
+        re.S,
+    )
+
+    offenders = []
+    for match in pattern.finditer(text):
+        line_no = text[:match.start()].count("\n") + 1
+        line = text.splitlines()[line_no - 1].strip()
+        # The matcher definitions themselves take db_campaigns as a parameter,
+        # and _match_campaign delegates internally — those are fine.
+        if line.startswith("def ") or "campaign, _ = _match_campaign_with_score" in line:
+            continue
+        offenders.append(f"line {line_no}: {line}")
+
+    assert not offenders, (
+        "These matcher calls pass an unfiltered campaign pool. Wrap the pool in "
+        "_campaigns_for_row(row, db_campaigns) so a row can only ever match a "
+        "campaign on its own platform:\n  " + "\n  ".join(offenders)
+    )
